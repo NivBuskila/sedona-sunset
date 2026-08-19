@@ -48,15 +48,41 @@ function addWhite(g) {
   return g;
 }
 
-/** Spherical UVs, because ConvexGeometry ships position and normal only. */
+/**
+ * Per-face box UVs, because ConvexGeometry ships position and normal only.
+ *
+ * Not spherical. A spherical wrap sets v from y alone, so on a tabular clast —
+ * which is most of them, since bedded rock breaks into slabs — the whole broad
+ * face sits at very nearly one v and samples a single row of texels stretched
+ * across it. The result is a plate covered in hard parallel stripes, which is
+ * where the corrugated-cardboard look on the slabs came from. Projecting each
+ * facet along whichever axis it faces keeps the texel density roughly uniform and
+ * roughly isotropic on every face.
+ *
+ * The hull is non-indexed, so each triangle owns its three vertices and can be
+ * given its own projection without splitting anything.
+ */
 function addUV(g) {
   const p = g.attributes.position;
   const uv = new Float32Array(p.count * 2);
-  const v = new THREE.Vector3();
-  for (let i = 0; i < p.count; i++) {
-    v.fromBufferAttribute(p, i).normalize();
-    uv[i * 2] = Math.atan2(v.z, v.x) / (Math.PI * 2) + 0.5;
-    uv[i * 2 + 1] = v.y * 0.5 + 0.5;
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), n = new THREE.Vector3();
+  for (let i = 0; i < p.count; i += 3) {
+    a.fromBufferAttribute(p, i);
+    b.fromBufferAttribute(p, i + 1);
+    c.fromBufferAttribute(p, i + 2);
+    e1.subVectors(b, a); e2.subVectors(c, a);
+    n.crossVectors(e1, e2);
+    const ax = Math.abs(n.x), ay = Math.abs(n.y), az = Math.abs(n.z);
+    for (let k = 0; k < 3; k++) {
+      const v = k === 0 ? a : k === 1 ? b : c;
+      let s, t;
+      if (ay >= ax && ay >= az) { s = v.x; t = v.z; }
+      else if (ax >= az) { s = v.z; t = v.y; }
+      else { s = v.x; t = v.y; }
+      uv[(i + k) * 2] = s * 0.5 + 0.5;
+      uv[(i + k) * 2 + 1] = t * 0.5 + 0.5;
+    }
   }
   g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   return g;
@@ -91,11 +117,16 @@ function angularClast(seed, flat, bevel) {
   const rand = rng(seed);
   const pts = [];
   const ax = 1.0, ay = flat, az = 0.78 + rand() * 0.42;
+  /* Corners pulled in hard and unevenly. At ±20 percent the hull of a jittered box
+     is still a box — six large near-planar faces meeting at right angles — and any
+     box over about half a metre reads as masonry rather than as fallen rock. At
+     this spread the corners no longer describe a cuboid and the hull comes out an
+     irregular polyhedron: still angular, still faceted, no longer manufactured. */
   for (let i = 0; i < 8; i++) {
     pts.push(new THREE.Vector3(
-      ((i & 1) ? 1 : -1) * ax * (0.74 + rand() * 0.40),
-      ((i & 2) ? 1 : -1) * ay * (0.74 + rand() * 0.40),
-      ((i & 4) ? 1 : -1) * az * (0.74 + rand() * 0.40)));
+      ((i & 1) ? 1 : -1) * ax * (0.52 + rand() * 0.58),
+      ((i & 2) ? 1 : -1) * ay * (0.52 + rand() * 0.58),
+      ((i & 4) ? 1 : -1) * az * (0.52 + rand() * 0.58)));
   }
   /* Extra points sampled on the *surface* of the box with radial jitter. Eight
      corners alone hull into a plain cuboid — six enormous planar faces — and a
@@ -108,7 +139,7 @@ function angularClast(seed, flat, bevel) {
     const L = Math.hypot(dx, dy, dz) || 1;
     dx /= L; dy /= L; dz /= L;
     const t = 1 / Math.max(Math.abs(dx) / ax, Math.abs(dy) / ay, Math.abs(dz) / az);
-    const j = t * (0.94 + rand() * 0.22);
+    const j = t * (0.70 + rand() * 0.40);
     pts.push(new THREE.Vector3(dx * j, dy * j, dz * j));
   }
   const g = new ConvexGeometry(pts);
@@ -122,22 +153,27 @@ function angularClast(seed, flat, bevel) {
 
 /* Target linear albedo divided by the neutral clast texture's mean, so these
    are straight multipliers on it. */
+/* Spread wide in *value* as much as in hue. Lithology that differs only in tint
+   disappears at fifteen metres and the scatter goes back to reading as one rock
+   type; what survives distance, haze and a low sun is the difference between a
+   near-black basalt cobble and a near-white quartz one lying next to each other.
+   The reds are also pulled back: a clast is a dusty stone, not a fresh cut. */
 const LITH = [
-  [0.66, 0.32, 0.21],   // red Schnebly Hill sandstone
-  [0.74, 0.55, 0.39],   // buff sandstone
-  /* The pale and neutral lithologies are pushed warm, not because the rock is
-     warm but because everything in a wash carries a film of red silt, and a
-     truly neutral grey under a blue-violet sky fill renders mint green. */
-  [0.84, 0.73, 0.58],   // off-white Coconino, dusted with red silt
-  [0.52, 0.47, 0.40],   // grey Fort Apache limestone
-  [0.17, 0.155, 0.15],  // dark basalt off the Rim
-  [0.70, 0.57, 0.39],   // buff chert
+  [0.50, 0.33, 0.26],   // red Schnebly Hill sandstone
+  [0.62, 0.51, 0.41],   // buff sandstone
+  [0.91, 0.86, 0.78],   // off-white Coconino
+  [0.47, 0.45, 0.42],   // grey Fort Apache limestone
+  [0.115, 0.112, 0.110],// dark basalt off the Rim
+  [0.60, 0.50, 0.36],   // buff chert
+  [0.80, 0.76, 0.69],   // cream caprock limestone
+  [0.94, 0.92, 0.88],   // quartz
 ];
-/* Transported clasts came from anywhere upstream, so they are mixed. Talus fell
-   off the wall thirty metres above it, so it is nearly all local — a talus
-   apron of pale blocks reads as builders' rubble, not as a collapsed wall. */
-const MIX_TRANSPORTED = [0.56, 0.22, 0.035, 0.055, 0.055, 0.075];
-const MIX_LOCAL = [0.80, 0.15, 0.03, 0.01, 0.00, 0.01];
+/* Transported clasts came from anywhere upstream, so they are mixed — and only
+   about a third of them are the local red. Talus fell off the wall thirty metres
+   above it, so it is nearly all local: an apron of pale blocks reads as builders'
+   rubble rather than as a collapsed wall. */
+const MIX_TRANSPORTED = [0.34, 0.17, 0.11, 0.14, 0.08, 0.07, 0.06, 0.03];
+const MIX_LOCAL = [0.72, 0.17, 0.03, 0.02, 0.01, 0.03, 0.015, 0.005];
 
 function pickLith(mixCdf, r) {
   for (let i = 0; i < mixCdf.length; i++) if (r <= mixCdf[i]) return i;
@@ -155,20 +191,25 @@ const CLASSES = [
   {
     name: 'gravel', kind: 'round', detail: 0, variants: 2, count: 13000, uMax: 18,
     rMin: 0.024, rMax: 0.090, flatten: 0.68, maxSlope: 0.58, shadow: true,
-    imbricate: 0.28, sink: [0.24, 0.38], lith: CDF_T, tint: 1.0,
+    imbricate: 0.28, sink: [0.34, 0.62], deepSink: 0.34, lith: CDF_T, tint: 1.0,
     weight: (fc) => (fc.chan * (0.45 + 0.85 * fc.lag) + fc.bar * 0.85 + fc.terr * 0.22)
                   * (1 - fc.bare * 0.95) * (1 - fc.sheet) * (1 - fc.pan),
   },
   {
-    name: 'cobble', kind: 'round', detail: 1, variants: 3, count: 3400, uMax: 18,
-    rMin: 0.070, rMax: 0.230, flatten: 0.62, maxSlope: 0.50, shadow: true,
-    imbricate: 0.55, sink: [0.36, 0.52], lith: CDF_T, tint: 1.0,
+    /* Angular, not rounded. A water-worn sandstone cobble is rounded *at its
+       edges* but it split off a bedded rock, so it keeps one or two flat parallel
+       faces and chipped rectilinear corners, and it comes to rest broad-face
+       down. Ellipsoids read as potatoes however they are textured. */
+    name: 'cobble', kind: 'angular', variants: 4, count: 3400, uMax: 18,
+    rMin: 0.070, rMax: 0.230, flat: 0.42, bevel: 14, maxSlope: 0.50, shadow: true,
+    imbricate: 0.62, sink: [0.45, 0.78], deepSink: 0.28, lith: CDF_T, tint: 1.0,
+    orient: 'surface',
     weight: (fc) => (fc.chan * (0.25 + 1.35 * fc.lag) + fc.bar * 0.55 + fc.terr * 0.10)
                   * (1 - fc.bare * 0.98) * (1 - fc.sheet) * (1 - fc.pan),
   },
   {
     name: 'pavement', kind: 'angular', variants: 3, count: 2400, uMax: 26,
-    rMin: 0.055, rMax: 0.190, flat: 0.50, bevel: 5, maxSlope: 0.52, shadow: true,
+    rMin: 0.055, rMax: 0.190, flat: 0.50, bevel: 9, maxSlope: 0.52, shadow: true,
     imbricate: 0, sink: [0.40, 0.56], lith: CDF_L, tint: 0.82, orient: 'surface',
     /* desert pavement: weathered angular fragments left on the abandoned
        terrace after the fines blew out from between them */
@@ -176,29 +217,49 @@ const CLASSES = [
   },
   {
     name: 'block', kind: 'angular', variants: 4, count: 2600, uMax: 34,
-    rMin: 0.100, rMax: 0.640, sizeP: 3.0, squat: true,
-    flat: 1.00, bevel: 14, maxSlope: 0.62, shadow: true,
+    /* Not equant. At flat 1.0 the hull of a jittered cube is a cube, and a
+       half-metre cube sitting on open ground at twenty metres does not read as
+       fallen sandstone, it reads as a crate. Bedded rock breaks into slabs. */
+    rMin: 0.090, rMax: 0.340, sizeP: 3.0, squat: true,
+    flat: 0.62, bevel: 26, maxSlope: 0.62, shadow: true,
     imbricate: 0, sink: [0.52, 0.80], lith: CDF_L, collar: 7, tint: 0.62,
-    orient: 'random',
-    /* the talus apron, plus slumped blocks at the foot of a cut bank.
+    orient: 'random', taper: true,
+    /* Talus only. Allowing these onto the open floor as bank slump put isolated
+       half-metre boxes out in the middle of the wash, and a cluster of those at
+       twenty metres reads as a pile of dice — a lone rectilinear solid on flat
+       ground has nothing around it to explain why it is there. In the apron it is
+       one block among hundreds wedged against each other, which is legible.
        `pile` clumps them: rockfall arrives as an event, so an apron is a run of
        heaps below the gullies that fed them with swept ground between, and an
        even sprinkle of same-sized blocks reads as scattered litter. */
-    weight: (fc) => (fc.tal * 1.0 + fc.slump * 0.7) * fc.pile,
+    weight: (fc) => fc.tal * fc.pile,
   },
   {
-    name: 'slab', kind: 'angular', variants: 3, count: 340, uMax: 34,
-    rMin: 0.300, rMax: 0.900, sizeP: 2.2, squat: true,
-    flat: 0.55, bevel: 12, maxSlope: 0.50, shadow: true,
+    /* Fewer, smaller, and with many more facets. At nearly a metre of radius and
+       a dozen bevel points the hull is six big planar faces, and a two-metre plate
+       with six flat faces sitting on open ground reads as a poured concrete pad —
+       which is exactly how the near-field ones were coming out. Facet count is
+       what makes a metre of rock look like rock: a spall surface stepped by the
+       bedding it broke along catches a low sun in a dozen slightly different
+       planes, not one. */
+    name: 'slab', kind: 'angular', variants: 4, count: 220, uMax: 34,
+    rMin: 0.240, rMax: 0.460, sizeP: 2.2, squat: true,
+    flat: 0.62, bevel: 34, maxSlope: 0.50, shadow: true,
     imbricate: 0, sink: [0.46, 0.72], lith: CDF_L, collar: 5, tint: 0.62,
-    orient: 'random',
-    /* bedding-plane slabs, which fall off a stratified wall as sheets */
-    weight: (fc) => (fc.tal * 0.8 + fc.slump * 0.5) * fc.pile,
+    orient: 'random', taper: true,
+    /* bedding-plane slabs, which fall off a stratified wall as sheets. Apron only,
+       and under half a metre: a two-metre plate with a flat top lying by itself on
+       the floor of the wash was reading as a poured concrete pad. */
+    weight: (fc) => fc.tal * fc.pile,
   },
   {
-    name: 'boulder', kind: 'round', detail: 2, variants: 2, count: 90, uMax: 16,
-    rMin: 0.380, rMax: 0.950, flatten: 0.74, maxSlope: 0.40, shadow: true,
-    imbricate: 0.4, sink: [0.34, 0.50], lith: CDF_T, collar: 9, tint: 1.0,
+    /* Blockier than the cobbles. A metre-scale boulder that is as tabular as a
+       cobble reads as a paving slab lying on the ground, and a scatter of them
+       reads as a demolished patio. */
+    name: 'boulder', kind: 'angular', variants: 3, count: 110, uMax: 16,
+    rMin: 0.320, rMax: 0.600, flat: 0.86, bevel: 30, maxSlope: 0.40, shadow: true,
+    imbricate: 0.55, sink: [0.40, 0.68], deepSink: 0.20, lith: CDF_T, collar: 9,
+    tint: 1.0, orient: 'surface',
     /* flood-transported, so they sit in the channel and on bar heads */
     weight: (fc) => (fc.chan * 1.0 + fc.bar * 0.5) * fc.lag * (1 - fc.pan),
   },
@@ -274,7 +335,8 @@ export function buildScatter(terrain, tex) {
       nrm.set(-hx / (2 * e), 1, -hz / (2 * e)).normalize();
       if (1 - nrm.y > cl.maxSlope) continue;
 
-      const rad = cl.rMin + Math.pow(rand(), cl.sizeP || 1.7) * (cl.rMax - cl.rMin);
+      let rad = cl.rMin + Math.pow(rand(), cl.sizeP || 1.7) * (cl.rMax - cl.rMin);
+      if (cl.taper) rad *= 0.40 + 0.60 * (1 - fc.talPos);
       const lith = pickLith(cl.lith, rand());
 
       emit(cl, buckets[placed % cl.variants], x, y, z, rad, lith, rand, th, nrm);
@@ -360,20 +422,30 @@ export function buildScatter(terrain, tex) {
       spin.setFromAxisAngle(bx.set(Math.cos(ta), 0, Math.sin(ta)), tilt);
       quat.multiply(spin);
     } else {
+      /* Broad face down, with only a few degrees of wobble. A tabular clast that
+         split along a bedding plane has a stable face and it lands on it. */
       quat.setFromUnitVectors(up, n);
       spin.setFromAxisAngle(up, rand() * Math.PI * 2);
       quat.multiply(spin);
-      spin.setFromAxisAngle(bx.set(1, 0, 0), (rand() - 0.5) * 0.9);
+      spin.setFromAxisAngle(bx.set(1, 0, 0), (rand() - 0.5) * 0.44);
       quat.multiply(spin);
-      spin.setFromAxisAngle(bz.set(0, 0, 1), (rand() - 0.5) * 0.9);
+      spin.setFromAxisAngle(bz.set(0, 0, 1), (rand() - 0.5) * 0.44);
       quat.multiply(spin);
     }
 
-    const sink = rad * (cl.sink[0] + rand() * (cl.sink[1] - cl.sink[0]));
+    /* Burial. A clast that has sat through one flood is worked down into the bed;
+       a bed where every stone sits fully proud is a bed where objects were placed
+       on a surface, which is exactly what it looks like. A fraction go right down
+       to their shoulders so the bed reads as clast-rich rather than sprinkled. */
+    let sink = rad * (cl.sink[0] + rand() * (cl.sink[1] - cl.sink[0]));
+    if (cl.deepSink && rand() < cl.deepSink) sink = rad * (0.88 + rand() * 0.30);
     /* Per-instance value spread, times a per-class factor: talus is dusty and
        sits in the wall's own shadow half the day, and pale blocks at that scale
        read as builders' rubble unless they are knocked back. */
-    const t = (0.68 + rand() * 0.62) * cl.tint;
+    /* Narrow. A wide per-instance value spread on top of eight lithologies mixes
+       them back together — a dark limestone and a bright basalt land on the same
+       screen value and the polychrome scatter stops being legible as rock types. */
+    const t = (0.86 + rand() * 0.26) * cl.tint;
     const L = LITH[lith];
     /* Fallen sandstone is bedded, so it breaks squat and tabular rather than
        equant. A block as tall as it is wide, sat on a slope, is a tent — and a

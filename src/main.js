@@ -44,7 +44,7 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
    rock face and level ground, so an exposure that lifts the wash floor to a
    comfortable middle grey flattens everything else into pale cream. A
    photographer would let the floor sit dark and keep the walls. */
-renderer.toneMappingExposure = 0.92;
+renderer.toneMappingExposure = 0.82;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.shadowMap.autoUpdate = true;
@@ -145,7 +145,9 @@ addEventListener('keyup', e => { keys[e.code] = false; });
 canvas.addEventListener('click', () => canvas.requestPointerLock());
 addEventListener('mousemove', e => {
   if (document.pointerLockElement !== canvas) return;
-  player.yaw -= e.movementX * 0.0022;
+  // syncCamera applies yaw negated (rotation.y = -yaw), so mouse-right has to
+  // increase yaw to turn the view right.
+  player.yaw += e.movementX * 0.0022;
   player.pitch = Math.max(-1.45, Math.min(1.45, player.pitch - e.movementY * 0.0022));
 });
 addEventListener('resize', () => {
@@ -329,3 +331,10 @@ const api = {
 
 renderOnce();   // compile everything before the harness starts timing
 window.__game = api;
+
+/* The harness drives the loop itself, via begin() after it has waited for
+   __game to appear. A human opening the page has nothing to call it for them,
+   so without this the scene boots paused: a black window that ignores every
+   key. begin() guards on `running`, so the harness calling it later is a
+   no-op and capture stays deterministic. */
+api.begin();

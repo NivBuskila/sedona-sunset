@@ -37,8 +37,11 @@ export const SUN_EL = 0.135;
 export const SUN_DIR = new THREE.Vector3(
   Math.sin(SUN_AZ), Math.sin(SUN_EL), -Math.cos(SUN_AZ)).normalize();
 
-export const HORIZON = new THREE.Color(0.92, 0.52, 0.28);
-export const FOG = new THREE.Color(0.66, 0.42, 0.34);
+export const HORIZON = new THREE.Color(0.94, 0.66, 0.46);
+/* Haze is scattered light off dust and it is nearly achromatic with a warm bias.
+   A strongly saturated fog colour tints every distant surface orange and is half
+   of why the whole frame measured as one hue. */
+export const FOG = new THREE.Color(0.72, 0.58, 0.52);
 
 const VERT = /* glsl */`
 varying vec3 vDir;
@@ -122,7 +125,12 @@ export function buildLights() {
      and shadowed ground end up within a third of a stop of each other, every
      surface picks up the dome's lilac, and the red washes out to pale magenta.
      Sized so lit ground sits about three times shadowed ground instead. */
-  const sun = new THREE.DirectionalLight(0xffa652, 30.0);
+  /* 0xffa652 was a saturation of 0.68 in the *light itself*. Multiply an already
+     red albedo by that and the frame cannot come out anywhere but Mars, whatever
+     the textures do. Direct sun at eight degrees is warm but nowhere near that
+     orange — around 3500 K, which is roughly this. The orange in a sunset
+     photograph comes mostly from the sky and the haze, not from the key. */
+  const sun = new THREE.DirectionalLight(0xffcda8, 30.0);
   sun.position.copy(SUN_DIR).multiplyScalar(600);
   sun.castShadow = true;
   sun.shadow.mapSize.set(4096, 4096);
@@ -146,11 +154,11 @@ export function buildLights() {
      crushed blacks read as a rendering fault long before they read as contrast —
      but no higher. The fill's job is to put violet *into the shadows*, and a fill
      strong enough to be visible on the lit side puts it everywhere instead. */
-  const hemi = new THREE.HemisphereLight(0xb99ab6, 0xa04f28, 1.45);
+  const hemi = new THREE.HemisphereLight(0xc0b2cc, 0xa8907c, 1.45);
 
   /* The bright sky immediately around the sun is a large, soft source in its
      own right. Casts nothing. */
-  const glow = new THREE.DirectionalLight(0xffb078, 1.15);
+  const glow = new THREE.DirectionalLight(0xffdcc4, 1.15);
   glow.position.set(Math.sin(SUN_AZ) * 300, 78, -Math.cos(SUN_AZ) * 300);
 
   /* Wash of light off the far canyon wall, from behind. Cool, because that wall
@@ -158,7 +166,7 @@ export function buildLights() {
   /* Carries most of the violet now that the dome has been pulled back. It only
      reaches faces turned away from the sun, which is exactly where the cool half
      of the warm/cool split is supposed to land. */
-  const bounce = new THREE.DirectionalLight(0x9a86c4, 1.15);
+  const bounce = new THREE.DirectionalLight(0xa79cc0, 1.15);
   bounce.position.set(-SUN_DIR.x * 300, 130, 320);
 
   return { sun, hemi, glow, bounce };

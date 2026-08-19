@@ -126,10 +126,67 @@ const mixC = (a, b, t) => [mix(a[0], b[0], t), mix(a[1], b[1], t), mix(a[2], b[2
 
 /* ── compacted red dirt: the wash floor ────────────────────────────────── */
 
-const DIRT_DAMP = C(102, 62, 54);   // shadowed / still-damp, purple-brown
-const DIRT_BASE = C(154, 92, 68);   // rust oxide, the dominant colour
-const DIRT_DUST = C(186, 130, 102); // sun-bleached dust film
-const DIRT_PALE = C(200, 156, 130); // fine silt on the high spots
+/* The matrix — the fine stuff between the stones. Oxide-stained but not vivid:
+   the iron is a coating on quartz sand that is pale grey-buff underneath, and
+   every exposed surface carries dust, so the mineral itself has a large
+   achromatic component. Measured against photographs, Sedona is a dusty
+   salmon-terracotta with a grey-brown cast; the saturated orange-red these were
+   before is Wadi Rum, the Pilbara or Mars. */
+/* Darker as well as less saturated. Saturation was measured and fixed, but the
+   first pass at it left the values where they were, and a low-saturation *bright*
+   surface is gypsum or caliche, not oxide dirt: the wash came out reading as pale
+   sand. Real red dirt reflects about a fifth of the light that falls on it. */
+const DIRT_DAMP = C(76, 58, 54);    // shadowed hollows, still damp, purple-brown
+const DIRT_BASE = C(126, 96, 82);   // oxide-stained silt, the dominant colour
+const DIRT_DUST = C(154, 130, 115); // dust film on the high spots
+const DIRT_PALE = C(176, 158, 145); // wind-sorted fines, nearly grey
+
+/* Lithologies present in the *matrix itself*, not only in the instanced stones.
+   A Sedona wash carries buff-white Coconino, grey Schnebly siltstone, cream
+   caprock limestone, black basalt off the rim and quartz alongside the local red
+   sandstone. Grain scale is where that polychrome scatter does the most work,
+   because it is what the eye actually resolves standing on the floor. */
+const GRAIN_COL = [
+  C(130, 94, 80),     // red Schnebly sandstone
+  C(152, 128, 108),   // buff sandstone
+  C(190, 180, 166),   // off-white Coconino
+  C(120, 115, 110),   // grey siltstone
+  C(58, 55, 53),      // dark basalt
+  C(196, 188, 178),   // quartz
+  C(172, 158, 137),   // cream limestone
+];
+const GRAIN_MIX = [0.28, 0.18, 0.12, 0.16, 0.07, 0.08, 0.11];
+const GRAIN_CDF = (() => { let a = 0; return GRAIN_MIX.map(v => (a += v)); })();
+const pickGrain = (r) => {
+  for (let i = 0; i < GRAIN_CDF.length; i++) if (r <= GRAIN_CDF[i]) return i;
+  return 0;
+};
+
+/**
+ * Three overlapping grain populations, at roughly 4 cm, 1.7 cm and 7 mm.
+ *
+ * The construction matters more than the numbers. The previous version summed
+ * fBm octaves, and a sum of smooth noise is one continuous membrane however many
+ * octaves go into it — which is exactly what it looked like. Granular material is
+ * not a sum, it is a *packing*: each grain occupies space, the largest stand
+ * proudest, and the smaller ones fill the gaps between them rather than riding on
+ * their backs. So the height below is the maximum over the populations, not their
+ * sum, and each texel takes the colour and roughness of whichever grain won.
+ * That yields interstices for the fines to fill, real crevices between touching
+ * neighbours for the cavity pass to darken, and a different mineral in each stone.
+ *
+ * Radii are in cell units, so 0.28–0.46 is a grain between about six and nine
+ * tenths of a cell across: touching or nearly touching, which is what a packed
+ * bed looks like. `pres` is the fraction of cells hosting a grain of that class,
+ * so with three classes an order of magnitude apart the size distribution comes
+ * out roughly power-law — many small, few large.
+ */
+const GRAINS = [
+  { f: 26, rMin: 0.20, rMax: 0.47, pres: 0.26, hgt: 1.00, seed: 401, flat: 0.60 },
+  { f: 61, rMin: 0.22, rMax: 0.45, pres: 0.48, hgt: 0.44, seed: 409, flat: 0.70 },
+  { f: 146, rMin: 0.26, rMax: 0.46, pres: 0.70, hgt: 0.19, seed: 419, flat: 0.78 },
+];
+for (const G of GRAINS) G.hMax = G.hgt * G.flat;
 
 export function makeDirt(size = 1024) {
   const N = size * size;
@@ -143,67 +200,108 @@ export function makeDirt(size = 1024) {
       const u = x / size;
       const i = y * size + x;
 
-      /* three bands of relief: broad hummocks, a grit layer, and the
-         individual grains that only matter within about a metre */
+      /* Broad relief, kept small. This is the term that used to carry 0.55, and
+         it is the term that read as popcorn: half-metre swells of smooth noise
+         are not a property of dirt at grain-map scale. */
       const broad = pfbm(u * 5, v * 5, 5, 4, 11);
-      const grit = pfbm(u * 46, v * 46, 46, 3, 71);
-      const grain = pfbm(u * 190, v * 190, 190, 2, 233);
+      const fines = pfbm(u * 205, v * 205, 205, 2, 233);
 
-      /* Embedded clasts — small stones set into the compacted surface. Very
-         faint on purpose. Loose stone is instanced geometry now, and a Worley
-         field of identical hemispherical bumps painted here as well is exactly
-         the popcorn-ceiling read: same size, same value, same spacing, and a
-         displacement of the surface rather than an object resting on it. */
-      const wp = pworley(u * 34, v * 34, 34, 401, 0.95);
-      const rad = 0.13 + wp.id * 0.17;
-      const inside = clamp((rad - wp.f1) / rad, 0, 1);
-      const clast = Math.sqrt(inside) * (wp.id > 0.78 ? 1 : 0);
+      /* the matrix of fines, which is the bed the grains are set into */
+      let hh = broad * 0.13 + fines * 0.055;
+      let gi = -1, gid = 0, gtop = 0, gcell = 0;
 
-      /* hairline fissures. Ridged noise rather than cell edges: real shrinkage
-         at this scale wanders, and a Worley net reads as a tiled honeycomb. */
-      const crack = Math.pow(clamp(pridged(u * 22, v * 22, 22, 3, 907) - 0.62, 0, 1) * 2.7, 1.6);
-
-      h[i] = broad * 0.55 + grit * 0.18 + grain * 0.050 + clast * 0.09 - crack * 0.10;
-
-      /* colour: dust film on the highs, damp oxide in the lows, clasts
-         pulled toward a cooler grey-red so they separate from the matrix */
-      /* Value variation belongs at the scale of patches of ground, not at the
-         scale of grains, so `broad` carries almost all of it. */
-      const dry = clamp(broad * 1.05 + grit * 0.12 - 0.14, 0, 1);
-      let col = mixC(DIRT_DAMP, DIRT_BASE, smoothstep(0.0, 0.45, dry));
-      col = mixC(col, DIRT_DUST, smoothstep(0.42, 0.86, dry));
-      col = mixC(col, DIRT_PALE, smoothstep(0.74, 1.0, dry) * 0.6);
-      if (clast > 0.01) {
-        const stone = mixC(C(122, 84, 66), C(158, 122, 100), wp.id);
-        col = mixC(col, stone, clamp(clast * 1.35, 0, 1) * 0.20);
+      for (let L = 0; L < GRAINS.length; L++) {
+        const G = GRAINS[L];
+        const w = pworley(u * G.f, v * G.f, G.f, G.seed, 1.0);
+        /* The cell id decides both whether the cell holds a grain and how big it
+           is, so size varies grain to grain rather than only class to class. */
+        if (w.id > G.pres) continue;
+        const t = w.id / G.pres;
+        /* Skewed, so within a class most grains are near the small end. Combined
+           across three classes an order of magnitude apart this is what gives a
+           roughly power-law distribution rather than three visible size bands. */
+        const rad = G.rMin + Math.pow(t, 1.7) * (G.rMax - G.rMin);
+        if (w.f1 >= rad) continue;
+        /* Flattened dome. Water-worn grains are oblate and settle on their broad
+           face; a true hemisphere reads as a bead. */
+        /* Chip the outline. A perfectly circular plan makes every grain an egg,
+           and a bed of eggs is the read the last version got. Nibbling the radius
+           with noise finer than the grain itself gives irregular, chipped
+           outlines, which is what fracture and abrasion actually produce. */
+        const q = (w.f1 / rad) * (0.84 + 0.30 * fines);
+        if (q >= 1) continue;
+        const top = G.hMax * Math.pow(1 - q * q, 0.36);
+        if (top > gtop) { gtop = top; gi = L; gid = t; gcell = w.id; }
       }
-      col = mixC(col, DIRT_DAMP, crack * 0.18);
-      /* per-texel speckle keeps mip level 0 from looking airbrushed */
-      const sp = (hash2(x, y, 5501) - 0.5) * 13;
-      alb[i * 4] = clamp(col[0] + sp, 0, 255);
-      alb[i * 4 + 1] = clamp(col[1] + sp * 0.92, 0, 255);
-      alb[i * 4 + 2] = clamp(col[2] + sp * 0.85, 0, 255);
-      alb[i * 4 + 3] = 255;
+      /* max, not sum: the grain occupies the space and the fines fill around it */
+      const grainH = gtop * 0.60;
+      if (grainH > hh) hh = grainH; else gi = -1;
+      h[i] = hh;
 
-      /* polished clast tops are the only thing here that is not matte */
-      rough[i] = 0.94 - clast * 0.30 - grain * 0.05 + crack * 0.04;
+      /* ---- colour ---- */
+      const dry = clamp(broad * 1.05 - 0.10, 0, 1);
+      let col = mixC(DIRT_DAMP, DIRT_BASE, smoothstep(0.0, 0.42, dry));
+      col = mixC(col, DIRT_DUST, smoothstep(0.40, 0.84, dry));
+      col = mixC(col, DIRT_PALE, smoothstep(0.72, 1.0, dry) * 0.55);
+      let rg = 0.95 - fines * 0.05;
+
+      if (gi >= 0) {
+        const G = GRAINS[gi];
+        /* Keyed off the winning cell's own hash rather than off the grid square.
+           With full jitter the nearest feature point is often in a neighbouring
+           cell, so hashing the grid square paints colour patches that do not line
+           up with the grains they are supposed to be — which is why the bed came
+           out one uniform tint however wide the palette was. */
+        const lith = pickGrain((gcell * 91.7 + gi * 0.37) % 1);
+        /* Wide, and centred below one. Most of the palette is lighter than the
+           matrix, so without pulling the spread down the bed comes out as pale
+           stones on dark fines with nothing going the other way — and half the
+           stones in a real wash are darker than the dirt around them. */
+        const val = 0.62 + ((gcell * 313.7) % 1) * 0.66;
+        const stone = [
+          clamp(GRAIN_COL[lith][0] * val, 0, 255),
+          clamp(GRAIN_COL[lith][1] * val, 0, 255),
+          clamp(GRAIN_COL[lith][2] * val, 0, 255),
+        ];
+        /* A grain barely clear of the fines is half covered in them, so how much
+           of its own colour shows depends on how proud it stands *for its class* —
+           normalised, or the fine population never gets past a tenth of its own
+           colour and the whole bed reads as one size of stone. */
+        const cover = smoothstep(0.10, 0.62, gtop / G.hMax);
+        col = mixC(col, stone, cover * 0.95);
+        rg = mix(rg, 0.86 - gid * 0.05, cover);
+      }
+
+      /* per-texel speckle keeps mip level 0 from looking airbrushed */
+      const sp = (hash2(x, y, 5501) - 0.5) * 15;
+      alb[i * 4] = clamp(col[0] + sp, 0, 255);
+      alb[i * 4 + 1] = clamp(col[1] + sp * 0.96, 0, 255);
+      alb[i * 4 + 2] = clamp(col[2] + sp * 0.92, 0, 255);
+      alb[i * 4 + 3] = 255;
+      rough[i] = rg;
     }
   }
 
-  const ao = aoFromHeight(h, size, 2, 9, 2.6);
+  /* Tighter and stronger than before. The whole point of a packing is that
+     touching grains meet in a crevice, and the crevice has to go dark or the bed
+     reads as one lumpy surface again. */
+  const ao = aoFromHeight(h, size, 2, 8, 3.6);
   return {
     albedo: dataTex(alb, size, true),
-    /* 2.6 m tile, ~30 mm of relief → about 12 */
-    normal: dataTex(normalFromHeight(h, size, size * 0.0118), size, false),
+    /* 2.6 m tile at 1024 is 2.5 mm per texel, and a field unit is about 25 mm of
+       relief, which puts the strength near 10. */
+    normal: dataTex(normalFromHeight(h, size, size * 0.0102), size, false),
     arm: dataTex(packARM(ao, rough, h, size), size, false),
   };
 }
 
 /* ── wind-drifted sand: the finer, pinker material ─────────────────────── */
 
-const SAND_LOW = C(150, 105, 88);
-const SAND_MID = C(190, 145, 121);
-const SAND_TOP = C(216, 178, 152);
+/* Drifted sand is the palest and least saturated material in the scene: it is
+   sorted quartz with the oxide fines blown out of it. */
+const SAND_LOW = C(124, 100, 88);
+const SAND_MID = C(156, 132, 116);
+const SAND_TOP = C(180, 158, 141);
 
 export function makeSand(size = 512) {
   const N = size * size;
@@ -230,22 +328,41 @@ export function makeSand(size = 512) {
       const drift = pfbm(u * 4, v * 4, 4, 4, 313);
       const grain = pfbm(u * 220, v * 220, 220, 2, 887);
 
-      h[i] = drift * 0.5 + ripple * 0.075 + grain * 0.035;
+      /* A lag of coarse granules left on the ripple crests when the wind sorted
+         the fines out from under them. Sand grains themselves are well below one
+         texel here, so the only granularity that can survive on a sand sheet at
+         this scale is the coarse tail of the distribution — and without it the
+         sheet is a smooth membrane in exactly the way the floor was. */
+      const lg = pworley(u * 88, v * 88, 88, 971, 1.0);
+      let lag = 0;
+      if (lg.id < 0.30) {
+        const rad = 0.26 + (lg.id / 0.30) * 0.16;
+        if (lg.f1 < rad) {
+          const q = lg.f1 / rad;
+          lag = Math.pow(1 - q * q, 0.45) * (0.45 + 0.55 * smoothstep(0.30, 0.75, ripple));
+        }
+      }
+
+      h[i] = drift * 0.5 + ripple * 0.075 + grain * 0.035 + lag * 0.045;
 
       const bright = clamp(ripple * 0.6 + drift * 0.55 - 0.1, 0, 1);
       let col = mixC(SAND_LOW, SAND_MID, smoothstep(0.0, 0.55, bright));
       col = mixC(col, SAND_TOP, smoothstep(0.5, 1.0, bright));
+      if (lag > 0.01) {
+        const gl = pickGrain(hash2(Math.floor(u * 88), Math.floor(v * 88), 6203));
+        col = mixC(col, GRAIN_COL[gl], smoothstep(0.05, 0.60, lag) * 0.80);
+      }
       const sp = (hash2(x, y, 991) - 0.5) * 15;
       alb[i * 4] = clamp(col[0] + sp, 0, 255);
       alb[i * 4 + 1] = clamp(col[1] + sp, 0, 255);
       alb[i * 4 + 2] = clamp(col[2] + sp * 0.9, 0, 255);
       alb[i * 4 + 3] = 255;
 
-      rough[i] = 0.97 - grain * 0.06;
+      rough[i] = 0.97 - grain * 0.06 - lag * 0.12;
     }
   }
 
-  const ao = aoFromHeight(h, size, 2, 7, 1.9);
+  const ao = aoFromHeight(h, size, 2, 7, 2.4);
   return {
     albedo: dataTex(alb, size, true),
     /* 2.2 m tile, ~20 mm of relief → about 5 */
@@ -261,9 +378,13 @@ export function makeSand(size = 512) {
    independent set of stripes inside the tile cuts across those at a different
    angle and the wall reads as cross-hatching. What is left here is only the
    shade-to-shade variation within a single bed. */
+/* Salmon-terracotta with a grey-brown cast from varnish and dust, at about a
+   third saturation. Measured against photographs, real Sedona rock sits near
+   0.33 mean even under a warm low sun; the 0.54 these carried before renders,
+   once multiplied by a warm key, at roughly double reality. */
 const ROCK_BANDS = [
-  C(164, 106, 76), C(170, 114, 84), C(158, 100, 72),
-  C(172, 118, 88), C(166, 110, 80), C(160, 102, 74),
+  C(150, 114, 101), C(157, 121, 107), C(143, 108, 95),
+  C(161, 126, 112), C(152, 116, 102), C(146, 110, 97),
 ];
 
 export function makeRock(size = 1024) {
@@ -293,11 +414,13 @@ export function makeRock(size = 1024) {
       let col = mixC(c0, c1, smoothstep(0.68, 1.0, bt));
 
       const cross = pfbm(u * 9 + v * 2, v * 26, 9, 3, 613);
-      col = mixC(col, mixC(col, C(200, 168, 138), 0.5), cross * 0.18);
+      col = mixC(col, mixC(col, C(204, 190, 174), 0.5), cross * 0.18);
 
-      /* desert varnish: dark mineral streaks running down the face */
+      /* Desert varnish: dark mineral streaks running down the face. Varnish is a
+         manganese-iron clay film and it is grey-brown, not red — it is one of the
+         main reasons a real butte is less saturated than its own fresh rock. */
       const varn = Math.pow(clamp(pfbm(u * 16, v * 2.5, 16, 4, 733) * 1.5 - 0.42, 0, 1), 1.4);
-      col = mixC(col, C(84, 52, 41), varn * 0.26);
+      col = mixC(col, C(90, 76, 70), varn * 0.34);
 
       /* Jointing, at 13 cells across a 14 m tile — about one metre. Seven cells
          put two-metre polygons on the map, and a two-metre polygon network
@@ -371,7 +494,10 @@ export function makeClastSurface(size = 512) {
       alb[i * 4 + 1] = val;
       alb[i * 4 + 2] = val;
       alb[i * 4 + 3] = 255;
-      rough[i] = 0.80 - grit * 0.10 + mot * 0.08;
+      /* Never glossy. A dry stone in a wash has a matte, dust-filmed surface, and
+         a roughness dipping into the 0.7s under a hard low key puts a specular
+         sparkle on every clast facing the sun. */
+      rough[i] = 0.88 - grit * 0.05 + mot * 0.06;
     }
   }
   const ao = aoFromHeight(h, size, 2, 8, 2.0);
