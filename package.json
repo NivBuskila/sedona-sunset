@@ -1,0 +1,17 @@
+{
+  "name": "sedona-sunset",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "First-person walk through Sedona, Arizona at golden hour. Fully procedural Three.js.",
+  "scripts": {
+    "dev": "node tools/serve.mjs",
+    "shoot": "node tools/shoot.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.0"
+  },
+  "dependencies": {
+    "three": "^0.180.0"
+  }
+}
