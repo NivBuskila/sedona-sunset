@@ -15,7 +15,7 @@
  * reason procedural dirt reads as a flat photograph of noise.
  */
 import * as THREE from 'three';
-import { pfbm, pridged, pworley, hash2, clamp, smoothstep, mix } from './noise.js';
+import { pnoise, pfbm, pridged, pworley, hash2, clamp, smoothstep, mix } from './noise.js';
 
 /* ── plumbing ──────────────────────────────────────────────────────────── */
 
@@ -136,26 +136,40 @@ const mixC = (a, b, t) => [mix(a[0], b[0], t), mix(a[1], b[1], t), mix(a[2], b[2
    first pass at it left the values where they were, and a low-saturation *bright*
    surface is gypsum or caliche, not oxide dirt: the wash came out reading as pale
    sand. Real red dirt reflects about a fifth of the light that falls on it. */
-const DIRT_DAMP = C(76, 58, 54);    // shadowed hollows, still damp, purple-brown
-const DIRT_BASE = C(126, 96, 82);   // oxide-stained silt, the dominant colour
-const DIRT_DUST = C(154, 130, 115); // dust film on the high spots
-const DIRT_PALE = C(176, 158, 145); // wind-sorted fines, nearly grey
+/* Chroma raised again, values held. The measurement these were tuned to was
+   wrong: the figure chased for the wash floor — 0.09 saturation — is wet grey
+   concrete, and a real sunlit wash floor measures 0.47 to 0.56. Value is what
+   stays; a low-saturation *bright* surface is gypsum, not oxide dirt. */
+const DIRT_DAMP = C(84, 47, 39);    // shadowed hollows, still damp, purple-brown
+const DIRT_BASE = C(134, 82, 55);   // oxide-stained silt, the dominant colour
+const DIRT_DUST = C(160, 118, 87); // dust film on the high spots
+const DIRT_PALE = C(179, 151, 127); // wind-sorted fines, nearly grey
+const MUD_STRINGER = C(152, 54, 18); // iron-rich clay smear, the saturated end
 
 /* Lithologies present in the *matrix itself*, not only in the instanced stones.
    A Sedona wash carries buff-white Coconino, grey Schnebly siltstone, cream
    caprock limestone, black basalt off the rim and quartz alongside the local red
    sandstone. Grain scale is where that polychrome scatter does the most work,
    because it is what the eye actually resolves standing on the floor. */
+/* Wide in chroma, narrow in value, for the same reason the instanced clasts are:
+   the saturated tail a real wash floor has — a 99th percentile near 0.88 against
+   a mean near 0.50 — comes from individual iron-stained and mud-coated grains
+   sitting beside pale quartz, and it cannot be had by raising the matrix, which
+   just returns the orange membrane. Value extremes are a different matter: they
+   are what turns a receding gravel bed into a black-and-white hash, so the basalt
+   is a dark grey-brown rather than the near-black it was. */
 const GRAIN_COL = [
-  C(130, 94, 80),     // red Schnebly sandstone
+  C(168, 56, 22),     // iron-stained red — carries the saturated tail
+  C(133, 88, 68),     // red Schnebly sandstone
+  C(176, 100, 34),    // orange mud coating
   C(152, 128, 108),   // buff sandstone
   C(190, 180, 166),   // off-white Coconino
   C(120, 115, 110),   // grey siltstone
-  C(58, 55, 53),      // dark basalt
+  C(76, 68, 63),      // desert-varnished dark
   C(196, 188, 178),   // quartz
   C(172, 158, 137),   // cream limestone
 ];
-const GRAIN_MIX = [0.28, 0.18, 0.12, 0.16, 0.07, 0.08, 0.11];
+const GRAIN_MIX = [0.10, 0.24, 0.08, 0.15, 0.10, 0.13, 0.07, 0.06, 0.07];
 const GRAIN_CDF = (() => { let a = 0; return GRAIN_MIX.map(v => (a += v)); })();
 const pickGrain = (r) => {
   for (let i = 0; i < GRAIN_CDF.length; i++) if (r <= GRAIN_CDF[i]) return i;
@@ -272,6 +286,21 @@ export function makeDirt(size = 1024) {
         rg = mix(rg, 0.86 - gid * 0.05, cover);
       }
 
+      /* ---- oxide stringers ----
+         Where the last flood left a smear of fine iron-rich clay, it dries to a
+         thin skin far more saturated than anything around it. These are the only
+         feature at a scale the eye resolves from standing height that carries the
+         top of the saturation distribution, and without them the floor has no
+         saturated tail at all: a narrow band at the right mean still reads as
+         procedural. Elongated along the flow, because that is how a smear of clay
+         is laid down. */
+      const str = 0.55 * pnoise(u * 7, v * 34, 7, 34, 877)
+                + 0.30 * pnoise(u * 14, v * 68, 14, 68, 1490)
+                + 0.15 * pnoise(u * 28, v * 136, 28, 136, 2203);
+      const strW = smoothstep(0.60, 0.86, str) * (1 - smoothstep(0.86, 0.97, str) * 0.5);
+      col = mixC(col, MUD_STRINGER, strW * 0.86);
+      rg = mix(rg, 0.80, strW * 0.6);
+
       /* per-texel speckle keeps mip level 0 from looking airbrushed */
       const sp = (hash2(x, y, 5501) - 0.5) * 15;
       alb[i * 4] = clamp(col[0] + sp, 0, 255);
@@ -299,9 +328,9 @@ export function makeDirt(size = 1024) {
 
 /* Drifted sand is the palest and least saturated material in the scene: it is
    sorted quartz with the oxide fines blown out of it. */
-const SAND_LOW = C(124, 100, 88);
-const SAND_MID = C(156, 132, 116);
-const SAND_TOP = C(180, 158, 141);
+const SAND_LOW = C(130, 87, 62);
+const SAND_MID = C(162, 118, 88);
+const SAND_TOP = C(186, 145, 114);
 
 export function makeSand(size = 512) {
   const N = size * size;
@@ -325,6 +354,19 @@ export function makeSand(size = 512) {
       const rip = 0.5 + 0.5 * Math.sin((v * 9 + warp * 2.2 + warp2 * 0.7 + u * 1.0) * Math.PI * 2);
       const cover = smoothstep(0.34, 0.62, pfbm(u * 5, v * 5, 5, 3, 23));
       const ripple = Math.pow(rip, 1.5) * 0.62 * cover;
+      /* A second, finer train crossing the first. A dry wash bed carries relict
+         current ripples from the last flood with wind ripples worked across them
+         at an angle over the weeks since, and the interference between two
+         wavelengths is most of what stops a sand sheet reading as corrugation.
+         Seven-centimetre wavelength, so a third of the current ripples. */
+      const wwarp = pfbm(u * 6, v * 6, 6, 3, 29) - 0.5;
+      const wind = Math.pow(0.5 + 0.5 * Math.sin((u * 26 + v * 9 + wwarp * 3.4) * Math.PI * 2), 1.7)
+                 * smoothstep(0.30, 0.66, pfbm(u * 7, v * 7, 7, 3, 31));
+      /* Parting lineation: fine streaks drawn out along the flow direction where
+         the last of the water sheeted off. Almost no relief, but it is directional,
+         and one directional cue at this scale is the difference between a surface
+         that water ran over and a surface that was noise-displaced. */
+      const lin = pfbm(u * 9, v * 135, 9, 2, 37);   // 135 = 15 periods, so it tiles
       const drift = pfbm(u * 4, v * 4, 4, 4, 313);
       const grain = pfbm(u * 220, v * 220, 220, 2, 887);
 
@@ -343,9 +385,15 @@ export function makeSand(size = 512) {
         }
       }
 
-      h[i] = drift * 0.5 + ripple * 0.075 + grain * 0.035 + lag * 0.045;
+      /* Reweighted hard. The ripple train carried 0.075 of a field unit against the
+         smooth drift's 0.5 — about a millimetre and a half of relief against eleven
+         — so what the sheet actually presented was a broad hillshaded swell with no
+         bedform on it at all, which is exactly the criticism. A real current ripple
+         in a wash is one to two centimetres from trough to crest. */
+      h[i] = drift * 0.20 + ripple * 0.44 + wind * 0.17 + lin * 0.045
+           + grain * 0.030 + lag * 0.045;
 
-      const bright = clamp(ripple * 0.6 + drift * 0.55 - 0.1, 0, 1);
+      const bright = clamp(ripple * 0.52 + wind * 0.22 + drift * 0.38 - 0.08, 0, 1);
       let col = mixC(SAND_LOW, SAND_MID, smoothstep(0.0, 0.55, bright));
       col = mixC(col, SAND_TOP, smoothstep(0.5, 1.0, bright));
       if (lag > 0.01) {

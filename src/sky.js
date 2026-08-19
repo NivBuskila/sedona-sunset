@@ -110,12 +110,16 @@ export function buildSky() {
 }
 
 /* The shadow camera is deliberately small and the map deliberately large: at
-   96 m across a 4096 map that is 23 mm per texel, which is what it takes for a
-   50 mm pebble to cast anything at all. A 190 m box would put four pebbles in
+   68 m across a 4096 map that is 17 mm per texel, which is what it takes for a
+   50 mm pebble to cast anything at all. A 190 m box would put eight pebbles in
    one texel and the whole gravel field would go back to reading as bumps. The
-   trade is that terrain beyond about fifty metres off the corridor axis stops
-   self-shadowing, which at this sun angle is hidden inside the haze anyway. */
-export const SHADOW_HALF = 48;
+   trade is that terrain beyond about thirty-five metres off the corridor axis
+   stops self-shadowing, which at this sun angle is hidden inside the haze anyway.
+   Tightened from 48: with the sun at eight degrees the depth slope across a
+   texel on level ground is seven to one, so the bias needed to keep the floor
+   from shadowing itself scales directly with texel size, and at 23 mm that bias
+   was larger than most of the pebbles casting into it. */
+export const SHADOW_HALF = 34;
 
 /** PROVISIONAL golden-hour key + sky fill. Replaced wholesale by System 4. */
 export function buildLights() {
@@ -140,9 +144,22 @@ export function buildLights() {
   /* The light is nearly horizontal, so the depth range has to span the whole
      corridor along the sun axis rather than just the visible box. */
   c.near = 180; c.far = 1150;
-  sun.shadow.bias = -0.00016;
-  sun.shadow.normalBias = 0.022;
-  sun.shadow.radius = 1.0;
+  /* Bias sized for a light this low, which is the whole difficulty. A shadow map
+     compares one depth per texel, and on the wash floor the sun arrives at
+     eighty-two degrees of incidence, so depth changes by seven times the texel
+     size across a single texel. A bias that works on a slope facing the sun
+     leaves level ground shadowing itself in a random per-pixel speckle. The normal
+     offset does the work because it scales with the texel footprint rather than with
+     depth, and it has to be spent carefully: every centimetre of it is a centimetre
+     of shadow erased from the base of whatever casts it, and a pebble's whole shadow
+     is only tens of centimetres long. Sized to what the tighter map can afford, and
+     no more — grain-scale occlusion is marched analytically in the terrain shader
+     rather than asked of the map, which is what makes that affordable. */
+  sun.shadow.bias = -0.00035;
+  sun.shadow.normalBias = 0.038;
+  /* Wider PCF. Four taps spread over two texels is still not much of a filter, but
+     it turns the residual per-pixel decision into a gradient. */
+  sun.shadow.radius = 1.9;
 
   /* The dome is the main source now, and it is doing double duty: warm-lilac
      above because a sunset sky is orange near the horizon and violet higher up,
@@ -154,7 +171,14 @@ export function buildLights() {
      crushed blacks read as a rendering fault long before they read as contrast —
      but no higher. The fill's job is to put violet *into the shadows*, and a fill
      strong enough to be visible on the lit side puts it everywhere instead. */
-  const hemi = new THREE.HemisphereLight(0xc0b2cc, 0xa8907c, 1.45);
+  /* Raised, because a rock face in shadow was coming out at about a tenth of the
+     lit value and one faceted slab in full sun measured essentially zero. Under an
+     open sky dome above a pale, strongly reflective bed, a shadowed face sits at
+     fifteen to twenty-five percent of the sunlit value and is violet and luminous,
+     never black. The lit side barely moves — it is dominated by the key — so this
+     buys the shadow end without milking the frame, which is the failure mode the
+     first attempt at a cool fill ran into. */
+  const hemi = new THREE.HemisphereLight(0xc0b2cc, 0xa8907c, 2.15);
 
   /* The bright sky immediately around the sun is a large, soft source in its
      own right. Casts nothing. */

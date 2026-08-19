@@ -21,6 +21,28 @@ a real sunset photograph of Sedona. Not stylized, not low-poly, not "good for a 
   user games on the same machine, so the running app must not saturate CPU or GPU. Keep
   draw calls under ~150 and triangles under ~3M. Use instancing for anything repeated.
 
+## Colour targets, measured from real photographs
+
+These are HSV saturation figures measured on *region crops* of real Sedona and Arizona
+photographs — never on whole frames, which average in the sky and are meaningless.
+
+| Surface | mean | p95 | p99 |
+| --- | --- | --- | --- |
+| Sedona rock, warm low sun | 0.42 – 0.65 | 0.59 – 1.00 | — |
+| Sunlit dry wash floor | 0.47 – 0.56 | 0.67 – 0.74 | 0.88 |
+
+An earlier critique asserted rock at 0.31–0.36 and a wash floor at **0.09**. Those figures
+were measured badly and do not survive contact with real photographs; a wash floor at 0.09
+is wet grey concrete. Chasing them desaturated the floor into mauve-beige. **Do not use
+them.** Anyone proposing a new colour target must measure real photographs and show the
+numbers.
+
+The distribution matters more than the mean. A real wash floor gets its saturation spread
+from mixed lithology — iron-stained red clasts, desert-varnished near-black pebbles, and
+orange mud stringers sitting beside pale quartz sand. That produces a long saturated tail
+(p99 ≈ 0.88). A narrow band at any mean reads as procedural however well the mean is
+matched, so widen the tail rather than raising the average.
+
 ## Build order
 
 Each system is built to completion and passes visual critique before the next one starts.

@@ -22,6 +22,7 @@
  */
 import * as THREE from 'three';
 import { fbm, ridged, clamp, smoothstep, mix } from './noise.js';
+import { SUN_DIR, SUN_EL } from './sky.js';
 
 /** Staircase with hard risers. `sharp` is the fraction of each step spent rising. */
 function stair(v, n, sharp) {
@@ -179,6 +180,15 @@ export class Terrain {
        between them the bed is scoured bare. Constant density is the loudest
        tell that stones were placed by a loop. */
     const lag = smoothstep(0.42, 0.80, ridged(f.s * 0.028, 0.5, 2, 261));
+    /* Stringers. A flood does not lay its coarse fraction down evenly even inside
+       a lag band: competence varies across the channel as well as along it, so the
+       cobbles collect into ribbons a metre or two wide drawn out along the flow,
+       with swept ground between them. Anisotropic on purpose — ten times the
+       correlation length along the wash as across it — because that elongation is
+       the part the eye reads as current. Multiplied into the coarse classes, this is
+       what turns one constant areal density into a patchy bed. */
+    const string = smoothstep(0.40, 0.74,
+      0.5 + 0.5 * fbm(f.u * 0.62 + 40, f.s * 0.062, 3, 281));
     const bare = Math.max(
       smoothstep(0.50, 0.70, 0.5 + 0.5 * fbm(x * 0.032, z * 0.032, 3, 251)),
       smoothstep(0.58, 0.78, 0.5 + 0.5 * fbm(x * 0.110, z * 0.110, 2, 253)));
@@ -192,7 +202,7 @@ export class Terrain {
     const pile = 0.10 + 1.55 * smoothstep(0.44, 0.80, 0.5 + 0.5 *
       fbm(x * 0.055, z * 0.055, 3, 271));
 
-    return { chan, bar, terr, tal, talPos, sheet, bare, lag, pan, pile, f };
+    return { chan, bar, terr, tal, talPos, sheet, bare, lag, string, pan, pile, f };
   }
 
   heightAtQ(x, z, q) {
@@ -315,7 +325,7 @@ export class Terrain {
        checkerboard of alternate raised and lowered cells: a patch of ground that
        looked like a heap of sugar cubes. Detail at that scale belongs in the normal
        map, where it is not sampled by vertices at all. */
-    h += talRaw * 3.3 * cone * (0.86 + 0.28 * fbm(x * 0.30, z * 0.30, 2, 191))
+    h += talRaw * 4.4 * cone * (0.86 + 0.28 * fbm(x * 0.30, z * 0.30, 2, 191))
        + smoothstep(0.04, 0.30, talRaw) * cone
          * 0.52 * fbm(x * 0.28, z * 0.28, 2, 192);
     const tal = talRaw;
@@ -339,7 +349,7 @@ export class Terrain {
        sharp divides instead of draping as one smooth dune — a wall built only
        from fBm reads as sand however it is textured. */
     h += ramp * (2.1 * fbm(x * 0.031, z * 0.031, 4, 117)
-               + 2.7 * (ridged(x * 0.026, z * 0.026, 3, 118) - 0.45));
+               + 2.2 * (ridged(x * 0.026, z * 0.026, 3, 118) - 0.45));
 
     /* The coarse form, kept aside for the stratigraphy below to trace. Bedding
        has to be read off a surface that the drainage has not cut into: a gully
@@ -398,12 +408,22 @@ export class Terrain {
          right at the limit of what the grid can carry, so it never resolved as
          relief — it resolved as a hairline highlight on its own lip. Grain at
          that scale belongs in the normal map, not in the height field. */
-      const cut = 3.8 * m1 * (0.30 + 0.70 * (1 - t))
-                + 1.45 * merge * gGate * smoothstep(0.50, 1.00, r2) * smoothstep(0.12, 0.72, t);
+      /* Cut shallower. A four-metre groove leaves a metre-scale lip between it and
+         its neighbour, and at eight degrees of solar elevation that lip is a blown
+         cream highlight running the full height of the wall — a whole wall of them
+         is the corduroy read, and it got louder once the macro tonal noise that had
+         been masking it came down. Depth is not what makes drainage legible;
+         convergence is, and that is what `merge` and the fans do. */
+      const cut = 2.3 * m1 * (0.30 + 0.70 * (1 - t))
+                + 0.95 * merge * gGate * smoothstep(0.50, 1.00, r2) * smoothstep(0.12, 0.72, t);
       h -= ramp * cut * smoothstep(0.0, 0.13, t);
 
-      const fanAxis = 1 - Math.min(1, Math.abs(av - f.ws - 2.5) / 7.5);
-      h += m1 * fanAxis * fanAxis * 1.75;
+      /* Every gully mouth drops what it carried. Widened and deepened: a debris
+         fan is the visible *product* of the drainage above it, and rills that
+         deposit nothing are the other half of why they read as corduroy rather
+         than as a drainage network. */
+      const fanAxis = 1 - Math.min(1, Math.abs(av - f.ws - 3.0) / 9.5);
+      h += m1 * fanAxis * fanAxis * 2.7;
     }
 
     /* ── stratigraphy ──
@@ -489,8 +509,12 @@ export class Terrain {
                                it comes back as per-vertex speckle, not as grain —
                                grain at that scale is the normal map's job. */
                             + 0.030 * fbm(x * 0.34, z * 0.34, 2, 115))
-       + ramp * (0.62 * fbm(x * 0.13, z * 0.13, 3, 119)
-               + 0.13 * fbm(x * 0.30, z * 0.30, 2, 121));
+       /* Held down hard on the wall ramp. Sixty centimetres of relief at a
+          two-metre wavelength on a slope this steep, under a sun this low, is a
+          field of blown crests and black troughs — the wall's texture stops being
+          rock and becomes a bright hatch. */
+       + ramp * (0.30 * fbm(x * 0.13, z * 0.13, 3, 119)
+               + 0.06 * fbm(x * 0.30, z * 0.30, 2, 121));
 
     return h;
   }
@@ -605,6 +629,8 @@ uniform vec3  uDamp;
 uniform vec3  uCool;
 uniform vec3  uSilt;
 uniform vec3  uStone;
+uniform vec2  uSunStep;   // dirt-tile UV travelled per metre along the sun azimuth
+uniform float uSunRise;   // grain-height units gained per metre along it
 uniform float uBedT;
 varying vec3 vWPos;
 varying vec3 vWNrm;
@@ -613,6 +639,11 @@ varying float vPan;
 varying float vWall;
 
 float tRough;
+/* Pixel-footprint confidence, 1 near and 0 once a pixel covers many grains, and
+   the grain-scale sun occlusion. Both set in the surface block and read by the
+   filtered shadow lookup, which runs later. */
+float gFoot = 1.0;
+float gRake = 1.0;
 float tAO;
 vec3  tNrmW;
 
@@ -656,6 +687,29 @@ vec3 bumpFrom(float hgt, vec3 N, float scale){
 const SURFACE = /* glsl */`
 vec3 gN = normalize(vWNrm);
 vec2 wxz = vWPos.xz;
+
+/* ---- pixel footprint, and why every bump here is filtered by it ----
+   The world-space width of one pixel at this fragment. At grazing incidence it
+   grows without bound along the view axis, and that is exactly where the grain
+   shading was breaking down into a black-and-white hash across the midground.
+   Averaging *albedo* over a footprint is what the mip chain already does
+   correctly. Averaging *normals* is not, because the lighting of a normal is
+   nonlinear: mip-averaging a grain field toward flat and then lighting it is a
+   completely different answer from lighting each grain and averaging the results,
+   and the max-of-populations packing in the grain map makes it worse still — the
+   packed height field has no mip-safe form at all. The only stable answer once a
+   pixel covers many grains is to stop perturbing the normal and shade the surface
+   flat, letting the albedo mip carry a fine even stipple, which is precisely what
+   distant gravel looks like. Each relief term below is therefore gated by the
+   footprint against its own feature size. */
+float foot = max(length(dFdx(vWPos)), length(dFdy(vWPos)));
+float grainF = 1.0 - smoothstep(0.007, 0.040, foot);   // grains, 5-30 mm
+float platF  = 1.0 - smoothstep(0.030, 0.120, foot);   // mud plates, 3-15 cm
+float rockF  = 1.0 - smoothstep(0.045, 0.260, foot);   // rock grain, 3-25 cm
+/* Against the shadow map's texel size rather than a feature size: the map is 4096
+   over 68 m, so a texel is 17 mm and a single binary sample stops meaning anything
+   much beyond that. */
+gFoot = 1.0 - smoothstep(0.020, 0.075, foot);
 
 /* Three scales of variation. The 61 m and 18 m maps break up the detail tiles;
    the 7 m map exists to fill the mid distance, where a two-scale scheme leaves
@@ -704,13 +758,50 @@ float sandF = mac.r * 1.15 + (mac2.r - 0.5) * 0.55 + (vr.b - 0.5) * 0.30;
    the inside of bends and nowhere else. */
 /* Silt pans win over sand where they overlap: both want the slack water on the
    inside of a bend, and if sand takes it the mud has nowhere left to be. */
-float panRaw = smoothstep(0.10, 0.50, vPan);
+/* Narrowed. Dried mud forms in ponded silt at the channel margin — a patch a few
+   metres across, not a facies covering a third of the floor, and at the previous
+   coverage the pan was competing with the gravel bed for the frame. */
+float panRaw = smoothstep(0.24, 0.62, vPan);
 float sandW = smoothstep(0.62, 0.68, sandF) * (1.0 - rockW)
             * smoothstep(0.30, 0.10, slope) * (1.0 - panRaw * 0.9);
 
+/* ---- raking grain shadows, marched in the height map ----
+ * With the sun at eight degrees, a one-centimetre grain throws a shadow seven
+ * centimetres long, and a floor covered in those raking fingers is most of what
+ * separates a bed strewn with stones from a bed with bumps painted on it. A
+ * shadow map cannot deliver them at this sun angle: the depth slope across a
+ * texel at eighty-two degrees of incidence forces a bias larger than the whole
+ * length of the shadow, so anything small enough to matter is either erased by
+ * the bias or reduced to per-pixel acne, and that trade is what the frame's worst
+ * artefact came out of.
+ *
+ * Marching the grain height field toward the sun instead gives the same shadows
+ * from the map that produced the grains, with none of that. Eight taps at eleven
+ * millimetres reach about nine centimetres, which covers what a grain of this size
+ * casts, and because it is ordinary texture sampling it filters through the mip
+ * chain and converges on the mean occlusion rather than on noise. It multiplies
+ * the direct term only, through the same shadow hook, because that is what it is.
+ */
+float dirtH = texture2D(uDirtM, d1).b;
+float rake = 0.0;
+for (int k = 1; k <= 8; k++) {
+  float t = float(k) * 0.011;                        // metres along the sun azimuth
+  float hs = texture2D(uDirtM, d1 + uSunStep * t).b;
+  rake = max(rake, hs - (dirtH + t * uSunRise));
+}
+gRake = 1.0 - clamp(rake * 3.4, 0.0, 1.0) * 0.88 * grainF * smoothstep(0.35, 0.10, slope);
+
 vec3 gA  = mix(dirtA, sandA, sandW);
-vec3 gNt = normalize(mix(dirtN, sandN, sandW));
 vec3 gM  = mix(dirtM, sandM, sandW);
+/* Relax each normal toward flat as the footprint passes *its own* feature size.
+   The dirt map's relief is grains, a few millimetres to three centimetres, and it
+   has to go early. The sand map's is a ripple train at a quarter of a metre, which
+   is resolvable four times as far out, and fading it on the grain schedule is what
+   left the sand reading as a blank hillshaded surface with no bedform on it. */
+vec3 gNt = normalize(mix(
+  normalize(mix(vec3(0.0, 0.0, 1.0), dirtN, 0.16 + 0.84 * grainF)),
+  normalize(mix(vec3(0.0, 0.0, 1.0), sandN, 0.16 + 0.84 * platF)),
+  sandW));
 vec3 gWN = tsToWorld(gNt, gN);
 
 /* ---- steep ground: reproject ----
@@ -737,7 +828,8 @@ if (steep > 0.006) {
   float w = steep * (1.0 - sandW);
   gA  = mix(gA, pA, w);
   gM  = mix(gM, pM, w);
-  gWN = normalize(mix(gWN, tsToWorld(normalize(pN), gN), w));
+  gWN = normalize(mix(gWN, tsToWorld(normalize(mix(vec3(0.0, 0.0, 1.0), pN,
+        0.16 + 0.84 * grainF)), gN), w));
 }
 
 /* ---- desiccation cracks ----
@@ -757,15 +849,39 @@ float panW = panRaw * smoothstep(0.24, 0.06, slope) * (1.0 - rockW);
    chequer at any grazing angle and cannot be seen from more than a stride away
    in any case. */
 vec3 ck = texture2D(uCrack, rot2(wxz, 2.10) * 0.3846).rgb;
-/* Plate tops are dusty buff and genuinely lighter than the gravel around them;
-   the crack interiors are genuinely dark. Relying on the curl ridge alone to
-   sell the mud leaves a net of bright wires over unchanged ground. */
-float crackH = (ck.b * 1.10 - ck.r * 2.4) * panW;
-gWN = bumpFrom(crackH, gWN, 0.135);
-gA = mix(gA, gA * uSilt * (0.80 + ck.g * 0.46), panW * 0.95);
-gA *= 1.0 - ck.r * panW * 0.68;
-gM.g = mix(gM.g, 0.99, panW * 0.6);
-gM.r *= 1.0 - ck.r * panW * 0.55;
+/* ---- and why this was the frame's worst artefact ----
+   The plate *edges* are the finest feature in the scene: a shrinkage crack is one
+   to three centimetres wide, an order of magnitude below the plate it bounds. So
+   the fade has to be keyed to the crack width, not to the plate size — at eight
+   metres and a grazing angle the plates are still three pixels across, which is
+   why gating this on plate size left it running at full strength, and a
+   two-and-a-half unit height step across a one-pixel line drives the shading
+   normal straight through the terminator. The result was a hard-edged cream and
+   near-black hash spread across the whole midground of every frame: bimodal, high
+   contrast, and following the crack net rather than the ground. It was diagnosed as
+   the gravel layer disintegrating; it was the mud.
+
+   The contrast is also cut hard, and rebalanced from the crack onto the curl. Real
+   desiccation polygons curl *upward* at their rims as they dry, so at a low sun each
+   plate catches a highlight along its sun-facing rim and throws a hairline shadow on
+   the other side, and the plate top is smoother than the sand around it. It is the
+   raised rim that carries the read, not a dark line: a deep black groove between
+   pale plates is a decal, which is what this had become. */
+float crkF = 1.0 - smoothstep(0.004, 0.016, foot);
+float crackH = (ck.b * 0.95 - ck.r * 0.85) * panW;
+/* Weak on purpose. The curl rim is a couple of millimetres of lift on a plate a
+   hand's width across, and a rim strong enough to be unmissable is a bright wire —
+   the pan came out as a net of glowing filaments over dark cores, which is the
+   decal read from the other direction. It should be a highlight you notice on the
+   sun-facing side of each plate, no more. */
+gWN = bumpFrom(crackH, gWN, 0.048 * crkF);
+gA = mix(gA, gA * uSilt * (0.88 + ck.g * 0.30), panW * 0.95);
+gA *= 1.0 - ck.r * panW * 0.34 * (0.30 + 0.70 * crkF);
+/* Clay dries smoother than the sand it sits in — a separate cue from the relief,
+   and one that survives to any distance because it is a roughness difference over
+   a whole patch rather than a feature. */
+gM.g = mix(gM.g, 0.86, panW * 0.75);
+gM.r *= 1.0 - ck.r * panW * 0.40 * (0.30 + 0.70 * crkF);
 
 /* ---- stratified alluvium on the bank faces ----
    A cut bank is a section, and a section through flood deposits is layered: a
@@ -798,13 +914,18 @@ if (bankW > 0.004) {
      step at every contact turns a bank into a flight of stairs. */
   gA *= mix(vec3(1.0), mix(vec3(0.88, 0.83, 0.80), vec3(1.13, 1.05, 0.93), coarse), bw * 0.34);
   gM.g = mix(gM.g, mix(0.99, 0.88, coarse), bw * 0.4);
-  gWN = bumpFrom((coarse - 0.5) * inBed * bankW, gWN, 0.022);
+  gWN = bumpFrom((coarse - 0.5) * inBed * bankW, gWN, 0.022 * platF);
 }
 
 /* ---- wall rock, triplanar so vertical faces do not smear ---- */
 vec3 rockA = triSample(uRockA, vWPos, triW, 0.0715);   // 14 m tile
 vec3 rockM = triSample(uRockM, vWPos, triW, 0.0715);
-vec3 rockWN = triNormal(uRockN, vWPos, triW, 0.0715, gN);
+/* Filtered against the footprint like the ground grain, and for the same reason:
+   the rock map's own relief is centimetres, so on a wall face seen at fifty metres
+   a pixel spans a dozen grains. Unfiltered, that came out as chunky warm speckles
+   on the wall slopes that read as glitter rather than as rock. */
+vec3 rockWN = normalize(mix(gN, triNormal(uRockN, vWPos, triW, 0.0715, gN),
+                            0.12 + 0.88 * rockF));
 
 /* ---- stratigraphy ----
    Same bed index and resistance function the height field used, driven by the
@@ -817,7 +938,7 @@ float resist = smoothstep(0.30, 0.72, 0.5 + 0.5 * sin(bedI * 2.399 + 1.7));
 /* The whole bed changes colour, with a hard contact at its base. Deliberately
    no thin seam on the contact itself: a bright hairline at every boundary is
    what turns bedding into cross-hatching. */
-rockA *= mix(vec3(0.82, 0.62, 0.55), vec3(1.20, 1.12, 1.00), resist * smoothstep(0.0, 0.20, bedFr));
+rockA *= mix(vec3(0.86, 0.70, 0.62), vec3(1.10, 1.05, 0.96), resist * smoothstep(0.0, 0.20, bedFr));
 rockM.g = clamp(rockM.g * mix(1.06, 0.90, resist), 0.2, 1.0);
 
 vec3 albedo = mix(gA, rockA, rockW);
@@ -835,16 +956,26 @@ vec3 wN     = normalize(mix(gWN, rockWN, rockW));
    pale blob floating over the midground, which is exactly what it was mistaken
    for. Variance in value has to stay below the threshold where it competes with
    atmospheric depth. */
-float bright = (0.72 + mac.g * 0.48) * (0.90 + mac2.g * 0.20) * (0.92 + vr.g * 0.18);
+/* Tightened again, and this is the third attempt at it. The compound range was
+   still 2.4 to 1 — a patch of wall two and a half times brighter than the patch
+   beside it, at a scale of tens of metres and with no relief to explain it, which
+   is a milky veil floating over the geometry however it is coloured. It was
+   reported as a rendering bug twice. Variance in *value* at macro scale has to stay
+   inside the band where the eye reads it as the same material, and everything
+   interesting has to happen below that. */
+float bright = (0.90 + mac.g * 0.20) * (0.95 + mac2.g * 0.10) * (0.96 + vr.g * 0.09);
 albedo *= bright;
 /* Not on the mud: dried silt goes dusty buff, and a violet cast over it turns
    the pans into lilac lace. */
 /* The grey-violet patches are patches. Run at half strength over most of the
    frame this is not variance, it is a desaturation pass: Sedona dirt is hematite,
    and hematite is a saturated red, not a pale magenta. */
-float coolP = smoothstep(0.56, 0.86, vr.r) * (1.0 - rockW * 0.5) * (1.0 - panW);
-albedo = mix(albedo, dot(albedo, vec3(0.31, 0.52, 0.17)) * uCool, coolP * 0.34);
-albedo = mix(albedo, albedo * vec3(1.12, 1.05, 0.96), smoothstep(0.34, 0.72, vr.b) * 0.40);
+/* Off the walls almost entirely. A grey-violet patch on a rock face is a desert
+   varnish, which is a thin coating on a *joint* face and follows the geometry; a
+   soft-edged one at macro scale that ignores the geometry is the milky veil again. */
+float coolP = smoothstep(0.62, 0.90, vr.r) * (1.0 - rockW * 0.85) * (1.0 - panW);
+albedo = mix(albedo, dot(albedo, vec3(0.31, 0.52, 0.17)) * uCool, coolP * 0.26);
+albedo = mix(albedo, albedo * vec3(1.09, 1.04, 0.97), smoothstep(0.34, 0.72, vr.b) * 0.26);
 float cav = mac.a;
 float damp = clamp((1.0 - arm.r) * 0.60 + (1.0 - cav) * 0.40, 0.0, 1.0);
 albedo = mix(albedo, albedo * uDamp, damp * 0.72);
@@ -857,10 +988,15 @@ albedo = mix(albedo, albedo * uDamp, damp * 0.72);
    photograph of the place — the signature of Mars and the Pilbara rather than
    Sedona. This mixes a grey-buff floor underneath rather than desaturating
    uniformly, so lit faces keep their warmth and shadows fall back toward stone.
-   The floor gets more of it than the walls: a wash bed is the dustiest surface
-   in the landscape and measures almost achromatic. */
+   How much is a measured question, and the measurement it was tuned to was wrong:
+   the floor figure it chased — 0.09 saturation — is wet grey concrete, and a real
+   sunlit wash floor measures 0.47 to 0.56 with a tail out to 0.88. A floor dusted
+   this hard came out a narrow mauve-beige band. The dust on the floor is therefore
+   pulled back to roughly what the walls carry; the floor's saturated tail is the
+   clasts' job, not the matrix's, since a tail raised here would just be the orange
+   membrane again. */
 float aLum = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
-float dustW = mix(0.44, 0.22, rockW) * (1.0 - panW * 0.4);
+float dustW = mix(0.02, 0.22, rockW) * (1.0 - panW * 0.4);
 albedo = mix(albedo, aLum * uStone, dustW);
 
 diffuseColor.rgb *= albedo;
@@ -869,7 +1005,11 @@ diffuseColor.rgb *= albedo;
    or glittery, and a hard low key makes that worse because the highlight lands on
    whatever facet happens to face it. */
 tRough = clamp(arm.g * (0.96 + (mac2.g - 0.5) * 0.14), 0.72, 1.0);
+/* Occlusion holds its mean into the distance but loses its variance: the average
+   darkening between grains is real at any range, the per-grain contrast is not
+   resolvable and was half of the hash. */
 tAO    = clamp(arm.r * (0.74 + cav * 0.36), 0.34, 1.0);
+tAO    = mix(0.80, tAO, 0.30 + 0.70 * grainF);
 tNrmW  = wN;
 `;
 
@@ -882,11 +1022,17 @@ export function makeTerrainMaterial(tex) {
     uSandA: { value: tex.sand.albedo }, uSandN: { value: tex.sand.normal }, uSandM: { value: tex.sand.arm },
     uRockA: { value: tex.rock.albedo }, uRockN: { value: tex.rock.normal }, uRockM: { value: tex.rock.arm },
     uMacro: { value: tex.macro }, uVar: { value: tex.variance }, uCrack: { value: tex.crack },
-    uDamp: { value: new THREE.Color(0.56, 0.44, 0.54) },
+    uDamp: { value: new THREE.Color(0.54, 0.37, 0.44) },
     uCool: { value: new THREE.Color(1.02, 0.94, 1.10) },
     uSilt: { value: new THREE.Color(1.14, 1.06, 0.94) },
     /* pale grey-buff quartz sand: what the oxide is a coating on */
     uStone: { value: new THREE.Color(1.06, 1.00, 0.94) },
+    /* The dirt tile is 2.6 m and carries about 25 mm of relief, so one metre along
+       the sun azimuth is 0.3846 of a tile and the ray climbs tan(elevation) metres,
+       which is 5.6 height units. Both derived rather than tuned so they stay
+       correct if the sun or the tile changes. */
+    uSunStep: { value: new THREE.Vector2(SUN_DIR.x, SUN_DIR.z).normalize().multiplyScalar(0.3846) },
+    uSunRise: { value: Math.tan(SUN_EL) / 0.025 },
     uBedT: { value: BED_T },
   };
 
@@ -906,6 +1052,34 @@ export function makeTerrainMaterial(tex) {
         '#include <beginnormal_vertex>\n  vWNrm = normalize(mat3(modelMatrix) * objectNormal);');
 
     shader.fragmentShader = FRAG_PREFIX + shader.fragmentShader;
+    /* ---- filtered shadow lookup ----
+       The worst artefact in the last set was a hard-edged black-and-white pixel
+       hash across the midground of every frame, and at magnification it turned out
+       to be bimodal: cream and near-black, nothing between. That is not texture
+       aliasing, it is the shadow *test* — a binary comparison sampled once per
+       pixel. Two things make it violent here. The sun sits at eight degrees, so on
+       the wash floor the light arrives at eighty-two degrees of incidence and the
+       depth slope across one shadow texel is enormous, which is the classic recipe
+       for acne; and the bed is covered in occluders a couple of shadow texels
+       across, which cannot be represented and so flicker in and out per pixel.
+
+       Bias and caster changes deal with the cause. This deals with what is left:
+       once a screen pixel covers many shadow texels, a single binary sample is the
+       wrong answer at any bias, and the right answer is the mean coverage over the
+       footprint. Converging toward a partial value as the footprint grows is a
+       cheap stand-in for that mean, and it is what makes distant gravel settle into
+       an even stipple instead of a hash. The macro re-points every call site in
+       the stock lighting chunk without patching it. */
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <shadowmap_pars_fragment>', /* glsl */`
+      #include <shadowmap_pars_fragment>
+      #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
+        float footShadow(sampler2D sm, vec2 sz, float si, float sb, float sr, vec4 sc) {
+          float s = getShadow(sm, sz, si, sb, sr, sc);
+          return gRake * mix(s, mix(s, 0.55, 0.80), 1.0 - gFoot);
+        }
+        #define getShadow(a, b, c, d, e, f) footShadow(a, b, c, d, e, f)
+      #endif`);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <map_fragment>', SURFACE)
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = tRough;')

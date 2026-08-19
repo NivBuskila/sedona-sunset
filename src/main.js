@@ -77,6 +77,14 @@ scene.add(terrainMesh);
 const clasts = buildScatter(terrain, tex);
 for (const m of clasts) scene.add(m);
 
+/* The clast material needs the viewport height to turn an instance's world radius
+   into a projected pixel radius, which is what drives its level of detail. */
+const clastU = clasts[0].material.userData.uniforms;
+function syncViewport() {
+  clastU.uVpH.value = renderer.domElement.height || window.innerHeight;
+}
+syncViewport();
+
 const sky = buildSky();
 sky.scale.setScalar(5000);
 scene.add(sky);
@@ -154,6 +162,7 @@ addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight, false);
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
+  syncViewport();
   maskRT = null;
 });
 
