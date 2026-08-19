@@ -1,18 +1,44 @@
 /* Terrain: the height field, the mesh it is sampled into, and the surface
  * shader that dresses it.
  *
- * `heightAt(x, z)` is the single source of truth for ground elevation. The
- * mesh is nothing but that function sampled on a grid, and the player's feet
- * call the same function, so the two cannot disagree — no collision mesh, no
- * raycast, no drift.
+ * `heightAt(x, z)` is the single source of truth for ground elevation. The mesh
+ * is that function sampled on a grid, and the player's feet call the same
+ * function, so the two cannot disagree.
  *
- * The grid is non-uniform in both axes: dense through the walkable corridor
- * where displaced geometry has to carry the larger forms, and geometrically
- * expanding outward so that a real horizon exists without spending triangles
- * on it. One mesh, one draw call.
+ * The cross-section is the important part. A wash is not a shallow trough: it
+ * is *concave*, with an active inner channel incised half a metre or more below
+ * an older abandoned terrace, the low point pushed toward the outside of each
+ * bend, a raw cut bank on that outside and a point-bar ramp on the inside. The
+ * terrace itself is stepped, not smooth — depositional bar margins leave hard
+ * risers a decimetre or two high, and those risers are what carries readable
+ * structure out to thirty or forty metres. Everything downstream of this file
+ * (clast sorting, mud pans, talus) reads the same cross-section, so the surface
+ * and the sediment on it describe the same flood.
+ *
+ * Two per-vertex outputs travel with the mesh:
+ *   aRef  elevation *before* the stratigraphic benching pass, so the shader can
+ *         put band colour exactly where the geometry put the ledge
+ *   aPan  ponded-silt coverage, so mud cracks appear only where mud could form
  */
 import * as THREE from 'three';
 import { fbm, ridged, clamp, smoothstep, mix } from './noise.js';
+
+/** Staircase with hard risers. `sharp` is the fraction of each step spent rising. */
+function stair(v, n, sharp) {
+  const f = v * n;
+  const i = Math.floor(f);
+  return i + smoothstep(1 - sharp, 1, f - i);
+}
+
+/* Bed thickness for the wall stratigraphy, shared with the shader so the ledge
+   and the colour band are the same feature rather than two guesses. Thick beds
+   on purpose: a thirty-metre wall wants two or three dominant ledges, not
+   twelve evenly spaced ones, which read as corrugated iron. */
+export const BED_T = 4.6;
+/* Only about a third of beds are resistant enough to stand out. Evenly
+   alternating hard and soft beds is the metronome that makes procedural
+   stratigraphy look machined. */
+const resistOf = (i) => smoothstep(0.30, 0.72, 0.5 + 0.5 * Math.sin(i * 2.399 + 1.7));
 
 /* ── height field ──────────────────────────────────────────────────────── */
 
@@ -20,6 +46,10 @@ export class Terrain {
   constructor(path) {
     this.path = path;
     this._q = {};
+    this._f = {};
+    this._f2 = {};
+    this.oRef = 0;   // pre-bench elevation
+    this.oPan = 0;   // ponded silt coverage
   }
 
   heightAt(x, z) {
@@ -27,113 +57,348 @@ export class Terrain {
   }
 
   /**
-   * Elevation at a world point, given the precomputed path frame for its z.
-   * Callers that walk a whole grid row share one frame, which is most of the
-   * reason the mesh builds in about a second rather than ten.
+   * Cross-section parameters at a point, in the wash's own frame.
+   * Split out because the clast scatter needs exactly the same channel, bank
+   * and talus positions the geometry used — sediment placed against a
+   * separately guessed channel is why gravel ends up looking sprinkled.
    */
-  heightAtQ(x, z, q) {
+  frame(x, z, q, out = this._f) {
     const s = q.s;
     const u = (x - q.x) * Math.cos(q.th);
-    const a = Math.abs(u);
+    /* The thalweg swings to the outside of each bend, where the water carries
+       most momentum. q.k is signed with travel direction, so this tracks the
+       spline instead of being placed by hand. */
+    /* Kept modest deliberately. The player walks the centreline, so if the
+       thalweg strays five metres off it they stand on the terrace and the
+       cross-section in front of them reads as a crowned road with a ditch
+       beside it — the exact failure this rewrite exists to remove. Within about
+       three metres the incised channel stays in the near field and the frame
+       reads concave. */
+    const cOff = -clamp(q.k * 140, -1.8, 1.8) + 0.7 * fbm(s * 0.026, 21, 2, 41);
+    const v = u - cOff;
     const side = u >= 0 ? 1 : -1;
 
-    /* ── longitudinal: the wash climbs gently as you walk up it ── */
-    let h = 0.0130 * s + 1.15 * fbm(s * 0.0098, 3.7, 3, 21);
+    out.s = s;
+    out.u = u;
+    out.av = Math.abs(v);
+    out.side = side;
+    out.bendOut = clamp(-side * q.k * 320, 0, 1);
+    /* Both edges are scalloped in world space. A bank whose position depends
+       only on s is a ruler-straight line, which reads as an excavated trench,
+       and it also beats against the sampling grid and throws off fine vertical
+       striations along the face. Real banks are eaten back in bays. */
+    const scallopC = 0.90 * fbm(x * 0.082, z * 0.082, 2, 59);
+    const scallopT = 1.60 * fbm(x * 0.045, z * 0.045, 2, 58)
+                   + 0.70 * fbm(x * 0.150, z * 0.150, 2, 60);
 
-    /* ── cross-section widths ── */
-    const wFloor = 6.8 + 3.2 * fbm(s * 0.0205, 12.5, 3, 51);
-    const wBank = wFloor + 3.0 + 2.4 * (0.5 + 0.5 * fbm(s * 0.031, 4.0, 2, 57));
+    out.wc = 3.0 + 2.2 * (0.5 + 0.5 * fbm(s * 0.033, 12, 3, 51)) + scallopC;
+    /* Incision depth. Nearly a metre at its shallowest: the whole complaint was
+       that the floor crowns in the middle, and a channel a foot deep is simply
+       not legible against half a metre of bar relief either side of it. The
+       player walks the bed, so this is also the difference between standing in a
+       wash and standing on a road. */
+    out.dc = 0.85 + 0.95 * (0.5 + 0.5 * fbm(s * 0.021, 5, 3, 53));
+    out.wt = out.wc + 0.50 + 3.0 + 4.0 * (0.5 + 0.5 * fbm(s * 0.028, 71, 3, 57)) + scallopT;
+    out.hb = (0.50 + 1.60 * (0.5 + 0.5 * fbm(s * 0.05, 91, 2, 61))) * out.bendOut;
+    out.ws = out.wt + 0.55 + 2.0 + 5.0 *
+      (0.5 + 0.5 * fbm(s * 0.016, side > 0 ? 31 : 63, 3, 71))       // toe of the talus
+      + 2.4 * fbm(x * 0.038, z * 0.038, 2, 62);
+    return out;
+  }
 
-    /* Outside of a bend gets the cut bank; inside gets a low gravel bar.
-       Curvature is signed with the travel direction, so this tracks the
-       spline automatically instead of being placed by hand. */
-    const outer = clamp(-side * q.k * 240, 0, 1);
-    const bankH = 0.40 + 2.00 * outer + 0.30 * (0.5 + 0.5 * fbm(s * 0.042, 9, 2, 61));
-    const bankT = smoothstep(wFloor, wBank, a);
-    h += bankT * bankH;
+  /**
+   * Ponded fine silt, which is the only place desiccation cracks belong. Two
+   * settings: shallow closed depressions on the terrace, and the slack pools in
+   * the channel bed where the finest material drops out last as a flood
+   * recedes. Both are carved into the height field, so the mud is genuinely in a
+   * low spot rather than painted onto the same plane as the gravel.
+   */
+  panField(x, z, f) {
+    const av = f.av;
+    const terrZone = smoothstep(f.wc + 0.5, f.wc + 2.2, av)
+                   * (1 - smoothstep(f.wt - 0.8, f.wt + 1.2, av));
+    const chanZone = 1 - smoothstep(f.wc * 0.55, f.wc * 1.05, av);
+    return Math.max(
+      terrZone * smoothstep(0.56, 0.75, 0.5 + 0.5 * fbm(x * 0.105, z * 0.105, 3, 231)),
+      chanZone * smoothstep(0.60, 0.79, 0.5 + 0.5 * fbm(x * 0.130, z * 0.130, 3, 233)));
+  }
 
-    /* ── canyon walls ──
-       An S-curve from the terrace edge to the rim: concave at the base where
-       talus piles up, steepest through the middle, easing at the top. System 2
-       sits rock formations on this, so the shape has to be plausible on its
-       own but not pretend to be cliff geometry. */
-    const openEnd = smoothstep(215, 330, s);   // let the far end breathe
-    const wStart = wBank + 2.6 + 5.0 * (0.5 + 0.5 * fbm(s * 0.016, side > 0 ? 31 : 63, 3, 71));
-    const wRun = 24 + 15 * (0.5 + 0.5 * fbm(s * 0.011, side > 0 ? 101 : 137, 3, 73));
-    const wallH = (16 + 16 * (0.5 + 0.5 * fbm(s * 0.0085, side > 0 ? 7 : 19, 3, 79))
-                 + 7 * (0.5 + 0.5 * fbm(s * 0.021, 91, 2, 83))) * (1 - 0.55 * openEnd);
-    const t = clamp((a - wStart) / wRun, 0, 1);
-    const ramp = t * t * (3 - 2 * t);
-    h += ramp * wallH;
-    /* rim country beyond the wall top, rising slowly */
-    h += clamp(a - (wStart + wRun), 0, 45) * 0.20 * (0.7 + 0.3 * fbm(s * 0.02, 5, 2, 87));
+  /** Which deposit is at this point. Read by the clast scatter. */
+  facies(x, z, q) {
+    const f = this.frame(x, z, q, this._f2);
+    const av = f.av;
+    const chan = 1 - smoothstep(f.wc * 0.85, f.wc + 0.6, av);
+    let bar = smoothstep(f.wc, f.wc + 1.1, av) * (1 - smoothstep(f.wt - 1.6, f.wt + 0.3, av));
+    const terr = smoothstep(f.wt + 0.2, f.wt + 1.8, av) * (1 - smoothstep(f.ws - 1.2, f.ws + 0.8, av));
+    const tal = smoothstep(f.ws - 0.6, f.ws + 2.2, av) * (1 - smoothstep(f.ws + 7.5, f.ws + 12.0, av));
 
-    /* ── relief ──
-       Evaluated in world space, not in (s, u), so it does not shear as the
-       wash bends. Floor detail is centimetres; wall detail is metres. */
-    const rocky = ramp;
-    h += (1 - rocky) * (0.26 * fbm(x * 0.105, z * 0.105, 3, 111)
-                      + 0.075 * fbm(x * 0.46, z * 0.46, 2, 113))
-       + rocky * (3.1 * fbm(x * 0.031, z * 0.031, 4, 117)
-                + 1.10 * fbm(x * 0.13, z * 0.13, 3, 119)
-                + 0.26 * fbm(x * 0.62, z * 0.62, 2, 121));
+    /* Slack water on the inside of a bend drops a sand sheet, and a sand sheet
+       has almost no clasts in it at all. */
+    const sheet = (1 - f.bendOut)
+      * smoothstep(0.44, 0.68, 0.5 + 0.5 * fbm(x * 0.048, z * 0.048, 3, 241))
+      * smoothstep(f.wc + 0.5, f.wc + 3.0, av);
+    bar = Math.max(0, bar - sheet * 1.3);
 
-    /* Drainage gullies down the wall face. Ridged noise in s, almost constant
-       across the slope, so the grooves run down the fall line the way runoff
-       cuts them — without this the walls read as dunes. */
-    if (rocky > 0.02) {
-      const gully = ridged(s * 0.095, a * 0.012, 3, 171);
-      h -= rocky * (1.15 - rocky * 0.45) * 4.2 * smoothstep(0.42, 0.98, gully);
-      /* benches where a harder bed resists, which is what breaks the
-         constant-gradient look System 2 will build on */
-      h += rocky * 1.6 * smoothstep(0.45, 0.62, 0.5 + 0.5 * fbm(a * 0.055, s * 0.012, 3, 181));
-    }
+    /* Coarse lag concentrates in bands where the flood was steepest, and
+       between them the bed is scoured bare. Constant density is the loudest
+       tell that stones were placed by a loop. */
+    const lag = smoothstep(0.42, 0.80, ridged(f.s * 0.028, 0.5, 2, 261));
+    const bare = Math.max(
+      smoothstep(0.50, 0.70, 0.5 + 0.5 * fbm(x * 0.032, z * 0.032, 3, 251)),
+      smoothstep(0.58, 0.78, 0.5 + 0.5 * fbm(x * 0.110, z * 0.110, 2, 253)));
 
-    /* ── the riverbed itself ──
-       A wandering thalweg with braided minor channels either side of it, and
-       sand drifts banked up where the flow slowed. */
-    const floorMask = 1 - smoothstep(wFloor * 0.72, wBank, a);
-    if (floorMask > 0.001) {
-      const tOff = 3.0 * fbm(s * 0.028, 21.0, 2, 141);
-      const d = (u - tOff) / 2.9;
-      h -= floorMask * 0.38 * Math.exp(-d * d);
+    /* Nothing coarse rests on dried mud — the flood that laid the silt down had
+       already dropped everything heavier upstream. */
+    const pan = this.panField(x, z, f);
 
-      const br = ridged(s * 0.042, u * 0.115, 3, 151);
-      h -= floorMask * 0.17 * smoothstep(0.52, 0.95, br);
+    /* Rockfall is episodic and it arrives down the gullies, so an apron is a run
+       of heaps with swept ground between them, not an even sprinkle. */
+    const pile = 0.10 + 1.55 * smoothstep(0.44, 0.80, 0.5 + 0.5 *
+      fbm(x * 0.055, z * 0.055, 3, 271));
 
-      const drift = 0.5 + 0.5 * fbm(x * 0.055, z * 0.055, 3, 161);
-      h += floorMask * 0.16 * smoothstep(0.52, 0.95, drift);
-    }
+    return { chan, bar, terr, tal, sheet, bare, lag, pan, pile, f };
+  }
+
+  heightAtQ(x, z, q) {
+    const f = this.frame(x, z, q);
+    const { s, u, av, side, bendOut } = f;
+    this.oPan = 0;
+    this.oWall = 0;
 
     /* ── far field ──
-       Beyond the wall rim the terrain becomes distant mesa country purely so
-       there is a horizon to sit the sky against. It is provisional scenery,
-       not System 2. */
-    const far = smoothstep(140, 430, a);
-    if (far > 0.001) {
-      const fh = 10 + 62 * (0.5 + 0.5 * fbm(x * 0.0022, z * 0.0022, 4, 401))
-                    * smoothstep(150, 620, a)
-               + 18 * fbm(x * 0.0065, z * 0.0065, 3, 409);
-      h = mix(h, fh, far);
-      const far2 = smoothstep(700, 1500, a);
-      if (far2 > 0.001) h = mix(h, 22 + 26 * fbm(x * 0.0009, z * 0.0009, 3, 419), far2);
+       Distant mesa country, so the sky has a horizon to sit against and the
+       haze has discrete ridgelines to separate into layers. Ridged rather than
+       plain fBm: crisp crests are what makes aerial perspective legible.
+       Provisional scenery, not System 2. */
+    if (av > 145) {
+      const far = smoothstep(145, 330, av);
+      const near = this._nearShoulder(f, x, z);
+      const crest = ridged(x * 0.0019, z * 0.0019, 4, 401);
+      let fh = 9 + 78 * Math.pow(crest, 1.7) * smoothstep(160, 640, av)
+             + 20 * fbm(x * 0.0062, z * 0.0062, 3, 409);
+      const far2 = smoothstep(680, 1500, av);
+      if (far2 > 0.001) fh = mix(fh, 20 + 34 * ridged(x * 0.0009, z * 0.0009, 3, 419), far2);
+      const h = mix(near, fh, far);
+      this.oRef = h;
+      this.oWall = 1;
+      return h;
     }
+
+    /* ── longitudinal grade ── */
+    let h = 0.0125 * s + 0.55 * fbm(s * 0.0072, 3.7, 2, 21);
+
+    /* ── the active inner channel ──
+       A flat scoured bed, then a near-vertical riser about a third of a metre
+       wide up to the terrace. The clamped linear ramp is deliberate: a
+       smoothstep here produces the rounded fillet that made the previous
+       version read as a graded dirt road. */
+    const tIn = clamp((av - f.wc) / 0.65, 0, 1);
+    h -= f.dc * (1 - tIn);
+    h -= 0.13 * (1 - smoothstep(0, f.wc * 0.95, av));   // thalweg trough
+
+    /* ── concavity ──
+       Elevation climbs steadily away from the channel. The cross-section has to
+       be concave; water cannot leave the middle of a wash as its high point. */
+    h += 0.036 * Math.max(0, av - f.wc);
+
+    /* ── the banks ──
+       Outside of the bend: a raw cut bank, a hard face up to two metres. Inside:
+       a point-bar ramp. Same curvature term, opposite consequences. */
+    h += f.hb * clamp((av - f.wt) / 0.85, 0, 1);
+    h += (1 - bendOut) * 0.62 * smoothstep(f.wt - 2.5, f.wt + 3.5, av);
+
+    /* ── stepped bar margins ──
+       Two staircases, at roughly thirteen and four metres. These hard risers are
+       what keeps the floor readable at thirty metres, where smooth noise
+       collapses into featureless orange. */
+    /* The bed of the active channel is graded by running water and is close to
+       flat across its width; the bars and terraces either side are not. Letting
+       the bar relief run through the channel is what filled the low point back
+       in and left the cross-section reading as a crown. */
+    const chanMask = 1 - smoothstep(f.wc * 0.35, f.wc + 0.9, av);
+    const floorZone = (1 - smoothstep(f.ws - 3.0, f.ws + 1.0, av)) * (1 - 0.92 * chanMask);
+    if (floorZone > 0.001) {
+      /* Three staircases, at roughly thirteen, seven and four metres. The middle
+         one exists purely to fill the hole at twenty to forty metres, where the
+         coarse steps are too far apart to read and the fine ones have gone below
+         a pixel — the range over which the floor was collapsing into
+         featureless orange. */
+      const l1 = 0.5 + 0.5 * fbm(x * 0.076, z * 0.076, 3, 191);
+      const l1b = 0.5 + 0.5 * fbm(x * 0.142, z * 0.142, 2, 193);
+      const l2 = 0.5 + 0.5 * fbm(x * 0.245, z * 0.245, 2, 197);
+      h += floorZone * (0.215 * stair(l1, 3, 0.075)
+                      + 0.105 * stair(l1b, 2, 0.085)
+                      + 0.055 * stair(l2, 2, 0.11));
+    }
+
+    /* ── braided minor channels ── */
+    const braidZone = floorZone * (1 - smoothstep(f.wt + 1.0, f.wt + 4.0, av));
+    if (braidZone > 0.001) {
+      const br = ridged(s * 0.048, u * 0.105, 3, 151);
+      h -= braidZone * 0.27 * smoothstep(0.54, 0.70, br);
+    }
+
+    /* ── ponded silt pans ── carved for real, and exported so the shader can
+       put desiccation cracks only where mud could actually have dried. */
+    const pan = this.panField(x, z, f);
+    h -= pan * 0.16;
+    this.oPan = pan;
+
+    /* ── talus apron and canyon wall ──
+       The apron sits at the angle of repose; the wall above is steeper. The
+       junction is where the visual event is, so the apron is a distinct feature
+       rather than a blend. */
+    const tal = clamp((av - f.ws) / 8.5, 0, 1);
+    h += tal * tal * (3 - 2 * tal) * 3.3;
+
+    const openEnd = smoothstep(215, 330, s);   // let the far end of the wash breathe
+    const wStart = f.ws + 8.5;
+    const wRun = 21 + 15 * (0.5 + 0.5 * fbm(s * 0.011, side > 0 ? 101 : 137, 3, 73));
+    const wallH = (16 + 16 * (0.5 + 0.5 * fbm(s * 0.0085, side > 0 ? 7 : 19, 3, 79))
+                 + 7 * (0.5 + 0.5 * fbm(s * 0.021, 91, 2, 83))) * (1 - 0.55 * openEnd);
+    const t = clamp((av - wStart) / wRun, 0, 1);
+    const ramp = t * t * (3 - 2 * t);
+    /* Exported so the shader can tell a canyon wall from a bank in the wash
+       floor. They can share a slope angle and be made of completely different
+       things — one is rock, the other is a section through last decade's
+       floods — and slope alone cannot distinguish them. */
+    this.oWall = ramp;
+    h += ramp * wallH;
+    h += clamp(av - (wStart + wRun), 0, 45) * 0.20 * (0.7 + 0.3 * fbm(s * 0.02, 5, 2, 87));
+
+    /* Coarse wall form. Half ridged, so the wall breaks into spurs separated by
+       sharp divides instead of draping as one smooth dune — a wall built only
+       from fBm reads as sand however it is textured. */
+    h += ramp * (2.1 * fbm(x * 0.031, z * 0.031, 4, 117)
+               + 2.7 * (ridged(x * 0.026, z * 0.026, 3, 118) - 0.45));
+
+    /* ── dendritic drainage on the wall ──
+       Three generations. The fine rills live near the rim and fade downslope;
+       the major gullies deepen downslope. That gradient is what reads as small
+       channels merging into larger ones, instead of the uniform corduroy a
+       single ridged octave produces. Each major gully drops a debris fan onto
+       the apron at its mouth, so the drainage deposits something. */
+    if (ramp > 0.015) {
+      /* Warp the along-wall coordinate so spacing varies with slope instead of
+         being metronomic — evenly spaced grooves are the corduroy look. */
+      const wp = 3.2 * fbm(av * 0.022, s * 0.006, 2, 177);
+      const wq = 3.2 * fbm(av * 0.055, s * 0.017, 2, 179);
+      /* The warp has to be worth several groove widths or the spacing stays
+         metronomic. At a tenth of a wavelength it only wobbles the grooves; at
+         half a wavelength it genuinely crowds them together on the steep panels
+         and spreads them out on the gentle ones, which is what varying spacing
+         with slope angle looks like. */
+      /* The second coordinate has to advance by a whole cycle or more over the
+         height of the wall. At a fortieth of a cycle the groove is at a
+         constant `s` from top to bottom, and a feature at constant `s` on a
+         corridor wall is a perfectly straight line in world space — which is
+         where the ruler-straight bright ribs came from. Real rills wander as
+         they descend. */
+      const r1 = ridged(s * 0.052 + wp * 0.42, av * 0.018, 3, 171);
+      const r2 = ridged(s * 0.145 + wp * 0.70 + wq * 0.30, av * 0.040, 3, 173);
+      const m1 = smoothstep(0.48, 0.95, r1);
+      /* Rills merge downslope: inside a major gully the fine ones have already
+         been captured by it and no longer exist as separate channels. */
+      const merge = 1 - 0.85 * m1;
+      /* The finest generation is cut shallow and with a wide shoulder. A narrow
+         deep groove at a two-metre wavelength leaves a knife-edge lip between
+         adjacent grooves, one grid column wide, and a one-column crest whose
+         normal happens to face a sun this low fires off a bright hairline that
+         reads as a scratch on the wall rather than as relief. */
+      /* Two generations only. A third at a two-and-a-half-metre wavelength sits
+         right at the limit of what the grid can carry, so it never resolved as
+         relief — it resolved as a hairline highlight on its own lip. Grain at
+         that scale belongs in the normal map, not in the height field. */
+      const cut = 3.8 * m1 * (0.30 + 0.70 * (1 - t))
+                + 1.45 * merge * smoothstep(0.50, 1.00, r2) * smoothstep(0.12, 0.72, t);
+      h -= ramp * cut * smoothstep(0.0, 0.13, t);
+
+      const fanAxis = 1 - Math.min(1, Math.abs(av - f.ws - 2.5) / 7.5);
+      h += m1 * fanAxis * fanAxis * 1.75;
+    }
+
+    /* ── stratigraphy ──
+       Resistant beds stand out as ledges with hard tops and bottoms, and the
+       ledge follows a contour of the *coarse* form. That ordering is the whole
+       trick: bedding read off the final surface wanders with every fine octave
+       and disintegrates into scratches, whereas a bed traced on the coarse form
+       stays laterally continuous across spurs and gullies the way a real
+       stratum does. The same reference goes out as `aRef`, so the shader bands
+       exactly the beds the geometry stepped. */
+    this.oRef = h;
+    if (ramp > 0.05) {
+      const bf = h / BED_T + 1.05 * fbm(x * 0.010, z * 0.010, 2, 211)
+                           + 0.35 * fbm(x * 0.045, z * 0.045, 2, 213);
+      const bi = Math.floor(bf), bt = bf - bi;
+      /* The riser spends a fifth of the bed rising rather than a fifteenth. A
+         two-metre step compressed into 0.3 m of elevation lands on a single grid
+         column, which aliases into speckle instead of reading as a bench;
+         spread over four or five columns it becomes a shelf. */
+      h += ramp * resistOf(bi) * 1.75
+         * smoothstep(0.0, 0.22, bt) * (1 - smoothstep(0.86, 1.0, bt));
+    }
+
+    /* ── fine relief, last ──
+       World space, so it does not shear as the wash bends. Spread across the
+       scales the eye checks at different distances; the pans are smoothed
+       because still water leaves silt flat. */
+    /* The active channel bed is graded by running water, so its long profile is
+       nearly monotonic — the coarse octaves are suppressed inside it. Leaving
+       them on puts half-metre swells every ten metres along the bed, and looking
+       up-wash across one of those swells is precisely what reads as a crowned
+       dirt road. What replaces them is riffle-and-pool: shallow scour hollows
+       where the flow was fastest. */
+    const inChan = 1 - smoothstep(f.wc * 0.45, f.wc + 1.6, av);
+    const coarse = 1 - 0.88 * inChan;
+    const flat = 1 - pan * 0.75;
+    h -= inChan * 0.17 * smoothstep(0.48, 0.82, ridged(s * 0.062, u * 0.05, 2, 261));
+    /* Held back deliberately. Smooth fBm at ten to thirty metres, at any
+       amplitude the eye can see, reads as dune — rounded, continuously
+       differentiable swells. The mid-scale relief on a wash floor is carried by
+       the stepped bar margins above, which have hard risers. */
+    h += (1 - ramp) * flat * (coarse * (0.34 * fbm(x * 0.036, z * 0.036, 3, 109)
+                                      + 0.18 * fbm(x * 0.105, z * 0.105, 3, 111))
+                            + 0.150 * fbm(x * 0.255, z * 0.255, 2, 113)
+                            + 0.085 * fbm(x * 0.42, z * 0.42, 2, 114)
+                            + 0.038 * fbm(x * 0.95, z * 0.95, 2, 115))
+       + ramp * (0.62 * fbm(x * 0.13, z * 0.13, 3, 119)
+               + 0.13 * fbm(x * 0.62, z * 0.62, 2, 121));
 
     return h;
   }
+
+  /** Height at the far-field crossover, so the blend starts from something
+   *  continuous with the wall it is leaving. */
+  _nearShoulder(f, x, z) {
+    const wStart = f.ws + 8.5;
+    const wRun = 21 + 15 * (0.5 + 0.5 * fbm(f.s * 0.011, f.side > 0 ? 101 : 137, 3, 73));
+    const wallH = 16 + 16 * (0.5 + 0.5 * fbm(f.s * 0.0085, f.side > 0 ? 7 : 19, 3, 79));
+    return 0.0125 * f.s + wallH + clamp(145 - (wStart + wRun), 0, 45) * 0.20
+         + 4.0 * fbm(x * 0.031, z * 0.031, 3, 117);
+  }
 }
 
-/* ── grid axis with a dense core and geometric falloff ─────────────────── */
+/* ── grid axes ─────────────────────────────────────────────────────────── */
 
-function axis(coreMin, coreMax, step, outMin, outMax, growth) {
+/**
+ * Segmented axis: explicit dense zones, then geometric expansion to the
+ * horizon. The corridor and the wall faces both need real resolution — a
+ * near-vertical cut bank is only a hard edge if a couple of grid columns land
+ * on it — while the far field only has to exist.
+ */
+function axis(segments, outMin, outMax, growth) {
   const core = [];
-  for (let v = coreMin; v <= coreMax + 1e-6; v += step) core.push(v);
+  for (const [a, b, st] of segments) {
+    const n = Math.max(1, Math.round((b - a) / st));
+    for (let i = 0; i < n; i++) core.push(a + (b - a) * i / n);
+  }
+  core.push(segments[segments.length - 1][1]);
   const lo = [];
-  let v = coreMin, st = step;
+  let v = core[0], st = segments[0][2];
   while (v > outMin) { st *= growth; v -= st; lo.push(v); }
   lo.reverse();
   const hi = [];
-  v = coreMax; st = step;
+  v = core[core.length - 1]; st = segments[segments.length - 1][2];
   while (v < outMax) { st *= growth; v += st; hi.push(v); }
   return Float32Array.from([...lo, ...core, ...hi]);
 }
@@ -141,14 +406,20 @@ function axis(coreMin, coreMax, step, outMin, outMax, growth) {
 /* ── mesh ──────────────────────────────────────────────────────────────── */
 
 export function buildTerrainMesh(terrain, material) {
-  const xs = axis(-36, 36, 0.40, -1600, 1600, 1.16);
-  /* z runs from behind the start of the walk to well past its end; the core
-     covers everything the standard viewpoints can get close to. */
-  const zs = axis(-258, 12, 0.45, -1900, 220, 1.16);
+  /* Graded in several steps rather than two. A step size that jumps from 0.20 to
+     0.34 at a single column leaves a crease along that column — a dead straight
+     line in world space, and the one thing a landscape never contains is a dead
+     straight line. */
+  const xs = axis([[-52, -30, 0.32], [-30, -17, 0.26], [-17, 17, 0.20],
+                   [17, 30, 0.26], [30, 52, 0.32]], -1600, 1600, 1.12);
+  const zs = axis([[-256, 14, 0.42]], -1900, 220, 1.14);
 
   const nx = xs.length, nz = zs.length;
   const count = nx * nz;
   const pos = new Float32Array(count * 3);
+  const ref = new Float32Array(count);
+  const pan = new Float32Array(count);
+  const wall = new Float32Array(count);
   const q = {};
 
   for (let j = 0; j < nz; j++) {
@@ -157,10 +428,14 @@ export function buildTerrainMesh(terrain, material) {
     const row = j * nx;
     for (let i = 0; i < nx; i++) {
       const x = xs[i];
-      const o = (row + i) * 3;
+      const k = row + i;
+      const o = k * 3;
       pos[o] = x;
       pos[o + 1] = terrain.heightAtQ(x, z, q);
       pos[o + 2] = z;
+      ref[k] = terrain.oRef;
+      pan[k] = terrain.oPan;
+      wall[k] = terrain.oWall;
     }
   }
 
@@ -176,6 +451,9 @@ export function buildTerrainMesh(terrain, material) {
 
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('aRef', new THREE.BufferAttribute(ref, 1));
+  g.setAttribute('aPan', new THREE.BufferAttribute(pan, 1));
+  g.setAttribute('aWall', new THREE.BufferAttribute(wall, 1));
   g.setIndex(new THREE.BufferAttribute(idx, 1));
   g.computeVertexNormals();
   g.computeBoundingSphere();
@@ -194,11 +472,16 @@ const FRAG_PREFIX = /* glsl */`
 uniform sampler2D uDirtA; uniform sampler2D uDirtN; uniform sampler2D uDirtM;
 uniform sampler2D uSandA; uniform sampler2D uSandN; uniform sampler2D uSandM;
 uniform sampler2D uRockA; uniform sampler2D uRockN; uniform sampler2D uRockM;
-uniform sampler2D uMacro; uniform sampler2D uCrack;
+uniform sampler2D uMacro; uniform sampler2D uVar; uniform sampler2D uCrack;
 uniform vec3  uDamp;
-uniform float uDetail;
+uniform vec3  uCool;
+uniform vec3  uSilt;
+uniform float uBedT;
 varying vec3 vWPos;
 varying vec3 vWNrm;
+varying float vRef;
+varying float vPan;
+varying float vWall;
 
 float tRough;
 float tAO;
@@ -229,8 +512,8 @@ vec3 triNormal(sampler2D t, vec3 p, vec3 w, float sc, vec3 N){
   return normalize(nx.zyx * w.x + ny.xzy * w.y + nz.xyz * w.z);
 }
 
-/* Derivative bump: turns a scalar field into a normal perturbation without
-   needing tangents or a second UV set. Used only for the mud plates. */
+/* Derivative bump: a scalar field to a normal perturbation without tangents.
+   Used for the mud plates, whose relief is far too fine for geometry. */
 vec3 bumpFrom(float hgt, vec3 N, float scale){
   vec3 pdx = dFdx(vWPos), pdy = dFdy(vWPos);
   float hdx = dFdx(hgt), hdy = dFdy(hgt);
@@ -245,24 +528,27 @@ const SURFACE = /* glsl */`
 vec3 gN = normalize(vWNrm);
 vec2 wxz = vWPos.xz;
 
-/* Macro variation, twice, at unrelated scales and rotations. The detail tiles
-   below repeat every few metres; this is what hides that. */
+/* Three scales of variation. The 61 m and 18 m maps break up the detail tiles;
+   the 7 m map exists to fill the mid distance, where a two-scale scheme leaves
+   a hole and the ground collapses into flat colour. */
 vec4 mac  = texture2D(uMacro, wxz * 0.0164);
 vec4 mac2 = texture2D(uMacro, rot2(wxz, 1.13) * 0.0555);
+vec4 vr   = texture2D(uVar,   rot2(wxz, 0.47) * 0.1428);
 
 float slope = 1.0 - clamp(gN.y, 0.0, 1.0);
-/* The dirt/rock boundary is broken up by macro noise at two scales, otherwise
-   it falls exactly on an iso-slope contour and reads as a drawn line. */
-float rockW = smoothstep(0.08, 0.72, slope + (mac2.g - 0.5) * 0.36 + (mac.g - 0.5) * 0.20);
+/* Bare rock only on genuinely steep faces. A cut bank at forty degrees is not
+   rock, it is a section through alluvium, and putting a jointed sandstone map on
+   it makes the bank look tiled. */
+float wallM = smoothstep(0.06, 0.42, vWall);
+float rockW = smoothstep(0.34, 0.86, slope + (mac2.g - 0.5) * 0.30 + (vr.g - 0.5) * 0.18)
+            * wallM;
 
-/* ---- compacted dirt, two scales ----
-   The two tiles are close in size and irrationally related, so grain, clasts
-   and fissures stay the right physical size in both while the pattern
-   decorrelates. A widely separated second scale instead re-reads the same
-   features as larger objects, which is how procedural dirt gets its blotches. */
+/* ---- compacted dirt, two nearby scales ----
+   Close in size and irrationally related, so grain and clasts stay the right
+   physical size in both while the pattern decorrelates. */
 vec2 d1 = wxz * 0.3846;               // 2.6 m tile
 vec2 d2 = rot2(wxz, 0.83) * 0.2326;   // 4.3 m tile
-float dB = clamp(mac.g * 1.30 - 0.18, 0.15, 0.85);
+float dB = clamp(mac.g * 1.50 - 0.65, 0.12, 0.88);
 vec3 dirtA = mix(texture2D(uDirtA, d1).rgb, texture2D(uDirtA, d2).rgb, dB);
 vec3 dirtN = mix(texture2D(uDirtN, d1).xyz, texture2D(uDirtN, d2).xyz, dB) * 2.0 - 1.0;
 vec3 dirtM = mix(texture2D(uDirtM, d1).rgb, texture2D(uDirtM, d2).rgb, dB);
@@ -273,49 +559,146 @@ vec3 sandA = texture2D(uSandA, s1).rgb;
 vec3 sandN = texture2D(uSandN, s1).xyz * 2.0 - 1.0;
 vec3 sandM = texture2D(uSandM, s1).rgb;
 
-/* Sand is drifts, not a ground cover: it banks up in the lee of obstacles and
-   in the slack water on the inside of bends, so the mask is deliberately mean.
-   Broad sand coverage is the single fastest way to make a wash read as a dune. */
-float sandW = clamp(mac.r * 1.9 + (mac2.r - 0.5) * 0.7 - 0.95, 0.0, 1.0)
-            * (1.0 - rockW) * smoothstep(0.30, 0.10, slope);
+/* A sand sheet ends in a crisp depositional lobe, not a crossfade. Hard
+   threshold on a lobe-shaped field rather than a wide smoothstep. */
+float sandF = mac.r * 1.15 + (mac2.r - 0.5) * 0.55 + (vr.b - 0.5) * 0.30;
+float sandW = smoothstep(0.44, 0.50, sandF) * (1.0 - rockW) * smoothstep(0.30, 0.10, slope);
 
 vec3 gA  = mix(dirtA, sandA, sandW);
 vec3 gNt = normalize(mix(dirtN, sandN, sandW));
 vec3 gM  = mix(dirtM, sandM, sandW);
-vec3 gWN = tsToWorld(gNt * vec3(uDetail, uDetail, 1.0), gN);
+vec3 gWN = tsToWorld(gNt, gN);
 
-/* ---- dried mud plates ----
-   Only in the flat pans where a puddle actually stood, so they read as
-   patches in the wash rather than as a pattern laid over the whole floor. */
-vec3 ck = texture2D(uCrack, rot2(wxz, 2.10) * 0.3846).rgb;   // 2.6 m tile
-/* Water has to have stood still for mud to crack, so the slope cutoff is
-   severe — about ten degrees. Allowing cracks onto a bank makes the whole
-   wash look like it is wrapped in cracked glaze. */
-float panW = smoothstep(0.70, 0.95, mac.b)
-           * (1.0 - rockW) * (1.0 - sandW) * smoothstep(0.020, 0.004, slope);
-float crackH = (ck.b * 0.40 - ck.r) * panW;
-gWN = bumpFrom(crackH, gWN, 0.012);
-gA *= 1.0 - ck.r * panW * 0.18;
-gA *= mix(1.0, 0.94 + ck.g * 0.12, panW);
-gM.r *= 1.0 - ck.r * panW * 0.25;
-
-/* ---- wall rock, triplanar so vertical faces do not smear ---- */
+/* ---- steep ground: reproject ----
+   The dirt above is sampled from a top-down XZ projection, which is correct on
+   the floor and progressively wrong as the ground tips up. On the face of a cut
+   bank it is close to vertical, so a metre of face draws from a couple of
+   centimetres of texture: every feature smears into a long streak, all of them
+   parallel, and the bank ends up looking brushed. That smear was the strongest
+   remaining artefact on the banks — it was hidden before only because the
+   triplanar rock map used to cover them. Triplanar the dirt too, and blend it in
+   by slope so the flat floor keeps the cheap two-scale sample. */
 vec3 triW = pow(abs(gN), vec3(4.0));
 triW /= max(triW.x + triW.y + triW.z, 1e-4);
+float steep = smoothstep(0.14, 0.40, slope);
+if (steep > 0.006) {
+  /* Only the two vertical projections are needed: the sample above already is
+     the horizontal one, so this blends against it rather than recomputing it. */
+  float ax = abs(gN.x), az = abs(gN.z);
+  float pw = ax / max(ax + az, 1e-4);
+  vec2 uzy = vWPos.zy * 0.3846, uxy = vWPos.xy * 0.3846;
+  vec3 pA = mix(texture2D(uDirtA, uxy).rgb, texture2D(uDirtA, uzy).rgb, pw);
+  vec3 pM = mix(texture2D(uDirtM, uxy).rgb, texture2D(uDirtM, uzy).rgb, pw);
+  vec3 pN = mix(texture2D(uDirtN, uxy).xyz, texture2D(uDirtN, uzy).xyz, pw) * 2.0 - 1.0;
+  float w = steep * (1.0 - sandW);
+  gA  = mix(gA, pA, w);
+  gM  = mix(gM, pM, w);
+  gWN = normalize(mix(gWN, tsToWorld(normalize(pN), gN), w));
+}
+
+/* ---- desiccation cracks ----
+   Only in ponded silt: vPan comes from the pans carved into the height field,
+   so the mud is where mud could actually have dried. Plate tops go dusty buff,
+   crack interiors go genuinely dark, and the plates curl up at their edges,
+   which at this sun angle is what throws the hard shadow lines that make real
+   mud cracks dramatic. */
+float panW = vPan * smoothstep(0.16, 0.055, slope) * (1.0 - rockW) * (1.0 - sandW);
+/* One scale only, at 2.6 m, giving plates from about 40 cm down to 13 cm. A
+   second finer tile put 5 cm plates on the ground, which alias into a hard
+   chequer at any grazing angle and cannot be seen from more than a stride away
+   in any case. */
+vec3 ck = texture2D(uCrack, rot2(wxz, 2.10) * 0.3846).rgb;
+/* Plate tops are dusty buff and genuinely lighter than the gravel around them;
+   the crack interiors are genuinely dark. Relying on the curl ridge alone to
+   sell the mud leaves a net of bright wires over unchanged ground. */
+float crackH = (ck.b * 0.90 - ck.r * 2.2) * panW;
+gWN = bumpFrom(crackH, gWN, 0.085);
+gA = mix(gA, gA * uSilt * (0.80 + ck.g * 0.46), panW * 0.95);
+gA *= 1.0 - ck.r * panW * 0.68;
+gM.g = mix(gM.g, 0.99, panW * 0.6);
+gM.r *= 1.0 - ck.r * panW * 0.55;
+
+/* ---- stratified alluvium on the bank faces ----
+   A cut bank is a section, and a section through flood deposits is layered: a
+   coarse gravelly bed a few centimetres thick, then a sandy one, then another,
+   each standing slightly proud or slightly recessed. It is the only place in the
+   scene where the ground has horizontal structure keyed to world height rather
+   than to the surface, and that structure is most of what tells the eye it is
+   looking at a cut face rather than at a slope. */
+/* Banks only, never the canyon wall — vWall separates them — and only on the
+   steep part, in patches. Run across every moderate slope in the scene it stops
+   being stratification and becomes pinstripe. */
+float bankW = smoothstep(0.28, 0.52, slope) * (1.0 - wallM) * (1.0 - sandW)
+            * smoothstep(0.34, 0.68, mac2.r * 0.7 + vr.b * 0.5);
+if (bankW > 0.004) {
+  /* Bed thickness is itself variable — from about 8 cm to about 40 cm — because
+     each bed is one flood and no two floods carried the same load. A constant
+     spacing is the difference between stratification and corrugation. */
+  float th = 4.0 + 9.0 * mac.b;
+  float by  = vWPos.y * th + (mac2.b - 0.5) * 2.20 + (vr.r - 0.5) * 0.85;
+  float bid = floor(by);
+  float bfr = by - bid;
+  float coarse = smoothstep(0.42, 0.58, 0.5 + 0.5 * sin(bid * 1.913 + 0.6));
+  /* Hard top and bottom contacts. A bed with soft edges is a gradient, and a
+     gradient at constant height is the altitude colour ramp this replaces. */
+  float inBed = smoothstep(0.0, 0.10, bfr) * (1.0 - smoothstep(0.88, 1.0, bfr));
+  float bw = bankW * inBed;
+  /* Low contrast on purpose. Stratification the eye has to look for reads as a
+     section through alluvium; stratification it cannot avoid reads as
+     corrugated iron, and the relief matters far more than the tone — a visible
+     step at every contact turns a bank into a flight of stairs. */
+  gA *= mix(vec3(1.0), mix(vec3(0.88, 0.83, 0.80), vec3(1.13, 1.05, 0.93), coarse), bw * 0.34);
+  gM.g = mix(gM.g, mix(0.99, 0.88, coarse), bw * 0.4);
+  gWN = bumpFrom((coarse - 0.5) * inBed * bankW, gWN, 0.022);
+}
+
+/* ---- wall rock, triplanar so vertical faces do not smear ---- */
 vec3 rockA = triSample(uRockA, vWPos, triW, 0.0715);   // 14 m tile
 vec3 rockM = triSample(uRockM, vWPos, triW, 0.0715);
 vec3 rockWN = triNormal(uRockN, vWPos, triW, 0.0715, gN);
+
+/* ---- stratigraphy ----
+   Same bed index and resistance function the height field used, driven by the
+   pre-bench elevation, so the pale bed and the ledge are one feature. The
+   contact is a hard seam because real bedding contacts are. */
+float bedF = vRef / uBedT;
+float bedI = floor(bedF);
+float bedFr = bedF - bedI;
+float resist = smoothstep(0.30, 0.72, 0.5 + 0.5 * sin(bedI * 2.399 + 1.7));
+/* The whole bed changes colour, with a hard contact at its base. Deliberately
+   no thin seam on the contact itself: a bright hairline at every boundary is
+   what turns bedding into cross-hatching. */
+rockA *= mix(vec3(0.82, 0.62, 0.55), vec3(1.20, 1.12, 1.00), resist * smoothstep(0.0, 0.20, bedFr));
+rockM.g = clamp(rockM.g * mix(1.06, 0.90, resist), 0.2, 1.0);
 
 vec3 albedo = mix(gA, rockA, rockW);
 vec3 arm    = mix(gM, rockM, rockW);
 vec3 wN     = normalize(mix(gWN, rockWN, rockW));
 
-/* ---- broad tonal variation and damp shadowed dirt ---- */
-float bright = (0.74 + mac.g * 0.54) * (0.88 + mac2.g * 0.26);
+/* ---- tonal and hue variance ----
+   The failure this fixes is a palette spanning twenty-five degrees of hue.
+   Patches go grey-violet where iron has leached or a varnish has formed, and
+   pale buff where fine dust settled; without that spread every surface is the
+   same colour at a different brightness. */
+float bright = (0.56 + mac.g * 0.80) * (0.84 + mac2.g * 0.34) * (0.86 + vr.g * 0.30);
 albedo *= bright;
+/* Not on the mud: dried silt goes dusty buff, and a violet cast over it turns
+   the pans into lilac lace. */
+/* The grey-violet patches are patches. Run at half strength over most of the
+   frame this is not variance, it is a desaturation pass: Sedona dirt is hematite,
+   and hematite is a saturated red, not a pale magenta. */
+float coolP = smoothstep(0.56, 0.86, vr.r) * (1.0 - rockW * 0.5) * (1.0 - panW);
+albedo = mix(albedo, dot(albedo, vec3(0.31, 0.52, 0.17)) * uCool, coolP * 0.34);
+albedo = mix(albedo, albedo * vec3(1.20, 1.08, 0.92), smoothstep(0.34, 0.72, vr.b) * 0.50);
 float cav = mac.a;
 float damp = clamp((1.0 - arm.r) * 0.60 + (1.0 - cav) * 0.40, 0.0, 1.0);
-albedo = mix(albedo, albedo * uDamp, damp * 0.75);
+albedo = mix(albedo, albedo * uDamp, damp * 0.72);
+
+/* Final saturation, applied after every mix above. Each of those mixes pulls a
+   little colour out — toward grey-violet, toward buff, toward damp purple — and
+   they compound; oxide dirt has to come out the far end still reading as oxide. */
+float aLum = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
+albedo = max(vec3(0.0), mix(vec3(aLum), albedo, 1.24));
 
 diffuseColor.rgb *= albedo;
 tRough = clamp(arm.g * (0.94 + (mac2.g - 0.5) * 0.20), 0.30, 1.0);
@@ -331,18 +714,25 @@ export function makeTerrainMaterial(tex) {
     uDirtA: { value: tex.dirt.albedo }, uDirtN: { value: tex.dirt.normal }, uDirtM: { value: tex.dirt.arm },
     uSandA: { value: tex.sand.albedo }, uSandN: { value: tex.sand.normal }, uSandM: { value: tex.sand.arm },
     uRockA: { value: tex.rock.albedo }, uRockN: { value: tex.rock.normal }, uRockM: { value: tex.rock.arm },
-    uMacro: { value: tex.macro }, uCrack: { value: tex.crack },
-    uDamp: { value: new THREE.Color(0.58, 0.47, 0.55) },
-    uDetail: { value: 1.0 },
+    uMacro: { value: tex.macro }, uVar: { value: tex.variance }, uCrack: { value: tex.crack },
+    uDamp: { value: new THREE.Color(0.56, 0.44, 0.54) },
+    uCool: { value: new THREE.Color(1.02, 0.94, 1.10) },
+    uSilt: { value: new THREE.Color(1.32, 1.14, 0.90) },
+    uBedT: { value: BED_T },
   };
 
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, mat.userData.uniforms);
 
-    shader.vertexShader = 'varying vec3 vWPos;\nvarying vec3 vWNrm;\n' + shader.vertexShader;
+    shader.vertexShader =
+      'attribute float aRef;\nattribute float aPan;\nattribute float aWall;\n' +
+      'varying vec3 vWPos;\nvarying vec3 vWNrm;\nvarying float vRef;\nvarying float vPan;\n' +
+      'varying float vWall;\n' +
+      shader.vertexShader;
     shader.vertexShader = shader.vertexShader
       .replace('#include <begin_vertex>',
-        '#include <begin_vertex>\n  vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;')
+        '#include <begin_vertex>\n  vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\n' +
+        '  vRef = aRef;\n  vPan = aPan;\n  vWall = aWall;')
       .replace('#include <beginnormal_vertex>',
         '#include <beginnormal_vertex>\n  vWNrm = normalize(mat3(modelMatrix) * objectNormal);');
 
@@ -354,6 +744,6 @@ export function makeTerrainMaterial(tex) {
         'normal = normalize((viewMatrix * vec4(tNrmW, 0.0)).xyz);')
       .replace('#include <aomap_fragment>', 'reflectedLight.indirectDiffuse *= tAO;');
   };
-  mat.customProgramCacheKey = () => 'sedona-terrain-v1';
+  mat.customProgramCacheKey = () => 'sedona-terrain-v2';
   return mat;
 }

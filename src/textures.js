@@ -126,10 +126,10 @@ const mixC = (a, b, t) => [mix(a[0], b[0], t), mix(a[1], b[1], t), mix(a[2], b[2
 
 /* ── compacted red dirt: the wash floor ────────────────────────────────── */
 
-const DIRT_DAMP = C(92, 52, 41);    // shadowed / still-damp, purple-brown
-const DIRT_BASE = C(139, 78, 56);   // rust oxide, the dominant colour
-const DIRT_DUST = C(172, 115, 89);  // sun-bleached dust film
-const DIRT_PALE = C(186, 140, 114); // fine silt on the high spots
+const DIRT_DAMP = C(102, 62, 54);   // shadowed / still-damp, purple-brown
+const DIRT_BASE = C(154, 92, 68);   // rust oxide, the dominant colour
+const DIRT_DUST = C(186, 130, 102); // sun-bleached dust film
+const DIRT_PALE = C(200, 156, 130); // fine silt on the high spots
 
 export function makeDirt(size = 1024) {
   const N = size * size;
@@ -149,19 +149,21 @@ export function makeDirt(size = 1024) {
       const grit = pfbm(u * 46, v * 46, 46, 3, 71);
       const grain = pfbm(u * 190, v * 190, 190, 2, 233);
 
-      /* embedded clasts — small stones half buried in the compacted surface.
-         Sparse on purpose: loose stone is instanced geometry, and painting a
-         lot of it here as well reads as popcorn at close range. */
+      /* Embedded clasts — small stones set into the compacted surface. Very
+         faint on purpose. Loose stone is instanced geometry now, and a Worley
+         field of identical hemispherical bumps painted here as well is exactly
+         the popcorn-ceiling read: same size, same value, same spacing, and a
+         displacement of the surface rather than an object resting on it. */
       const wp = pworley(u * 34, v * 34, 34, 401, 0.95);
       const rad = 0.13 + wp.id * 0.17;
       const inside = clamp((rad - wp.f1) / rad, 0, 1);
-      const clast = Math.sqrt(inside) * (wp.id > 0.66 ? 1 : 0);
+      const clast = Math.sqrt(inside) * (wp.id > 0.78 ? 1 : 0);
 
       /* hairline fissures. Ridged noise rather than cell edges: real shrinkage
          at this scale wanders, and a Worley net reads as a tiled honeycomb. */
       const crack = Math.pow(clamp(pridged(u * 22, v * 22, 22, 3, 907) - 0.62, 0, 1) * 2.7, 1.6);
 
-      h[i] = broad * 0.55 + grit * 0.18 + grain * 0.050 + clast * 0.26 - crack * 0.10;
+      h[i] = broad * 0.55 + grit * 0.18 + grain * 0.050 + clast * 0.09 - crack * 0.10;
 
       /* colour: dust film on the highs, damp oxide in the lows, clasts
          pulled toward a cooler grey-red so they separate from the matrix */
@@ -173,7 +175,7 @@ export function makeDirt(size = 1024) {
       col = mixC(col, DIRT_PALE, smoothstep(0.74, 1.0, dry) * 0.6);
       if (clast > 0.01) {
         const stone = mixC(C(122, 84, 66), C(158, 122, 100), wp.id);
-        col = mixC(col, stone, clamp(clast * 1.35, 0, 1) * 0.34);
+        col = mixC(col, stone, clamp(clast * 1.35, 0, 1) * 0.20);
       }
       col = mixC(col, DIRT_DAMP, crack * 0.18);
       /* per-texel speckle keeps mip level 0 from looking airbrushed */
@@ -217,13 +219,18 @@ export function makeSand(size = 512) {
 
       /* ripples: a periodic train bent by low-frequency noise, so the crests
          wander the way wind ripples actually do instead of running straight */
+      /* Warped hard, and broken by a coverage mask: ripples that run coherently
+         across a whole tile read as corrugated iron from thirty metres, which is
+         not how a patch of drifted sand in a wash looks. */
       const warp = pfbm(u * 3, v * 3, 3, 3, 17) - 0.5;
-      const rip = 0.5 + 0.5 * Math.sin((v * 9 + warp * 1.4 + u * 1.0) * Math.PI * 2);
-      const ripple = Math.pow(rip, 1.5) * 0.62;
+      const warp2 = pfbm(u * 11, v * 11, 11, 2, 19) - 0.5;
+      const rip = 0.5 + 0.5 * Math.sin((v * 9 + warp * 2.2 + warp2 * 0.7 + u * 1.0) * Math.PI * 2);
+      const cover = smoothstep(0.34, 0.62, pfbm(u * 5, v * 5, 5, 3, 23));
+      const ripple = Math.pow(rip, 1.5) * 0.62 * cover;
       const drift = pfbm(u * 4, v * 4, 4, 4, 313);
       const grain = pfbm(u * 220, v * 220, 220, 2, 887);
 
-      h[i] = drift * 0.5 + ripple * 0.13 + grain * 0.035;
+      h[i] = drift * 0.5 + ripple * 0.075 + grain * 0.035;
 
       const bright = clamp(ripple * 0.6 + drift * 0.55 - 0.1, 0, 1);
       let col = mixC(SAND_LOW, SAND_MID, smoothstep(0.0, 0.55, bright));
@@ -249,11 +256,14 @@ export function makeSand(size = 512) {
 
 /* ── canyon-wall sandstone ─────────────────────────────────────────────── */
 
-/* Kept deliberately close together: real sandstone beds differ by a shade,
-   and a wide palette reads as painted stripes rather than as bedding. */
+/* Nearly uniform. Bedding is now carried by elevation in the terrain shader,
+   where the colour band and the geometric ledge are the same feature; a second
+   independent set of stripes inside the tile cuts across those at a different
+   angle and the wall reads as cross-hatching. What is left here is only the
+   shade-to-shade variation within a single bed. */
 const ROCK_BANDS = [
-  C(160, 100, 70), C(170, 112, 82), C(150, 92, 66),
-  C(176, 122, 90), C(182, 138, 106), C(156, 96, 68),
+  C(164, 106, 76), C(170, 114, 84), C(158, 100, 72),
+  C(172, 118, 88), C(166, 110, 80), C(160, 102, 74),
 ];
 
 export function makeRock(size = 1024) {
@@ -289,17 +299,24 @@ export function makeRock(size = 1024) {
       const varn = Math.pow(clamp(pfbm(u * 16, v * 2.5, 16, 4, 733) * 1.5 - 0.42, 0, 1), 1.4);
       col = mixC(col, C(84, 52, 41), varn * 0.26);
 
-      /* Jointing. Kept shallow: at 45 units of normal strength a deep joint
-         catches the grazing sun along its lip and the wall reads as scratched
-         rather than as fractured. */
-      const jw = pworley(u * 7, v * 7, 7, 1201, 1.0);
-      const joint = 1 - smoothstep(0.0, 0.022, jw.f2 - jw.f1);
+      /* Jointing, at 13 cells across a 14 m tile — about one metre. Seven cells
+         put two-metre polygons on the map, and a two-metre polygon network
+         magnified across a nearby bank face reads unmistakably as cracked
+         paint. Kept shallow too: a deep joint catches the grazing sun along its
+         lip and the wall reads as scratched rather than as fractured. */
+      const jw = pworley(u * 13, v * 13, 13, 1201, 1.0);
+      const joint = 1 - smoothstep(0.0, 0.016, jw.f2 - jw.f1);
       const pit = pfbm(u * 70, v * 70, 70, 3, 1451);
 
-      h[i] = (1 - bt) * 0.06 + warp * 0.30 + cross * 0.12 + pit * 0.10 - joint * 0.11
+      /* Deliberately no joint relief. A Worley net at any single cell size, once
+         it is magnified across a face a few metres away, is a legible net —
+         cracked-paint wallpaper — and the lips of the grooves catch a low sun
+         and outline every cell in bright thread. Jointing at that scale is
+         System 2's problem, and it needs to be geometry, not a tiling map. */
+      h[i] = (1 - bt) * 0.06 + warp * 0.30 + cross * 0.12 + pit * 0.10
            - smoothstep(0.9, 1.0, bt) * 0.10;
 
-      col = mixC(col, C(112, 68, 50), joint * 0.26);
+      col = mixC(col, C(124, 78, 58), joint * 0.055);
       const sp = (hash2(x, y, 2207) - 0.5) * 12;
       alb[i * 4] = clamp(col[0] + sp, 0, 255);
       alb[i * 4 + 1] = clamp(col[1] + sp * 0.95, 0, 255);
@@ -313,15 +330,24 @@ export function makeRock(size = 1024) {
   const ao = aoFromHeight(h, size, 2, 11, 2.2);
   return {
     albedo: dataTex(alb, size, true),
-    /* 14 m tile, ~0.6 m of relief → about 45 */
-    normal: dataTex(normalFromHeight(h, size, size * 0.044), size, false),
+    /* 14 m tile, ~0.4 m of relief → about 30 */
+    normal: dataTex(normalFromHeight(h, size, size * 0.030), size, false),
     arm: dataTex(packARM(ao, rough, h, size), size, false),
   };
 }
 
-/* ── clast surface, for the instanced pebbles and cobbles ──────────────── */
+/* ── clast surface, for the instanced gravel, cobbles and blocks ───────── */
 
-export function makePebbleSurface(size = 512) {
+/**
+ * Deliberately *neutral*. A wash carries grey Fort Apache limestone, off-white
+ * Coconino, dark basalt off the Rim and buff chert alongside the local red
+ * sandstone, and a single-lithology gravel field is one of the loudest tells
+ * there is. So this map carries only luminance structure — mottling, grit,
+ * quartz veining — and every scrap of hue comes from the per-instance tint in
+ * scatter.js. Mean value is set near 0.42 linear so the tints there can be read
+ * as plain multipliers on a target albedo.
+ */
+export function makeClastSurface(size = 512) {
   const N = size * size;
   const h = new Float32Array(N);
   const rough = new Float32Array(N);
@@ -337,14 +363,13 @@ export function makePebbleSurface(size = 512) {
       const vein = pridged(u * 5, v * 5, 5, 3, 3313);
       h[i] = mot * 0.5 + grit * 0.22 + vein * 0.12;
 
-      /* Kept close to the dirt in value. Clasts in a wash are the same rock as
-         the wash floor; brighter stones read as scattered litter. */
-      let col = mixC(C(88, 50, 39), C(150, 102, 80), clamp(mot * 1.25, 0, 1));
-      col = mixC(col, C(178, 152, 128), Math.pow(clamp(vein - 0.62, 0, 1) * 2.6, 1.5) * 0.55);
-      const sp = (hash2(x, y, 4409) - 0.5) * 16;
-      alb[i * 4] = clamp(col[0] + sp, 0, 255);
-      alb[i * 4 + 1] = clamp(col[1] + sp * 0.95, 0, 255);
-      alb[i * 4 + 2] = clamp(col[2] + sp * 0.9, 0, 255);
+      let g = 152 + mot * 52 + grit * 16;
+      g = mix(g, 214, Math.pow(clamp(vein - 0.62, 0, 1) * 2.6, 1.5) * 0.6);  // quartz vein
+      const sp = (hash2(x, y, 4409) - 0.5) * 18;
+      const val = clamp(g + sp, 0, 255);
+      alb[i * 4] = val;
+      alb[i * 4 + 1] = val;
+      alb[i * 4 + 2] = val;
       alb[i * 4 + 3] = 255;
       rough[i] = 0.80 - grit * 0.10 + mot * 0.08;
     }
@@ -352,10 +377,48 @@ export function makePebbleSurface(size = 512) {
   const ao = aoFromHeight(h, size, 2, 8, 2.0);
   return {
     albedo: dataTex(alb, size, true),
-    /* one tile spans a whole clast, ~3 mm of relief → about 10 */
-    normal: dataTex(normalFromHeight(h, size, size * 0.020), size, false),
+    /* One tile spans a whole clast. Pushed harder than the physical relief of a
+       water-worn pebble would justify, because it also has to stand in for the
+       sub-facet steps on a fractured block — a perfectly flat hull face reads as
+       card. */
+    normal: dataTex(normalFromHeight(h, size, size * 0.042), size, false),
     arm: dataTex(packARM(ao, rough, h, size), size, false),
   };
+}
+
+/* ── mid-scale variance ────────────────────────────────────────────────── */
+
+/**
+ * Tiled at about seven metres, between the macro map's tens of metres and the
+ * detail tiles' couple of metres. It exists for two reasons. It fills the band
+ * where a two-scale scheme leaves a hole and the ground collapses into flat
+ * colour past fifteen metres or so; and it carries *hue* variance rather than
+ * just value, which is what a landscape whose whole palette spans twenty-five
+ * degrees of hue is missing.
+ *
+ *   R  grey-violet patches — leached iron, mineral varnish
+ *   G  mid-scale value variation
+ *   B  pale buff dust settling
+ *   A  spare
+ */
+export function makeVariance(size = 512) {
+  const N = size * size;
+  const buf = new Uint8Array(N * 4);
+  for (let y = 0; y < size; y++) {
+    const v = y / size;
+    for (let x = 0; x < size; x++) {
+      const u = x / size;
+      const i = y * size + x;
+      const a = pfbm(u * 4, v * 4, 4, 4, 7101);
+      const b = pfbm(u * 9, v * 9, 9, 4, 7213);
+      const c = pridged(u * 3, v * 3, 3, 3, 7307);
+      buf[i * 4] = clamp(a * 0.72 + c * 0.42, 0, 1) * 255;
+      buf[i * 4 + 1] = clamp(0.30 + b * 0.62 + a * 0.28, 0, 1) * 255;
+      buf[i * 4 + 2] = clamp(smoothstep(0.40, 0.80, b * 0.65 + c * 0.45), 0, 1) * 255;
+      buf[i * 4 + 3] = 255;
+    }
+  }
+  return dataTex(buf, size, false);
 }
 
 /* ── macro variation ───────────────────────────────────────────────────── */
@@ -397,11 +460,21 @@ export function makeMacro(size = 512) {
 /* ── dried mud polygons ────────────────────────────────────────────────── */
 
 /**
- * Cracked mud for the flat pans, kept in its own map so its scale is
- * independent of the dirt detail and it can be masked to flat ground only.
- *   R  crack depth (1 in the crack)
+ * Cracked mud for the ponded pans, in its own map so its scale is independent
+ * of the dirt detail and it can be masked to ponded silt only.
+ *
+ * The important thing about Arizona mud cracks under a low sun is that they are
+ * *relief*, not a drawn line: each plate curls upward at its rim as it dries and
+ * throws a hard shadow across its neighbour, the crack between them is a real
+ * gap, and plate tops go a lighter dusty buff than the crack interiors. So the
+ * curl lives in its own channel as a ring just inside each edge, and the crack
+ * channel is kept narrow and deep rather than wide and soft. Plate size is
+ * modulated within the tile, because real polygon size scales with how thick the
+ * mud was and a single Worley frequency reads as wallpaper.
+ *
+ *   R  crack interior — narrow, deep
  *   G  per-plate brightness
- *   B  plate curl — mud plates lift at their edges as they dry
+ *   B  plate curl — a raised ring inside each plate edge
  */
 export function makeCracks(size = 512) {
   const N = size * size;
@@ -411,17 +484,42 @@ export function makeCracks(size = 512) {
     for (let x = 0; x < size; x++) {
       const u = x / size;
       const i = y * size + x;
-      /* two generations: a coarse polygon net and a finer one inside it */
-      const wob = (pfbm(u * 8, v * 8, 8, 3, 8101) - 0.5) * 0.14;
-      const a = pworley(u * 9 + wob, v * 9 + wob, 9, 8111, 1.0);
-      const b = pworley(u * 21 + wob, v * 21 + wob, 21, 8117, 1.0);
-      const ea = a.f2 - a.f1, eb = b.f2 - b.f1;
-      const ca = 1 - smoothstep(0.008, 0.075, ea);
-      const cb = (1 - smoothstep(0.006, 0.050, eb)) * 0.55;
-      const crack = clamp(Math.max(ca, cb), 0, 1);
-      const curl = clamp(smoothstep(0.30, 0.06, ea), 0, 1);
+      /* Warped hard in two bands. A Worley net at a single cell size, however
+         jittered, still reads as woven fabric; the warp is what makes the
+         polygons wander the way shrinkage cracks do. */
+      const wob = (pfbm(u * 8, v * 8, 8, 3, 8101) - 0.5) * 0.38
+                + (pfbm(u * 3, v * 3, 3, 2, 8103) - 0.5) * 0.55;
+      /* three generations, with a low-frequency field choosing between them, so
+         polygon scale varies across the pan the way mud thickness does */
+      const thick = smoothstep(0.35, 0.70, pfbm(u * 2, v * 2, 2, 3, 8131));
+      /* Plate sizes of roughly 30, 16 and 9 cm across a 2.6 m tile. Mud cracks
+         scale with the thickness of the layer that dried, and a wash pan is a
+         film a centimetre or two thick, not a metre of lakebed clay — the
+         half-metre plates this had before are pond-bottom scale. */
+      const a = pworley(u * 9 + wob, v * 9 - wob, 9, 8111, 1.0);
+      const b = pworley(u * 16 + wob, v * 16 - wob, 16, 8117, 1.0);
+      const c = pworley(u * 28 + wob, v * 28 - wob, 28, 8123, 1.0);
+      const ea = a.f2 - a.f1, eb = b.f2 - b.f1, ec = c.f2 - c.f1;
+
+      const wa = thick, wb = 1 - Math.abs(thick - 0.5) * 2, wc = 1 - thick;
+      const crack = clamp(
+        (1 - smoothstep(0.004, 0.024, ea)) * wa +
+        (1 - smoothstep(0.004, 0.021, eb)) * wb +
+        (1 - smoothstep(0.003, 0.016, ec)) * wc, 0, 1);
+      /* a ring just inside the edge, not on it: that offset is the curl */
+      const ring = (e, lo, hi) => smoothstep(lo * 0.55, lo, e) * (1 - smoothstep(hi, hi * 2.2, e));
+      const curl = clamp(ring(ea, 0.026, 0.066) * wa + ring(eb, 0.022, 0.054) * wb
+                       + ring(ec, 0.017, 0.040) * wc, 0, 1);
+
       buf[i * 4] = crack * 255;
-      buf[i * 4 + 1] = clamp(0.35 + a.id * 0.5 + b.id * 0.15, 0, 1) * 255;
+      /* Plate-top tone. Deliberately dominated by the *finest* generation and
+         kept narrow: a flat value per coarse cell, at any strength worth
+         noticing, tiles the pan into a mosaic of half-metre squares — the
+         Voronoi lattice becomes legible as a lattice, which is worse than no
+         variation at all. Real plate tops differ, but by a few percent. */
+      const dust = pfbm(u * 14, v * 14, 14, 3, 8137);
+      buf[i * 4 + 1] = clamp(0.34 + (c.id - 0.5) * 0.30 + (b.id - 0.5) * 0.16
+                           + (a.id - 0.5) * 0.05 + (dust - 0.5) * 0.40, 0, 1) * 255;
       buf[i * 4 + 2] = curl * 255;
       buf[i * 4 + 3] = 255;
     }

@@ -14,9 +14,10 @@ import * as THREE from 'three';
 import { WashPath } from './path.js';
 import { Terrain, buildTerrainMesh, makeTerrainMaterial } from './terrain.js';
 import { buildScatter } from './scatter.js';
-import { buildSky, buildLights, SUN_DIR, FOG } from './sky.js';
+import { buildSky, buildLights, SUN_DIR, FOG, SHADOW_HALF } from './sky.js';
 import {
-  makeDirt, makeSand, makeRock, makePebbleSurface, makeMacro, makeCracks, setAnisotropy,
+  makeDirt, makeSand, makeRock, makeClastSurface, makeMacro, makeVariance, makeCracks,
+  setAnisotropy,
 } from './textures.js';
 
 const EYE = 1.65;
@@ -38,7 +39,12 @@ renderer.setPixelRatio(1);
 renderer.setSize(window.innerWidth, window.innerHeight, false);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.20;
+/* Exposed for the midtones, not the floor. The scene's real dynamic range at
+   two degrees of solar elevation is about twenty to one between a sun-facing
+   rock face and level ground, so an exposure that lifts the wash floor to a
+   comfortable middle grey flattens everything else into pale cream. A
+   photographer would let the floor sit dark and keep the walls. */
+renderer.toneMappingExposure = 0.92;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.shadowMap.autoUpdate = true;
@@ -57,8 +63,9 @@ const tex = {
   dirt: makeDirt(1024),
   sand: makeSand(512),
   rock: makeRock(1024),
-  pebble: makePebbleSurface(512),
+  clast: makeClastSurface(512),
   macro: makeMacro(512),
+  variance: makeVariance(512),
   crack: makeCracks(512),
 };
 
@@ -74,8 +81,8 @@ const sky = buildSky();
 sky.scale.setScalar(5000);
 scene.add(sky);
 
-const { sun, hemi, bounce } = buildLights();
-scene.add(sun, sun.target, hemi, bounce);
+const { sun, hemi, glow, bounce } = buildLights();
+scene.add(sun, sun.target, hemi, glow, bounce);
 
 /* ── player ────────────────────────────────────────────────────────────── */
 
@@ -113,13 +120,14 @@ function syncCamera() {
 
 /* Shadow camera rides with the player, quantised so the map does not shimmer
    and, more importantly, so the same player position always yields the same
-   shadow texels. */
+   shadow texels. The step is four shadow texels, small enough that walking does
+   not visibly pop and coarse enough to stay exactly reproducible. */
+const SHADOW_Q = (SHADOW_HALF * 2) / 1024;
 function syncShadow() {
-  const qx = Math.round(player.x / 0.5) * 0.5;
-  const qz = Math.round(player.z / 0.5) * 0.5;
-  const qy = Math.round(player.y / 0.5) * 0.5;
+  const q = (v) => Math.round(v / SHADOW_Q) * SHADOW_Q;
+  const qx = q(player.x), qz = q(player.z), qy = q(player.y);
   sun.target.position.set(qx, qy, qz);
-  sun.position.set(qx + SUN_DIR.x * 500, qy + SUN_DIR.y * 500, qz + SUN_DIR.z * 500);
+  sun.position.set(qx + SUN_DIR.x * 600, qy + SUN_DIR.y * 600, qz + SUN_DIR.z * 600);
   sun.target.updateMatrixWorld();
   sun.updateMatrixWorld();
 }

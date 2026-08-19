@@ -108,8 +108,8 @@ export class WashPath {
 
   /** Heading in radians at arc length s; 0 means straight down -Z. */
   headingAt(s) {
-    const a = this.posAt(Math.max(0, s - 3), new THREE.Vector3());
-    const b = this.posAt(s + 3, new THREE.Vector3());
+    const a = this.posAt(Math.max(0, s - 3), this._ha || (this._ha = new THREE.Vector3()));
+    const b = this.posAt(s + 3, this._hb || (this._hb = new THREE.Vector3()));
     return Math.atan2(b.x - a.x, -(b.z - a.z));
   }
 }
