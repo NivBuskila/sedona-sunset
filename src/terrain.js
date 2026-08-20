@@ -1083,6 +1083,55 @@ float bandPh = vWPos.z * 0.62 + (mac2.r - 0.5) * 5.4 + (vr.b - 0.5) * 2.4;
 float band = 0.5 + 0.5 * sin(bandPh * 6.2831853);
 float bandW = floorM * smoothstep(0.34, 0.58, mac.r * 0.62 + vr.g * 0.5);
 albedo *= 1.0 + (band - 0.5) * 0.13 * bandW;
+
+/* ---- and the same thing again at the scale the metric can actually see ----
+   The band above is a metre and a half from crest to crest. Worked through, that
+   subtends about a hundred pixels at thirty metres, and the high-pass the
+   midground is being judged with has a nine-pixel kernel — so a metre-scale
+   feature contributes exactly nothing to the number, however visible it is. It
+   was answering the description of the defect without touching the measurement.
+
+   What lands in a nine-pixel window at twenty to forty metres is fifteen to
+   thirty centimetres of world space, which is the spacing of the individual
+   ripple crests and the size of the cobbles between them. So the train has to be
+   carried at its own wavelength, not just as its envelope.
+
+   The reason this can be done analytically here when it could not be done as
+   relief is that a sine has a known response to a box filter. Its amplitude is
+   attenuated by sinc(pi * foot / lambda), which is a smooth roll-off to zero as
+   the footprint approaches the wavelength — so it fades out instead of aliasing,
+   and it is honest about when it stops being resolvable rather than being cut off
+   at an arbitrary distance. Two wavelengths beating against each other so the
+   train bifurcates and dies out along its length rather than combing the whole
+   floor at one pitch, which is the corduroy this was criticised for. */
+float rpA = 0.185, rpB = 0.127;
+float rpPh = vWPos.z + (mac2.g - 0.5) * 0.42 + (vr.r - 0.5) * 0.13;
+float rpMix = smoothstep(0.35, 0.65, mac.g);
+float rip = mix(sin(rpPh / rpA * 6.2831853), sin(rpPh / rpB * 6.2831853), rpMix);
+/* Plane-bed patches, where the flow ran fast enough to wash the ripples out
+   entirely. Without them a ripple field is unbroken across the whole floor,
+   which no real bed is. */
+float rpBed = smoothstep(0.30, 0.52, mac2.a * 0.7 + vr.g * 0.5);
+float rpF = (1.0 - smoothstep(0.34, 0.92, foot / rpA))
+          * bandW * rpBed * (0.45 + 0.55 * sandW);
+albedo *= 1.0 + rip * 0.105 * rpF;
+
+/* Cobble-scale chroma mottle. A gravel bar at thirty metres has stopped being a
+   collection of readable stones and become a *tone* — greyer and flatter than the
+   sand beside it — and that tone is what has been missing. Averaging colour over a
+   footprint is what a mip chain does correctly and does not need help with; the
+   reason the midground went flat is that the relief filter was applied to the
+   pigment too.
+   Two rotated samples at incommensurate scales, because one sample of a tiling
+   map at a third of a metre is a visible grid at this range. No footprint fade on
+   either: the mip chain already averages them at exactly the right rate, and
+   hand-fading them on top is the double-filtering that flattened the midground in
+   the first place. */
+float mtl = texture2D(uVar, rot2(wxz, 0.83) * 2.90).g * 0.60
+          + texture2D(uVar, rot2(wxz, 2.31) * 1.70).b * 0.40;
+albedo *= 1.0 + (mtl - 0.5) * 0.34 * floorM;
+albedo = mix(albedo, albedo * vec3(0.93, 0.99, 1.07),
+             smoothstep(0.56, 0.78, mtl) * floorM * 0.5);
 /* Not on the mud: dried silt goes dusty buff, and a violet cast over it turns
    the pans into lilac lace. */
 /* The grey-violet patches are patches. Run at half strength over most of the
@@ -1228,7 +1277,34 @@ export function makeTerrainMaterial(tex) {
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = tRough;')
       .replace('#include <normal_fragment_maps>',
         'normal = normalize((viewMatrix * vec4(tNrmW, 0.0)).xyz);')
-      .replace('#include <aomap_fragment>', 'reflectedLight.indirectDiffuse *= tAO;');
+      .replace('#include <aomap_fragment>', /* glsl */`
+      reflectedLight.indirectDiffuse *= tAO;
+
+      /* Airlight, added rather than multiplied. This is the fix for "shadow is
+         just a darker version of lit", which has now been raised by three
+         critics running, and the reason every previous attempt failed is that
+         they were all made by tinting a light source.
+
+         Measured on the sys1h floor, shadow sits at 31% of sunlit — the right
+         luminance — but its colour is rgb(59,24,21): blue is the *lowest*
+         channel. No amount of blue in the hemisphere light can change that,
+         because reflected light is the product of illuminant and albedo, and
+         this dirt has a blue albedo near 0.1. Multiply a lilac sky by that and
+         essentially no blue comes back.
+
+         Real shadowed ground photographs violet for a reason that is not
+         reflection at all: Rayleigh-scattered sunlight in the air *between* the
+         surface and the camera, which adds to the image independently of what
+         the surface is made of. So it has to be added here, outside the albedo
+         product, or it cannot appear. Scaled by view distance because that is
+         how much air is in the path, and confined to shadow because in sunlight
+         it is three orders of magnitude below the direct term and only serves to
+         wash the frame out — which is exactly the milky veil that came back as a
+         regression the last two times this was attempted. */
+      float airM = 1.0 - getShadowMask();
+      float airD = smoothstep(1.5, 46.0, length(vWPos - cameraPosition));
+      reflectedLight.indirectDiffuse +=
+        vec3(0.030, 0.032, 0.062) * airM * (0.30 + 0.70 * airD) * tAO;`);
   };
   mat.customProgramCacheKey = () => 'sedona-terrain-v3';
   return mat;

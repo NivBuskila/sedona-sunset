@@ -26,6 +26,7 @@
 import * as THREE from 'three';
 import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
 import { rng, fbm, clamp, mix } from './noise.js';
+import { SUN_DIR } from './sky.js';
 
 /* ── shapes ────────────────────────────────────────────────────────────── */
 
@@ -407,6 +408,7 @@ export function buildScatter(terrain, tex) {
   mat.userData.uniforms = {
     uVpH: { value: 1440 },
     uFarCol: { value: new THREE.Color(FAR_COL[0], FAR_COL[1], FAR_COL[2]) },
+    uSunDir: { value: SUN_DIR.clone() },
   };
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, mat.userData.uniforms);
@@ -475,7 +477,8 @@ export function buildScatter(terrain, tex) {
         vSeat = normalize(normalMatrix * mat3(instanceMatrix) * vec3(0.0, 1.0, 0.0));
       `);
 
-    shader.fragmentShader = ('varying float vFar;\nvarying vec3 vSeat;\n' + shader.fragmentShader)
+    shader.fragmentShader = ('varying float vFar;\nvarying vec3 vSeat;\nuniform vec3 uSunDir;\n' +
+      shader.fragmentShader)
       .replace('#include <normal_fragment_maps>', /* glsl */`
         #include <normal_fragment_maps>
         normal = normalize(mix(normal, vSeat, vFar * 0.92));
@@ -489,6 +492,21 @@ export function buildScatter(terrain, tex) {
         #include <lights_physical_fragment>
         material.specularColor *= 0.55;
         material.specularF90 *= 0.16;
+      `)
+      /* Matching airlight to the terrain's, and for the same reason: a shaded
+         clast facet reflects the sky through its own low blue albedo and comes
+         back red, so the cool cast has to be added outside the albedo product.
+         Unlike the floor a clast's dark side is mostly turned away from the sun
+         rather than shadow-mapped, so the mask is the lit fraction of the
+         normal and not getShadowMask alone — otherwise every pebble's own
+         shaded half, which is most of what is actually visible of it at this
+         sun angle, would be missed. */
+      .replace('#include <aomap_fragment>', /* glsl */`
+        #include <aomap_fragment>
+        float aFace = 1.0 - smoothstep(0.0, 0.45, dot(normal, normalize(vec3(
+          viewMatrix * vec4(uSunDir, 0.0)))));
+        reflectedLight.indirectDiffuse +=
+          vec3(0.030, 0.032, 0.062) * max(aFace, 1.0 - getShadowMask()) * 0.85;
       `);
   };
 
