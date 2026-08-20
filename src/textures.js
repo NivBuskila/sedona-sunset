@@ -546,11 +546,28 @@ export function makeRock(size = 1024) {
       const lamT = lamC - Math.floor(lamC);
       /* Two low-frequency sines rather than a hash, so neighbouring laminae are
          weakly correlated the way a real depositional sequence is — a coarsening
-         run, then a fining one — instead of alternating at random. */
-      const lamHard = clamp(0.5 + 0.34 * Math.sin(lamI * 2.399 + 1.7)
-                                + 0.20 * Math.sin(lamI * 0.611), 0, 1);
-      const lamQtz = hash2(lamI, 3, 5211);
-      const lamFe = hash2(lamI, 9, 5217);
+         run, then a fining one — instead of alternating at random.
+         Then varied *along* the lamina as well as across it, which is the fix for
+         the long unbroken horizontal streaks the wall was showing. Keyed to the
+         lamina index alone, every property was constant for the whole length of
+         the band: one hardness, one quartz content, one iron content from end to
+         end, which on a fifty-metre wall is a brush stroke. A real lamina
+         coarsens, cements harder, stains and pinches out along its length — a bed
+         traced across a canyon is a different rock at each end.
+         The variation comes from a low-frequency field with a *per-lamina seed*
+         rather than from offsetting the coordinates, because pfbm wraps at its
+         period and a non-integer coordinate offset would put a seam down the
+         tile. A seeded field stays periodic, and the discontinuity it does have —
+         at the lamina boundary, where the seed changes — is exactly where a
+         discontinuity belongs. */
+      const lamHard = clamp(0.5 + 0.30 * Math.sin(lamI * 2.399 + 1.7)
+                                + 0.18 * Math.sin(lamI * 0.611)
+                                + (pfbm(u * 3, v * 3, 3, 3, 5221 + lamI * 7) - 0.5) * 0.60,
+                            0, 1);
+      const lamQtz = clamp(hash2(lamI, 3, 5211)
+                         + (pfbm(u * 2, v * 2, 2, 2, 5231 + lamI * 11) - 0.5) * 0.60, 0, 1);
+      const lamFe = clamp(hash2(lamI, 9, 5217)
+                        + (pfbm(u * 2, v * 2, 2, 2, 5241 + lamI * 13) - 0.5) * 0.65, 0, 1);
       /* The contact itself: a fine recessive groove where the two laminae meet,
          narrow and shallow. This is a real feature and it is also the only line
          work in the map, so it is kept to a couple of texels at the coarse
