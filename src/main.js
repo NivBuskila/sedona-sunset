@@ -20,6 +20,7 @@ import {
   makeDirt, makeSand, makeRock, makeClastSurface, makeMacro, makeVariance, makeCracks,
   setAnisotropy,
 } from './textures.js';
+import { createAudio } from './audio.js';
 
 const EYE = 1.65;
 const DEG = Math.PI / 180;
@@ -112,6 +113,10 @@ scene.add(sky);
 
 const { sun, hemi, glow, bounce } = buildLights();
 scene.add(sun, sun.target, hemi, glow, bounce);
+
+/* System 6. Silent until a gesture resumes the context, and inert if the
+   browser has no audio at all — it must never be able to stop the scene. */
+const audio = createAudio({ camera, canvas, path });
 
 /* ── player ────────────────────────────────────────────────────────────── */
 
@@ -314,6 +319,7 @@ function frame(t) {
   const dt = Math.min(0.05, (t - last) / 1000 || 0.016);
   last = t;
   step(dt);
+  audio.update(dt, player);
   renderOnce();
   const inst = 1 / Math.max(1e-4, dt);
   fpsSmoothed = fpsSmoothed ? fpsSmoothed * 0.9 + inst * 0.1 : inst;
@@ -354,6 +360,7 @@ const api = {
     };
   },
   probe,
+  audio: audio.api,
   // handy while developing; not part of the contract
   _scene: scene, _camera: camera, _terrain: terrain, _path: path,
   _instances: clasts.reduce((n, m) => n + m.count, 0),
