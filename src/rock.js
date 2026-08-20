@@ -904,8 +904,13 @@ export function buildTalus(path, terrain, material) {
     /* Half-extent in metres. The exponent is what makes the grading: a cube root
        of a uniform would put most of the mass at the coarse end, a cube puts it at
        the fine end with a thin tail of slabs, and a talus apron is the latter. */
-    const r = (0.095 + 0.55 * Math.pow(rand(), 3.4)) * (1 + t * 1.5);
-    tr.set(x, terrain.heightAt(x, z) - r * (0.30 + 0.36 * rand()), z);
+    /* The coarse tail was still too long. A three-metre slab standing on end in
+       the near field is a monolith, not rockfall, and half a dozen of them across
+       an apron read as sculpture placed there — a fourth power and a shorter
+       toe-coarsening keep the biggest blocks at about two metres, which is the
+       size that makes the junction an event without competing with the cliff. */
+    const r = (0.095 + 0.40 * Math.pow(rand(), 4.0)) * (1 + t * 1.2);
+    tr.set(x, terrain.heightAt(x, z) - r * (0.34 + 0.40 * rand()), z);
     e.set(rand() * 6.283, rand() * 6.283, rand() * 6.283);
     qt.setFromEuler(e);
     sc.set(r * (0.8 + rand() * 0.5), r * (0.55 + rand() * 0.5), r * (0.8 + rand() * 0.5));
@@ -1158,13 +1163,28 @@ float vh3 = hash11(vi + 71.0), vh4 = hash11(vi + 113.0);
    ribbons into lenses without touching their peak saturation, which is the part
    the measured tail depends on. */
 float ironC = hash11(vi + 211.0) + 0.55 * hash11(vi + 251.0);
-float ironF = smoothstep(0.80, 1.08, mac.r * 0.62 + vr.g * 0.52
+/* A lens sits *inside* a bed. Letting the driver run flat across the whole bed
+   thickness filled every bed it opened in from contact to contact, and a band of
+   one colour with a hard edge exactly on a bedding plane at both its top and its
+   bottom is the definition of a painted stripe — the front stops where the
+   permeability changes, which is somewhere in the bed, not at its boundary. */
+float ironV = 0.55 + 0.45 * sin((sbT + 0.31 * hash11(vi + 293.0)) * 6.28318);
+float ironF = smoothstep(0.78, 1.14, mac.r * 0.62 + vr.g * 0.52
                                    + (sbR - 0.5) * 0.30
-                                   + (ironC - 0.775) * 0.34) * lIron;
+                                   + (ironC - 0.775) * 0.52
+                                   + (ironV - 0.55) * 0.30) * lIron;
+/* Hematite is one mineral but its cement is not one colour: the concentration
+   varies front to front, and a front rich enough to be nearly maroon sits beside
+   one that is orange-red. Holding it at a single value is the other half of why
+   the lenses read as tape, and varying it per cell costs nothing and takes
+   nothing off the saturated tail — every one of these is above 0.88 in HSV
+   saturation, which is what the measured p99 depends on. */
+vec3 ironCol = mix(uIron, mix(vec3(0.400, 0.052, 0.046), vec3(0.470, 0.108, 0.022),
+                             hash11(vi + 331.0)), 0.70 * hash11(vi + 367.0));
 /* Fresh spall faces are unweathered rock: no varnish film, no dust, and the
    pigment at full strength. A cliff with no fresh faces is a cliff nothing has
    fallen off, which is not a cliff. */
-albedo = mix(albedo, uIron * lum, clamp(ironF * 0.88 + fresh * 0.26 * lIron, 0.0, 0.92));
+albedo = mix(albedo, ironCol * lum, clamp(ironF * 0.88 + fresh * 0.26 * lIron, 0.0, 0.92));
 
 /* A resistant bed is better cemented, so it is a little paler and a little
    smoother, and the soft bed under it is recessed and holds shadow. */
