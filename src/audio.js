@@ -51,6 +51,23 @@ const WIND_HEADING = 0.12;
    purpose — the reverb wants a trend, not a measurement. */
 const WASH_HALF = 13;
 
+/* Footstep bus trim. The perspective of a first-person walk is set by exactly
+   two numbers — this one and the gust drive below — and they are deliberately
+   moved together in opposite directions. Raising the boots alone would lift the
+   overall level, which is the one thing this piece cannot afford; lowering the
+   gusts alone would leave a hard gust reading as a breeze against the bed. Half
+   the correction each way puts the boots in front of the weather and leaves the
+   sum where it was. Note that neither number touches the bed floors, so the
+   eighty per cent of the take that is quiet is unaffected by either. */
+const FEET = 1.41;
+
+/* The bed's high-frequency floor, as one number. It used to be written twice —
+   once where the band is built and once where it is scheduled every frame — and
+   the scheduler's copy silently won, so changing the constructor's value moved
+   the full-take band RMS (which the scheduler does not reach at render start)
+   without moving the bed spectrum at all. */
+const AIR_FLOOR = 0.00098;
+
 const TAU = Math.PI * 2;
 
 /* Frequencies the rock edges sing at. A fixed ladder rather than a fresh
@@ -553,7 +570,7 @@ export class Soundscape {
        muted track rather than as empty desert. Forty-odd decibels under the
        rush, tilted down so it does not become a rising shelf, and meant never
        to be identified, only missed. */
-    this.air = band(wh2L, wh2R, 'highpass', 5200, 0.6, 0.00068);
+    this.air = band(wh2L, wh2R, 'highpass', 5200, 0.6, AIR_FLOOR);
     /* A gentle shelf rather than a lowpass. A lowpass corner anywhere near the
        render's Nyquist collapses the top of the band, which then reads as "the
        bed dies above ten kilohertz" — the same defect one octave higher. */
@@ -568,10 +585,19 @@ export class Soundscape {
     /* Rock-edge tones. Panned hard and opposite, with the stronger of the two
        alternating sides gust by gust so the stereo image stays balanced over
        time. */
-    this.edge1 = bq('bandpass', 1560, 16);
+    /* Q of fifty-odd, not sixteen. Two reasons, and they point the same way.
+       Physically, vortex shedding off a hard lip is a fairly pure tone, not a
+       band of noise. Practically, a Q of 16 at 1560 Hz is a hundred hertz wide,
+       which is a third of a third-octave band, so the filter's own skirts land
+       inside any third-octave reference window and the tone cannot measure as
+       prominent however loud it is made — prominence saturates around three
+       decibels and raising the level just makes the gust brighter. Narrowing
+       the band raises the prominence and *lowers* the energy, which is the rare
+       change that improves the measurement and the mix at once. */
+    this.edge1 = bq('bandpass', 1560, 55);
     this.eg1 = g(0);
     whL.connect(this.edge1).connect(this.eg1).connect(sp(-0.62)).connect(this.windBus);
-    this.edge2 = bq('bandpass', 2700, 22);
+    this.edge2 = bq('bandpass', 2700, 70);
     this.eg2 = g(0);
     whR.connect(this.edge2).connect(this.eg2).connect(sp(0.62)).connect(this.windBus);
     /* Loud enough to stand about ten decibels over the broadband at their own
@@ -585,7 +611,7 @@ export class Soundscape {
        left the earlier mix running three decibels hot on the left. The stereo
        interest is carried by the two different pitches instead, which costs
        nothing and cannot unbalance anything. */
-    this.edgeLvl = 0.75;
+    this.edgeLvl = 2.0;
 
     /* room tone --------------------------------------------------------- */
     this.rtLP = bq('lowpass', 105, 0.6);
@@ -612,8 +638,18 @@ export class Soundscape {
     /* footsteps --------------------------------------------------------- */
     this.stepPan = sp(0);
     this.stepLP = bq('lowpass', 620, 0.9);
+    /* A boot on sand has a body around two to five hundred hertz and nothing
+       below a hundred. Lowpassed pink noise has most of its energy in the
+       bottom octave by construction, so the footstep layer was spending the
+       majority of its power under 100 Hz — inaudible on anything, but counted
+       in full by every RMS measurement. Highpassing first is what makes it
+       possible to put the boots in front of the weather, which is a question
+       about the 300 Hz-3 kHz band, without moving the overall level, which is
+       a question about total power. */
+    this.stepHP = bq('highpass', 115, 0.7);
     this.stepGain = g(0);
-    pk2L.connect(this.stepLP).connect(this.stepGain).connect(this.stepPan);
+    pk2L.connect(this.stepHP).connect(this.stepLP).connect(this.stepGain)
+      .connect(this.stepPan);
     this.crunchBP = bq('bandpass', 1900, 1.1);
     this.crunchGain = g(0);
     this.gStep.connect(this.crunchBP).connect(this.crunchGain).connect(this.stepPan);
@@ -622,9 +658,14 @@ export class Soundscape {
     this.pebbleBP = bq('bandpass', 4200, 2.2);
     this.pebbleGain = g(0);
     whR.connect(this.pebbleBP).connect(this.pebbleGain).connect(this.stepPan);
-    this.stepPan.connect(this.dry);
+    /* One gain for the whole foot, downstream of the pan, so the perspective
+       question — are my own boots louder than the weather? — has a single
+       answer in a single place rather than being spread across four burst
+       amplitudes that have to be kept in step with each other. */
+    this.feet = g(FEET);
+    this.stepPan.connect(this.feet).connect(this.dry);
     this.stepSend = g(0.22);
-    this.stepPan.connect(this.stepSend).connect(this.wash);
+    this.feet.connect(this.stepSend).connect(this.wash);
 
     /* animals ----------------------------------------------------------- */
     this.coyA = new Canid(ctx, this.dry, this.echo, HARM.howl, HARM.yip);
@@ -900,7 +941,7 @@ export class Soundscape {
          all being pushed by one atmosphere — but it is a minority term, and
          everything else about the bands is independent. */
       const common = Math.exp(0.30 * (w.base - 0.11) * 8);
-      /* The gust drive is seven decibels below where it started.
+      /* The gust drive is ten decibels below where it started.
          Both halves of the footstep problem cannot be solved by moving the
          footsteps: a first-person walk needs its own boots above the weather,
          and raising them the seventeen decibels that would take on its own puts
@@ -910,7 +951,7 @@ export class Soundscape {
          which is a hard gust in a quiet place, and about what a real one
          measures. */
       const bed = [0.0075, 0.0042, 0.0014, 0.00045];
-      const drive = [0.152, 0.089, 0.045, 0.025];
+      const drive = [0.108, 0.063, 0.032, 0.0178];
       const expo = [2.20, 2.00, 1.55, 1.45];
       const nodes = [this.rush, this.body, this.hiss, this.rasp];
       for (let b = 0; b < 4; b++) {
@@ -931,7 +972,7 @@ export class Soundscape {
       /* The air floor drifts by a few decibels over a couple of minutes and
          never switches off. The insect band comes and goes on a half-minute
          cycle, and only in the bottom third of its range is it audible at all. */
-      ramp(this.air.gain.gain, 0.00068 * Math.exp(0.30 * this._drift(4, t)), t);
+      ramp(this.air.gain.gain, AIR_FLOOR * Math.exp(0.30 * this._drift(4, t)), t);
       const bug = clamp01(Math.sin(TAU * t / 37.3 + 1.1) * 0.5 + 0.5 - 0.45) / 0.55;
       ramp(this.stridul.gain.gain, 0.0016 * bug * bug, t);
 
@@ -1124,12 +1165,23 @@ export class Soundscape {
     const f0 = 430 + r() * 170;
     const dist = 380 + r() * 260;
     const n = 2 + Math.floor(r() * 3);
+    /* Every call is reported separately, with its own start and duration.
+       Reporting only the first leaves the repeats looking like unexplained
+       sound, and a measurement that has to account for them will file them as
+       weather — which is how a repeat howl gets reported as a recurring narrow
+       resonance in the wind. Reporting the bout as one span is no better: the
+       gaps between calls run to fifteen seconds and are genuinely quiet, so a
+       single envelope over the whole bout would blind the same measurement to
+       every gust that happens to fall inside it. */
     let t = t0, last = null;
     const parts = [];
+    const recs = [];
     for (let i = 0; i < n; i++) {
-      last = this._call(this.coyA, this.vibA, t, bearing + (r() * 2 - 1) * 0.25,
+      const at = t;
+      last = this._call(this.coyA, this.vibA, at, bearing + (r() * 2 - 1) * 0.25,
         f0 * (1 + (r() * 2 - 1) * 0.04), dist);
       parts.push(last);
+      recs.push({ kind: 'coyote', t: +at.toFixed(2), dur: +(last.end - at).toFixed(2) });
       t = last.end + 8 + r() * 15;
     }
     /* The answer. Deliberately off the first animal's pitch — coyotes avoid
@@ -1137,14 +1189,18 @@ export class Soundscape {
     let answer = null;
     if (r() < 0.55) {
       const semis = (r() < 0.5 ? -1 : 1) * (3 + r() * 4);
-      answer = this._call(this.coyB, this.vibB,
-        parts[Math.min(parts.length - 1, 1 + ((r() * 2) | 0))].end + 1.5 + r() * 5,
+      const aAt = parts[Math.min(parts.length - 1, 1 + ((r() * 2) | 0))].end + 1.5 + r() * 5;
+      answer = this._call(this.coyB, this.vibB, aAt,
         bearing + (r() < 0.5 ? -1 : 1) * (0.7 + r() * 1.4),
         f0 * Math.pow(2, semis / 12), dist * (0.8 + r() * 0.7));
+      recs.push({ kind: 'coyote', t: +aAt.toFixed(2), dur: +(answer.end - aAt).toFixed(2) });
     }
-    this.fired.push({ kind: 'coyote', t: +t0.toFixed(2), calls: n, answered: !!answer,
-      f0: +f0.toFixed(1), howlAt: +parts[0].howlAt.toFixed(3),
-      howlEnd: +parts[0].howlEnd.toFixed(3) });
+    recs.sort((p, q) => p.t - q.t);
+    Object.assign(recs[0], {
+      calls: n, answered: !!answer, f0: +f0.toFixed(1),
+      howlAt: +parts[0].howlAt.toFixed(3), howlEnd: +parts[0].howlEnd.toFixed(3),
+    });
+    for (const rc of recs) this.fired.push(rc);
     return parts[0];
   }
 
@@ -1189,6 +1245,7 @@ export class Soundscape {
       t += len + 0.06 + r() * 0.05;
     }
     this.fired.push({ kind: 'wren', t: +t0.toFixed(2), notes: n + nb,
+      dur: +(t - t0).toFixed(2),
       top: Math.round(top), bottom: Math.round(bottom) });
     return { end: t };
   }
@@ -1212,7 +1269,8 @@ export class Soundscape {
       burst(this.ravenGain.gain, t, 0.075 + r() * 0.03, 0.02, len);
       t += len + 0.32 + r() * 0.6;
     }
-    this.fired.push({ kind: 'raven', t: +t0.toFixed(2), croaks: n, f0: +f0.toFixed(1) });
+    this.fired.push({ kind: 'raven', t: +t0.toFixed(2), croaks: n,
+      dur: +(t - t0).toFixed(2), f0: +f0.toFixed(1) });
     return { end: t };
   }
 
@@ -1706,6 +1764,12 @@ export async function renderVoices({ sampleRate = 24000, seed, path = null } = {
              milliseconds of exponential decay and would otherwise be measured
              as the first two reflections of a reverb it has not reached yet. */
           offset: +(first.howlEnd - c.t + 0.45).toFixed(3),
+          /* The analysis window has to start clear of the howl, but the slap
+             delays are specified from the direct sound, so the probe needs to
+             know how far it skipped in order to report the two in the same
+             frame of reference. Without this the reflections read 0.45 s early
+             and look like early reflections of an enclosure. */
+          ref: 0.45,
           band: Math.round(first.f0 * 1.6),
           note: 'canyon slapback after the first howl',
         });

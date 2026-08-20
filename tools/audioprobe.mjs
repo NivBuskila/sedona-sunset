@@ -386,19 +386,81 @@ function analyse(x, sr, meta) {
      whenever the player walks through one. */
   const calls = (meta && meta.calls) || [];
   for (const e of evs) {
-    const hit = steps.some(s => s.t >= e.t - 0.05 && s.t <= e.t + e.dur + 0.05);
-    const call = calls.find(c => c.t >= e.t - 3 && c.t <= e.t + e.dur + 1);
-    e.kind = call ? call.kind : (hit && e.dur < 0.6) ? 'step' : 'wind';
+    /* The transient has to be at the *start* of the event, and the event has to
+       be short. A scuff is a third of a second of rasp plus the near-field
+       tail, so it runs to about six-tenths and would otherwise be filed as
+       weather; a gust runs for seconds and will overlap a footfall whenever the
+       player walks through one. */
+    const hit = steps.some(s => s.t >= e.t - 0.06 && s.t <= e.t + 0.12);
+    /* Overlap against the whole bout, not just its first call. A coyote bout
+       runs for the best part of a minute and a wren cascade for several
+       seconds; matching only the start files every repeat call as weather. */
+    const call = calls.find(c =>
+      c.t - 1 <= e.t + e.dur && c.t + (c.dur || 0) + 2.5 >= e.t);
+    e.kind = call ? call.kind : (hit && e.dur < 1.2) ? 'step' : 'wind';
+    /* The event's peak with the walking excised. A gust lasts several seconds
+       and the player usually walks through part of it, so the raw event peak is
+       whatever the loudest footfall inside it was — and comparing the step
+       median against that is comparing the footsteps with themselves. This is
+       the figure the perspective question actually needs. */
+    let clean = -200;
+    const w0 = Math.max(0, Math.floor(e.t / (EW / sr)));
+    const w1 = Math.min(ewins - 1, Math.floor((e.t + e.dur) / (EW / sr)));
+    for (let w = w0; w <= w1; w++) {
+      if (walkingAt((w + 0.5) * EW / sr)) continue;
+      if (em[w] > clean) clean = em[w];
+    }
+    e.peakClean = clean > -200 ? clean : null;
   }
   const windEvs = evs.filter(e => e.kind === 'wind');
   const callEvs = evs.filter(e => e.kind !== 'wind' && e.kind !== 'step');
+  /* The loudest gust, taken over the scheduler's own gust windows with the
+     walking and the fauna excised, rather than over detected events. Event
+     detection cannot answer this: a gust the player walks straight through
+     produces no event the classifier is willing to call weather, so on a take
+     where that happens to every gust the comparison has nothing left to
+     measure and reports a triumphant eighty-seven decibels of headroom. */
+  let gustClean = -200;
+  for (const gu of (meta && meta.gusts) || []) {
+    const a0 = gu.t0 != null ? gu.t0 : gu.t;
+    if (a0 == null) continue;
+    const w0 = Math.max(0, Math.floor(a0 / (EW / sr)));
+    const w1 = Math.min(ewins - 1, Math.floor((a0 + (gu.dur || 0)) / (EW / sr)));
+    for (let w = w0; w <= w1; w++) {
+      const t = (w + 0.5) * EW / sr;
+      if (walkingAt(t)) continue;
+      if (calls.some(c => t >= c.t - 1 && t <= c.t + (c.dur || 6) + 2.5)) continue;
+      if (em[w] > gustClean) gustClean = em[w];
+    }
+  }
+
+  /* Where the transients found while standing still come from. The question is
+     whether the footstep machinery leaks when the player is not walking, and a
+     bare count cannot answer it: sand bursts inside a gust are sharp enough to
+     trip a transient detector and are supposed to be there. Anything left over
+     after accounting for gusts and calls is the actual leak. */
+  const inGust = (t) => ((meta && meta.gusts) || []).some(gu => {
+    const a0 = gu.t0 != null ? gu.t0 : gu.t;
+    return a0 != null && t >= a0 - 0.5 && t <= a0 + (gu.dur || 0) + 1.5;
+  });
+  const stillSrc = { gust: 0, call: 0, unexplained: 0, at: [] };
+  for (const s of stepsOut) {
+    if (inGust(s.t)) stillSrc.gust++;
+    else if (calls.some(c => s.t >= c.t - 1 && s.t <= c.t + (c.dur || 6) + 2.5)) stillSrc.call++;
+    else { stillSrc.unexplained++; stillSrc.at.push(+s.t.toFixed(2)); }
+  }
+
   const gaps = [];
   for (let i = 1; i < windEvs.length; i++) {
     gaps.push(windEvs[i].t - (windEvs[i - 1].t + windEvs[i - 1].dur));
   }
   gaps.sort((a, b) => a - b);
   const stepLv = stepsIn.map(s => s.peak).sort((a, b) => a - b);
-  const walkSeconds = segs.reduce((s, [, d]) => s + d, 0);
+  /* Clipped to the take. The walk schedule is fixed, so a short render would
+     otherwise report more seconds of walking than the render contains and a
+     negative time spent standing still. */
+  const walkSeconds = segs.reduce(
+    (s, [t0, d]) => s + Math.max(0, Math.min(t0 + d, seconds) - Math.min(t0, seconds)), 0);
 
   /* ── the bed spectrum ──
      Frames that are both quiet and clear of transients, then the median bin
@@ -443,9 +505,21 @@ function analyse(x, sr, meta) {
 
   /* ── inter-band envelope correlation ──
      The headline diagnostic. One noise source under one gain node gives a flat
-     matrix; a physical process must decorrelate as the bands separate. */
+     matrix; a physical process must decorrelate as the bands separate.
+     Measured twice. The full take is what an outside instrument sees and is
+     comparable across builds, but a footstep is broadband by nature and
+     genuinely does correlate every band at once, so with the boots correctly
+     placed above the wind the full-take matrix is partly a footstep matrix. The
+     standing-still version is the one that answers the actual question, which
+     was about the wind. */
   const envs = CORR_BANDS.map(fc => bandSeries(S, sr, fc));
   const corr = envs.map(a => envs.map(b => +pearson(a, b).toFixed(2)));
+  const stillFrames = [];
+  for (let f = 0; f < S.frames; f++) {
+    if (!walkingAt((f * S.hop + S.N / 2) / sr)) stillFrames.push(f);
+  }
+  const stillEnvs = envs.map(e => Float64Array.from(stillFrames.map(f => e[f])));
+  const corrStill = stillEnvs.map(a => stillEnvs.map(b => +pearson(a, b).toFixed(2)));
 
   /* ── recurring narrow peaks ──
      The rock-edge resonances are only real if they can be found: bins standing
@@ -454,35 +528,104 @@ function analyse(x, sr, meta) {
   const loud = [];
   for (let f = 0; f < S.frames; f++) {
     const t = (f * S.hop + S.N / 2) / sr;
+    /* Loud, not walking, and no animal calling. A footstep is broadband and
+       its own filter resonances are not what this is looking for; an animal is
+       worse than broadband, because a voice is exactly the stationary narrow
+       comb this search is built to detect. Leaving the fauna in makes the test
+       report the coyote's harmonics as rock — two interleaved combs at 574 and
+       586 Hz, which is a coyote and its answering neighbour, dressed up as a
+       resonance at 1148 and 1172 Hz. */
+    if (walkingAt(t)) continue;
+    if (calls.some(c => t >= c.t - 1 && t <= c.t + (c.dur || 6) + 2.5)) continue;
     const ew = Math.min(ewins - 1, Math.floor(t / (EW / sr)));
     if (em[ew] > bed + 8) loud.push(f);
   }
-  const promHits = new Float64Array(S.bins);
-  const promAmt = new Float64Array(S.bins);
-  for (const f of loud) {
-    for (let k = 4; k < S.bins - 4; k++) {
-      const hz = k * sr / S.N;
-      if (hz < 300 || hz > 8000) continue;
-      const w = Math.max(2, Math.round(k * 0.12));
-      let sm = 0, c = 0;
-      for (let j = Math.max(1, k - w); j <= Math.min(S.bins - 1, k + w); j++) {
-        sm += S.power[f * S.bins + j]; c++;
-      }
-      const p = 10 * Math.log10(Math.max(S.power[f * S.bins + k], 1e-24) / Math.max(sm / c, 1e-24));
-      if (p > 1.5) { promHits[k]++; promAmt[k] += p; }
+  /* Average across frames *before* testing prominence. This is the whole
+     trick, and getting it wrong invents resonances that are not there: a raw
+     periodogram bin of filtered noise is exponentially distributed, so over a
+     two-minute take some bin somewhere clears its own neighbours by fifteen or
+     twenty decibels purely by chance, and a per-frame test duly reports the
+     variance as a tone. A resonance is stationary in frequency and noise is
+     not, so the median across loud frames keeps the former and collapses the
+     latter as 1/sqrt(frames). */
+  const medPow = new Float64Array(S.bins);
+  if (loud.length) {
+    const col = new Array(loud.length);
+    for (let k = 0; k < S.bins; k++) {
+      for (let i = 0; i < loud.length; i++) col[i] = S.power[loud[i] * S.bins + k];
+      medPow[k] = median(col);
     }
   }
-  /* The bar is 45% of loud frames, not 25%. Filtered noise crosses a 1.5 dB
-     prominence in roughly a quarter of frames at any bin purely by chance, so
-     a 25% threshold reports the noise floor as a resonance — which is what a
-     scattered list of "peaks" all sitting at 25-29% actually was. */
-  const narrow = [];
-  for (let k = 0; k < S.bins; k++) {
-    if (loud.length && promHits[k] / loud.length > 0.45) {
-      narrow.push({ hz: Math.round(k * sr / S.N), frac: promHits[k] / loud.length, prom: promAmt[k] / promHits[k] });
+  /* Prominence over a third-octave neighbourhood, by mean or by median.
+     Reporting both is the point. The mean is what a smoothing-based peak
+     finder computes, and it is fooled in a specific way: if the neighbourhood
+     contains deep narrow notches — which is what summing two correlated paths
+     with a short delay produces — the mean is dragged far below the typical
+     level and every ordinary bin in the region reads as a huge peak. The
+     median of the same neighbourhood ignores the notches. A genuine resonance
+     is prominent by both measures; comb-filter notches are prominent only by
+     the mean. */
+  const promOf = (pw, k, useMedian) => {
+    const w = Math.max(3, Math.round(k * 0.12));
+    /* The peak's own bins are excluded from the neighbourhood it is compared
+       against. Including them lets a genuine ten-decibel resonance measure as
+       five, because a third-octave window at these frequencies is only a few
+       times wider than the resonance itself. */
+    const skip = Math.max(1, Math.round(w / 3));
+    const near = [];
+    let sm = 0;
+    for (let j = Math.max(1, k - w); j <= Math.min(S.bins - 1, k + w); j++) {
+      if (Math.abs(j - k) <= skip) continue;
+      near.push(pw[j]); sm += pw[j];
+    }
+    const ref = useMedian ? median(near) : sm / near.length;
+    return 10 * Math.log10(Math.max(pw[k], 1e-24) / Math.max(ref, 1e-24));
+  };
+
+  const cand = [];
+  for (let k = 4; k < S.bins - 4; k++) {
+    const hz = k * sr / S.N;
+    if (hz < 300 || hz > 8000) continue;
+    cand.push({
+      k, hz: Math.round(hz),
+      prom: promOf(medPow, k, true), promMean: promOf(medPow, k, false),
+    });
+  }
+  /* What this statistic does on this material when nothing is there. Reported
+     alongside the peaks so the reader can see whether a peak means anything,
+     rather than having to trust the threshold. */
+  const promNoise = cand.length
+    ? median(cand.map(c => Math.abs(c.prom))) : NaN;
+  const promBar = Math.max(1.5, 4 * promNoise);
+  const narrow = cand.filter(c => c.prom > promBar).sort((a, b) => b.prom - a.prom);
+
+  /* The same test on the bed frames. A rock-edge tone is caused by fast air
+     over a lip, so it must appear in gusts and vanish in the silence. Anything
+     that measures the same in both is not weather at all: it is a continuously
+     running oscillator bleeding through a gate that never quite closes, which
+     is the standard failure of a design that reuses long-lived voices instead
+     of allocating per event. Distinguishing the two costs one extra median. */
+  const bedPow = new Float64Array(S.bins);
+  if (quiet.length) {
+    const col = new Array(quiet.length);
+    for (let k = 0; k < S.bins; k++) {
+      for (let i = 0; i < quiet.length; i++) col[i] = S.power[quiet[i] * S.bins + k];
+      bedPow[k] = median(col);
     }
   }
-  narrow.sort((a, b) => b.prom - a.prom);
+  for (const nn of narrow.slice(0, 8)) nn.bedProm = promOf(bedPow, nn.k, true);
+  /* Persistence, for the survivors only: the share of loud frames in which the
+     bin also stands clear in that frame alone. A steady resonance is present in
+     most frames; a chance alignment is not. */
+  for (const nn of narrow.slice(0, 8)) {
+    let hits = 0;
+    const pw = new Float64Array(S.bins);
+    for (const f of loud) {
+      for (let j = 0; j < S.bins; j++) pw[j] = S.power[f * S.bins + j];
+      if (promOf(pw, nn.k, true) > 1.5) hits++;
+    }
+    nn.frac = loud.length ? hits / loud.length : 0;
+  }
 
   return {
     seconds, sampleRate: sr,
@@ -507,9 +650,12 @@ function analyse(x, sr, meta) {
         ? { min: stepLv[0], median: stepLv[stepLv.length >> 1], max: stepLv[stepLv.length - 1],
             spread: stepLv[stepLv.length - 1] - stepLv[0] } : null,
       gait: gait(stepsIn),
+      gustClean: gustClean > -200 ? gustClean : null,
+      stillSrc,
     },
     bedSpec, bedFloorPct: floorBins, quietFrames: quiet.length,
-    corrBands: CORR_BANDS, corr, narrow: narrow.slice(0, 8),
+    corrBands: CORR_BANDS, corr, corrStill,
+    narrow: narrow.slice(0, 8), promNoise, promBar, loudFrames: loud.length,
     winLevel: wl, spec: S, meta,
   };
 }
@@ -590,7 +736,15 @@ function peakProminence(x, sr, t0, span, freqs) {
   return freqs.map(f => {
     const k = Math.round(f * S.N / sr);
     const w = Math.max(3, Math.round(k * 0.12));
-    let sum = 0;
+    const skip = Math.max(2, Math.round(w / 3));
+    /* Per-frame values, kept rather than accumulated. The mean over the window
+       is the wrong summary and it hid a real tone for several rounds: an edge
+       tone only exists while the gust is driving it, so a window that spans the
+       onset and the decay contains frames with no tone at all, and averaging
+       those in drags a genuine twenty-decibel peak down to three. The high
+       percentile is what answers "is the tone there when the gust is up". */
+    const vals = [];
+    let peakDb = -200;
     for (let fr = 0; fr < S.frames; fr++) {
       let peakP = 0;
       for (let j = Math.max(1, k - 2); j <= Math.min(S.bins - 1, k + 2); j++) {
@@ -598,11 +752,20 @@ function peakProminence(x, sr, t0, span, freqs) {
       }
       let sm = 0, c = 0;
       for (let j = Math.max(1, k - w); j <= Math.min(S.bins - 1, k + w); j++) {
+        if (Math.abs(j - k) <= skip) continue;
         sm += S.power[fr * S.bins + j]; c++;
       }
-      sum += 10 * Math.log10(Math.max(peakP, 1e-24) / Math.max(sm / c, 1e-24));
+      vals.push(10 * Math.log10(Math.max(peakP, 1e-24) / Math.max(sm / c, 1e-24)));
+      peakDb = Math.max(peakDb, 10 * Math.log10(Math.max(peakP, 1e-24)));
     }
-    return { f, prom: sum / S.frames };
+    vals.sort((p, q) => p - q);
+    return {
+      f,
+      prom: vals[Math.floor(vals.length * 0.9)],
+      promMedian: vals[vals.length >> 1],
+      promMean: vals.reduce((s, v) => s + v, 0) / vals.length,
+      peakDb,
+    };
   });
 }
 
@@ -626,7 +789,11 @@ function arrivals(x, sr, t0, t1, floorDb) {
     for (let i = w * W; i < (w + 1) * W && i < x.length; i++) s += x[i] * x[i];
     e.push(db(Math.sqrt(s / W)));
   }
-  const gate = floorDb + 4;
+  /* Seven decibels clear of the band floor, not four. At four the bed's own
+     variance produces "arrivals" a couple of seconds after an impulse response
+     that is only two seconds long, and those phantom arrivals then drag the
+     decay estimate out to several seconds. */
+  const gate = floorDb + 7;
   const out = [];
   for (let i = 2; i < e.length - 2; i++) {
     const local = Math.min(e[i] - e[i - 2], e[i] - e[i + 2]);
@@ -904,20 +1071,24 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
   a.bedSpec.forEach(b => say(`  ${(hz(b.f) + ' Hz').padEnd(9)} ${f2(b.db).padStart(8)} dB`));
   say(`  6-12 kHz bins pinned at the -108 dB display floor: ${f1(a.bedFloorPct)}%`);
   say('');
-  say(`── inter-band envelope correlation ─────────────────────`);
-  say(`        ${a.corrBands.map(f => hz(f).padStart(6)).join('')}`);
-  a.corr.forEach((row, i) => say(
-    `  ${hz(a.corrBands[i]).padStart(5)} ${row.map(v => v.toFixed(2).padStart(6)).join('')}`));
-  {
+  const corrSummary = (m, label) => {
+    say(`  ${label}`);
+    say(`        ${a.corrBands.map(f => hz(f).padStart(6)).join('')}`);
+    m.forEach((row, i) => say(
+      `  ${hz(a.corrBands[i]).padStart(5)} ${row.map(v => v.toFixed(2).padStart(6)).join('')}`));
     const n = a.corrBands.length;
     const adj = [], far = [];
     for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
-      (j - i === 1 ? adj : j - i >= 5 ? far : []).push(a.corr[i][j]);
+      (j - i === 1 ? adj : j - i >= 5 ? far : []).push(m[i][j]);
     }
     const mean = (v) => v.reduce((p, q) => p + q, 0) / (v.length || 1);
     say(`  adjacent bands r=${f2(mean(adj))}   >=5 bands apart r=${f2(mean(far))}   ` +
-        `30Hz-2kHz r=${f2(a.corr[0][6])}`);
-  }
+        `30Hz-2kHz r=${f2(m[0][6])}`);
+  };
+  say(`── inter-band envelope correlation ─────────────────────`);
+  corrSummary(a.corr, 'whole take (weather, footsteps and animals together)');
+  say('');
+  corrSummary(a.corrStill, 'standing still only — this is the wind bed on its own');
   say('');
   say(`── the quiet ───────────────────────────────────────────`);
   say(`  threshold   % samples   % 50ms windows   % windows, standing still`);
@@ -949,22 +1120,48 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
   }
   say('');
   say(`── recurring narrow peaks (rock-edge resonance check) ──`);
-  if (!a.narrow.length) say(`  none: no bin stood >1.5 dB over third-octave smoothing in >25% of loud frames`);
+  say(`  ${a.loudFrames} loud frames searched; detector noise ${f2(a.promNoise)} dB, ` +
+      `so the bar is ${f2(a.promBar)} dB over third-octave smoothing`);
+  say(`  a real edge tone is loud in gusts and gone in the bed; equal in both is a leak`);
+  if (!a.narrow.length) say(`  none: no bin cleared the bar`);
   for (const nn of a.narrow) {
-    say(`  ${String(nn.hz).padStart(5)} Hz  prominence ${f2(nn.prom)} dB  in ${(nn.frac * 100).toFixed(0)}% of loud frames`);
+    say(`  ${String(nn.hz).padStart(5)} Hz  ${f2(nn.prom)} dB in gusts, ` +
+        `${f2(nn.bedProm)} dB in the bed  (median-referenced; ` +
+        `${f2(nn.promMean)} dB over the mean, in ${(nn.frac * 100).toFixed(0)}% of loud frames)`);
   }
   say('');
   const fsx = a.footsteps;
   say(`── footsteps and gait ──────────────────────────────────`);
   say(`  ${fsx.inWalk} transients during ${fsx.walkSeconds}s of walking, ` +
       `${fsx.outsideWalk} during the ${(a.seconds - fsx.walkSeconds).toFixed(0)}s standing still`);
+  if (fsx.outsideWalk) {
+    const s = fsx.stillSrc;
+    /* Attributed rather than judged. Naming the times makes an unattributed
+       transient checkable, which matters because the accounting pads each gust
+       and call by a second or two and anything landing just outside a pad is a
+       boundary artefact rather than a leak. A leak worth chasing shows up as a
+       run of them, not as one. */
+    say(`  of those ${fsx.outsideWalk}: ${s.gust} inside a gust (sand), ` +
+        `${s.call} inside a call, ${s.unexplained} unattributed` +
+        (s.at && s.at.length ? ` (at ${s.at.join('s, ')}s)` : ''));
+  }
   if (fsx.level) {
     say(`  step level    min ${f2(fsx.level.min)}  median ${f2(fsx.level.median)}  ` +
         `max ${f2(fsx.level.max)} dBFS  (spread ${f2(fsx.level.spread)} dB)`);
     say(`  vs bed        ${f2(fsx.level.median - a.bed)} dB above the bed`);
-    const gustPeak = Math.max(...a.windEvents.map(e => e.peak), -120);
-    say(`  vs wind       ${f2(fsx.level.median - gustPeak)} dB relative to the loudest gust ` +
-        `(${f2(gustPeak)} dBFS)`);
+    if (fsx.gustClean != null && fsx.gustClean > a.bed + 6) {
+      say(`  vs wind       ${f2(fsx.level.median - fsx.gustClean)} dB relative to the ` +
+          `loudest gust (${f2(fsx.gustClean)} dBFS, over the scheduled gust ` +
+          `windows, clear of the walking and the fauna)`);
+    } else {
+      /* Say so rather than printing a number. Every gust in this take overlaps
+         either the walking or a call, so once both are excised what is left of
+         the gust windows is the bed, and the difference against it would look
+         like an enormous margin earned by the footsteps. See the forced-voice
+         render below, where the two fire in isolation. */
+      say(`  vs wind       not measurable in this take: every scheduled gust ` +
+          `overlaps the walking or a call`);
+    }
   }
   if (fsx.gait) {
     const g = fsx.gait;
@@ -1011,13 +1208,14 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
     fullTakeBands: Object.fromEntries(bandName.map((n, i) => [n, a.bandRms[i]])),
     bedSpectrum: Object.fromEntries(a.bedSpec.map(b => [b.f, b.db])),
     bedFloorPct: a.bedFloorPct,
-    corrBands: a.corrBands, corr: a.corr,
+    corrBands: a.corrBands, corr: a.corr, corrStill: a.corrStill,
     belowSamplePct: Object.fromEntries(T.map((t, i) => [t, a.belowSamplePct[i]])),
     belowWinPct: Object.fromEntries(T.map((t, i) => [t, a.belowWinPct[i]])),
     stillBelowWinPct: a.stillBelowWinPct
       ? Object.fromEntries(T.map((t, i) => [t, a.stillBelowWinPct[i]])) : null,
     winPercentiles: a.winPercentiles, stillPercentiles: a.stillPercentiles,
-    bed: a.bed, events: a.events, gapStats: a.gapStats, narrow: a.narrow,
+    bed: a.bed, events: a.events, gapStats: a.gapStats,
+    narrow: a.narrow, loudFrames: a.loudFrames,
     footsteps: a.footsteps, scheduledGait: sg,
     gusts: res.gusts, calls: res.calls || res.coyotes,
     clipped: res.clipped, dcL: res.dcL, dcR: res.dcR,
@@ -1063,10 +1261,23 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
       };
       say('');
       say(`── forced voices ───────────────────────────────────────`);
+      const cueDb = {};
       for (const c of vr.cues) {
+        const lv = cueLevel(c.t, c.kind.startsWith('gust') ? 12 : 6);
+        if (cueDb[c.kind] == null || lv > cueDb[c.kind]) cueDb[c.kind] = lv;
         say(`  ${c.kind.padEnd(12)} cued ${f2(c.t).padStart(6)}s  ` +
-            `peak30ms ${f2(cueLevel(c.t, c.kind.startsWith('gust') ? 12 : 6)).padStart(7)} dBFS  ` +
-            `${c.note || ''}`);
+            `peak30ms ${f2(lv).padStart(7)} dBFS  ${c.note || ''}`);
+      }
+      /* The perspective question, answered where it can be answered cleanly.
+         On a two-minute take every scheduled gust tends to overlap either the
+         walking or an animal, so the main render often has nothing left to
+         compare; here each cue fires alone by construction. */
+      const gustCue = Math.max(cueDb['gust-rumble'] ?? -200, cueDb['gust-hiss'] ?? -200);
+      if (cueDb.walk != null && gustCue > -200) {
+        const d = cueDb.walk - gustCue;
+        say(`  perspective: boots lead the strongest forced gust by ${f2(d)} dB ` +
+            `(${d > 0 ? 'correct for a first-person walk' : 'inverted'})`);
+        out.perspectiveDb = +d.toFixed(2);
       }
       out.voices = { cues: vr.cues, measures: {} };
       for (const c of vr.cues) {
@@ -1082,8 +1293,12 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
         }
         if (c.measure === 'peaks' && c.peaks) {
           const pp = peakProminence(vx, vr.sampleRate, c.t + (c.offset || 0), c.span || 4, c.peaks);
-          say(`  rock-edge tones during ${c.kind}: ` +
-              pp.map(v => `${v.f} Hz +${f1(v.prom)} dB`).join(', '));
+          say(`  rock-edge tones during ${c.kind} (p90 of per-frame prominence, ` +
+              `median in brackets):`);
+          for (const v of pp) {
+            say(`    ${String(v.f).padStart(5)} Hz  +${f1(v.prom)} dB  ` +
+                `[${f1(v.promMedian)}]  peak bin ${f1(v.peakDb)} dBFS`);
+          }
           out.voices.measures[c.kind + '_peaks'] = pp;
         }
         if (c.measure === 'tail') {
@@ -1101,11 +1316,23 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
           }
           const floor = quietWins.length ? median(quietWins) : -90;
           const ar = arrivals(vb, vr.sampleRate, at, at + 3.4, floor);
+          /* Direct against first reflection. At half a kilometre across open
+             desert there is a direct path and it arrives first and loudest;
+             a fully-wet routing gets this backwards. */
+          const direct = arrivals(vb, vr.sampleRate, at - 1.2, at, floor);
+          const dLvl = Math.max(...direct.peaks.map(p => p.db), -200);
+          const rLvl = ar.peaks.length ? Math.max(...ar.peaks.map(p => p.db)) : -200;
           say(`  tail after ${c.kind}: audible for ${f2(ar.audibleTail)} s, ` +
               `RT60 ${f2(ar.rt60)} s, ${ar.peaks.length} discrete arrivals ` +
               `(band floor ${f1(floor)} dBFS)`);
+          if (dLvl > -200 && rLvl > -200) {
+            say(`    direct path ${f1(dLvl)} dBFS, loudest reflection ${f1(rLvl)} dBFS ` +
+                `→ direct leads by ${f1(dLvl - rLvl)} dB`);
+          }
+          const ref = c.ref || 0;
           for (const pk of ar.peaks.slice(0, 8)) {
-            say(`    arrival at +${f2(pk.t - at)}s  ${f1(pk.db)} dBFS  prom ${f1(pk.prom)} dB`);
+            say(`    arrival at +${f2(pk.t - at + ref)}s after the direct sound  ` +
+                `${f1(pk.db)} dBFS  prom ${f1(pk.prom)} dB`);
           }
           out.voices.measures[c.kind + '_tail'] = ar;
         }
