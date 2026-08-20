@@ -289,7 +289,7 @@ export function buildVegetation(path, terrain, rocks) {
       const x = c.x + Math.cos(th) * u + jx, z = c.z + Math.sin(th) * u + jz;
       const f = terrain.facies(x, z, path.atZ(z, q2));
       /* Nothing in the active channel and nothing on bare scoured bar. */
-      const habitat = clamp(f.terr * 1.0 + f.tal * 0.55 + f.bar * 0.12, 0, 1)
+      const habitat = clamp(f.terr * 1.0 + f.tal * 0.55 + f.bar * 0.34, 0, 1)
                     * (1 - f.pan * 0.9);
       if (habitat < 0.12) continue;
       const cl = clusterField(x, z);
@@ -303,13 +303,13 @@ export function buildVegetation(path, terrain, rocks) {
       if (roll < p * 0.33) {
         grass.push({
           x, y: y - 0.03, z, rot: rand() * TAU,
-          sx: 0.30 + rand() * 0.26, sy: 0.26 + rand() * 0.26, sz: 0.30 + rand() * 0.26,
+          sx: 0.38 + rand() * 0.32, sy: 0.32 + rand() * 0.34, sz: 0.38 + rand() * 0.32,
           r: 0.86 + rand() * 0.22, g: 0.82 + rand() * 0.20, b: 0.72 + rand() * 0.18,
         });
       } else if (roll < p * 0.49) {
         shrub.push({
           x, y: y - 0.04, z, rot: rand() * TAU,
-          sx: 0.42 + rand() * 0.40, sy: 0.36 + rand() * 0.36, sz: 0.42 + rand() * 0.40,
+          sx: 0.55 + rand() * 0.48, sy: 0.46 + rand() * 0.44, sz: 0.55 + rand() * 0.48,
           r: 0.84 + rand() * 0.26, g: 0.88 + rand() * 0.20, b: 0.78 + rand() * 0.22,
         });
       } else if (roll < p * 0.505 && pear.length < 4) {
