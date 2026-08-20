@@ -129,10 +129,22 @@ function makeProfile(seed, nLobes, nDead) {
     },
   };
 
-  let m = 0;
+  /* The lobe sum's range, sampled, so the flute amplitude below is a *fraction
+     of the radius* rather than an arbitrary number that has to be retuned every
+     time the lobe count changes. The first build normalised against the mean
+     only, which left the trunk varying by six percent of its radius — a smooth
+     pipe. A real juniper bole varies by twenty. */
+  let lo = 1e9, hi = -1e9;
   const o = { r: 0, dead: 0 };
-  for (let i = 0; i < 64; i++) { prof.eval(i / 64 * TAU, 0.8, o); m += o.r; }
-  prof.mean = m / 64;
+  for (let k = 0; k < 6; k++) {
+    for (let i = 0; i < 96; i++) {
+      prof.eval(i / 96 * TAU, k * 0.55, o);
+      if (o.r < lo) lo = o.r;
+      if (o.r > hi) hi = o.r;
+    }
+  }
+  prof.lo = lo;
+  prof.span = Math.max(1e-3, hi - lo);
   return prof;
 }
 
@@ -176,7 +188,8 @@ function limbGeometry(pts, radii, seg, prof, twistRate, s0, flute, deadBase = 0)
     for (let j = 0; j < cols; j++) {
       const th = (j % seg) / seg * TAU;
       prof.eval(th + twistRate * (s0 + si), s0 + si, o);
-      const r = radii[i] * (1 + flute * (o.r - prof.mean) + 0.045 * o.dead);
+      const shape = (o.r - prof.lo) / prof.span;      // 0 in a groove, 1 on a ridge
+      const r = radii[i] * (1 - flute * 0.5 + flute * shape + 0.035 * o.dead);
       const k = i * cols + j;
       const c = Math.cos(th), sn = Math.sin(th);
       pos[k * 3] = pts[i].x + nor[i].x * c * r + bin[i].x * sn * r;
@@ -225,7 +238,11 @@ function limbGeometry(pts, radii, seg, prof, twistRate, s0, flute, deadBase = 0)
 /* ── the tree ──────────────────────────────────────────────────────────────*/
 
 const SEG_BY_DEPTH = [72, 26, 16, 10, 7];
-const FLUTE_BY_DEPTH = [0.26, 0.20, 0.14, 0.08, 0.04];
+/* Peak-to-trough as a fraction of the mean radius. Twenty percent on the bole
+   is measured off photographs of old Utah junipers, not chosen for effect; the
+   grooves between the ridges are deep enough to hold shadow all day and that is
+   most of what gives the trunk its form at a distance. */
+const FLUTE_BY_DEPTH = [0.42, 0.34, 0.24, 0.13, 0.07];
 
 function buildTree(seed) {
   const rand = rng(seed);
@@ -255,7 +272,7 @@ function buildTree(seed) {
       const droop = [0.004, 0.020, 0.055, 0.085, 0.095][depth] * (0.3 + t);
       /* Phototropism: everything eventually turns back up toward the light,
          which is what stops a drooping branch from simply pointing at the floor. */
-      const up = [0.05, 0.035, 0.030, 0.045, 0.055][depth];
+      const up = [0.05, 0.016, 0.024, 0.042, 0.055][depth];
       const wb = [0.010, 0.018, 0.030, 0.038, 0.030][depth] * (0.4 + t);
       d.y -= droop * step * 6;
       d.y += up * step * 6 * clamp(-d.y * 2.2, 0, 1);
@@ -279,10 +296,15 @@ function buildTree(seed) {
 
     if (depth >= 4) {
       if (deadness < 0.5) {
-        /* Foliage lives on the outer half of the finest limbs only. */
-        for (let i = Math.floor(nSeg * 0.35); i <= nSeg; i++) {
-          if (rand() < 0.45) continue;
-          clumps.push({ p: pts[i].clone(), size: 0.30 + rand() * 0.22 });
+        /* One dense mass at the tip, sometimes a second behind it. Foliage
+           spread evenly along every twig averages out into a uniform green
+           medium; juniper foliage comes in discrete cauliflower-like masses
+           with air between them, and it is the air that lets the branch
+           structure show. */
+        clumps.push({ p: pts[nSeg].clone(), size: 0.36 + rand() * 0.20 });
+        if (rand() < 0.55) {
+          clumps.push({ p: pts[Math.max(1, Math.floor(nSeg * 0.55))].clone(),
+                        size: 0.26 + rand() * 0.16 });
         }
       }
       return;
@@ -348,9 +370,11 @@ function buildTree(seed) {
     }
   }
 
-  /* The trunk itself: a short, heavy, leaning bole with a pronounced root
-     flare. Fork at about 1.5 m. */
-  const nT = 18, H = 1.52;
+  /* The trunk itself: short, heavy, leaning, with a pronounced root flare, and
+     forking at barely a metre. An old juniper has no single stem above head
+     height, and a tall clean bole under a small crown is what made the first
+     build read as a deciduous sapling rather than a desert conifer. */
+  const nT = 16, H = 1.06;
   const tp = [], tr = [];
   const lean = new THREE.Vector3(wind.x, 0, wind.z).multiplyScalar(0.16);
   for (let i = 0; i <= nT; i++) {
@@ -363,24 +387,33 @@ function buildTree(seed) {
     tp.push(new THREE.Vector3(lean.x * t * t * 1.6, y, lean.z * t * t * 1.6).add(wobble));
     /* Root flare: the base swells hard in the bottom twenty centimetres, which
        is also what buries the trunk into the hummock convincingly. */
-    const flare = 1 + 0.62 * Math.exp(-y / 0.20) + 0.16 * Math.exp(-y / 0.75);
-    tr.push(mix(0.235, 0.180, Math.pow(t, 0.8)) * flare);
+    const flare = 1 + 0.72 * Math.exp(-y / 0.22) + 0.18 * Math.exp(-y / 0.70);
+    tr.push(mix(0.300, 0.238, Math.pow(t, 0.8)) * flare);
   }
   geoms.push(limbGeometry(tp, tr, SEG_BY_DEPTH[0], trunkProf, twist, 0, FLUTE_BY_DEPTH[0]));
 
   /* Leaders off the fork. */
   const tipTan = new THREE.Vector3().subVectors(tp[nT], tp[nT - 1]).normalize();
-  const nLead = 3;
+  /* Four leaders, laid out wide. Junipers are broader than they are tall, and a
+     spread near sixty degrees off vertical is what produces that. One of them —
+     whichever leaves the trunk inside a dead strip — is a bare snag, and it is
+     given extra length so it protrudes clear of the foliage where it can be
+     seen against the sky. */
+  const nLead = 4;
+  let deadLead = -1;
   for (let i = 0; i < nLead; i++) {
-    const az = i / nLead * TAU + rand() * 0.8;
+    const az = i / nLead * TAU + rand() * 0.7;
     const outw = new THREE.Vector3(Math.cos(az), 0, Math.sin(az));
-    const spread = 0.42 + rand() * 0.40;
-    const dir = tipTan.clone().multiplyScalar(Math.cos(spread)).addScaledVector(outw, Math.sin(spread));
-    dir.addScaledVector(wind, 0.16).normalize();
     const inStrip = trunkProf.deadAt(az + twist * H, H);
-    const dn = inStrip > 0.5 && i === 1 ? 1 : 0;
-    grow(tp[nT].clone(), dir, 1.35 + rand() * 0.45, 0.150 - i * 0.012, 0.072,
-         1, dn, 0, makeProfile(seed + 700 + i, 5, dn > 0.5 ? 2 : 1), twist * 1.5);
+    const dn = (deadLead < 0 && (inStrip > 0.35 || i === nLead - 1)) ? 1 : 0;
+    if (dn) deadLead = i;
+    const spread = (dn ? 0.80 : 0.60) + rand() * 0.42;
+    const dir = tipTan.clone().multiplyScalar(Math.cos(spread)).addScaledVector(outw, Math.sin(spread));
+    dir.y += dn ? 0.30 : 0.12;
+    dir.addScaledVector(wind, 0.14).normalize();
+    grow(tp[nT].clone(), dir, (dn ? 2.15 : 1.55) + rand() * 0.45,
+         0.160 - i * 0.011, 0.074, 1, dn, 0,
+         makeProfile(seed + 700 + i, 5, dn > 0.5 ? 2 : 1), twist * 1.5);
   }
 
   return { geoms, clumps };
@@ -440,7 +473,7 @@ function crownOcclusion(clumps) {
           for (let m = 0; m < a.length; m++) {
             const c = a[m];
             const dx = c.p.x - x, dy = c.p.y - y, dz = c.p.z - z;
-            d += Math.exp(-(dx * dx + dy * dy + dz * dz) / 0.18) * (c.size / 0.40);
+            d += Math.exp(-(dx * dx + dy * dy + dz * dz) / 0.30) * (c.size / 0.40);
           }
         }
       }
@@ -457,7 +490,7 @@ function foliageGeometry(clumps, seed) {
   const c = new THREE.Vector3(), a = new THREE.Vector3(), b = new THREE.Vector3();
   let v = 0;
   for (const cl of clumps) {
-    const nCards = 3 + (rand() * 3 | 0);
+    const nCards = Math.round(3 + cl.size * 10 + rand() * 2);
     for (let k = 0; k < nCards; k++) {
       const s = cl.size * (0.72 + rand() * 0.62);
       c.set(cl.p.x + (rand() - 0.5) * cl.size * 0.9,
@@ -491,14 +524,13 @@ function foliageGeometry(clumps, seed) {
         const uu = (sx < 0) === flip ? u1 : u0;
         uvs.push(uu, sy < 0 ? v1 : v0);
 
-        const amb = Math.exp(-0.30 * density(px, py, pz));
+        const amb = Math.exp(-0.34 * density(px, py, pz));
         let sh = 0;
-        sh += density(px + S.x * 0.35, py + S.y * 0.35, pz + S.z * 0.35);
-        sh += density(px + S.x * 0.80, py + S.y * 0.80, pz + S.z * 0.80);
-        sh += 0.7 * density(px + S.x * 1.55, py + S.y * 1.55, pz + S.z * 1.55);
-        sh += 0.5 * density(px + S.x * 2.60, py + S.y * 2.60, pz + S.z * 2.60);
-        const sun = Math.exp(-0.26 * sh);
-        const f = clamp(0.10 + 0.90 * amb * (0.26 + 0.74 * sun), 0.08, 1);
+        for (let t = 0.30; t < 3.2; t += 0.34) {
+          sh += density(px + S.x * t, py + S.y * t, pz + S.z * t) * (t < 1.2 ? 1 : 0.7);
+        }
+        const sun = Math.exp(-0.30 * sh);
+        const f = clamp(0.08 + 0.92 * amb * (0.22 + 0.78 * sun), 0.06, 1);
         vcol.push(f, f, f);
       }
       idx.push(v, v + 1, v + 2, v, v + 2, v + 3);
@@ -531,7 +563,7 @@ export function makeBarkMaterial(bark) {
      smooth — but its long grain kept, which is carried in the map's alpha. */
   const u = {
     uLiveCol: { value: new THREE.Color(1.06, 0.98, 0.92) },
-    uDeadCol: { value: new THREE.Color(0.315, 0.298, 0.278) },
+    uDeadCol: { value: new THREE.Color(0.255, 0.242, 0.228) },
   };
   mat.userData.uniforms = u;
   mat.onBeforeCompile = (sh) => {
@@ -549,7 +581,7 @@ export function makeBarkMaterial(bark) {
         float g = dot( bt.rgb, vec3( 0.2126, 0.7152, 0.0722 ) );
         /* Deadwood: the fibre detail is gone, the long grain remains, and the
            whole thing is lifted and cooled by two decades of ultraviolet. */
-        vec3 deadC = uDeadCol * ( 0.62 + 1.05 * mix( pow( g, 0.55 ), bt.a, 0.62 ) );
+        vec3 deadC = uDeadCol * ( 0.55 + 0.82 * mix( pow( g, 0.55 ), bt.a, 0.62 ) );
         diffuseColor.rgb *= mix( bt.rgb * uLiveCol, deadC, vDead );`)
       .replace('#include <roughnessmap_fragment>', /* glsl */`
         float roughnessFactor = roughness *
