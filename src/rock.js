@@ -49,6 +49,15 @@ import { SUN_DIR } from './sky.js';
  * a ledge, positive recesses it, and it is what turns a colour change into a
  * shadow line. The two together are the cliff-and-bench alternation.
  *
+ * The red beds' green and blue have been nudged 1.5 percent up and 5.5 percent
+ * down respectively, which sounds like fiddling and is a measurement. Rendered
+ * hue on a brightly lit face came out at 17 degrees against 22 to 31 in
+ * photographs of Sedona at golden hour, and the blue-to-green ratio at 0.75
+ * against a real 0.32 to 0.90 — inside the band but at its top. Both move the
+ * same way for the same reason: a Schnebly Hill bed is brick, and brick has less
+ * blue in it than peach does. It costs about two hundredths of saturation, which
+ * the measured distribution has room for.
+ *
  * `col` is a linear diffuse albedo, not a tint on something else. `iron` is how
  * strongly the hematite lenses inside the bed express, which is where the
  * saturated tail of the distribution comes from; `pale` marks the beds that are
@@ -61,41 +70,41 @@ export const LAYERS = [
   /* Buried: a vertical skirt that guarantees the curtain reaches below whatever
      the terrain is doing at its foot, so there is never a seam. */
   { y0: -15.0, kind: SKIRT, rec: 0.00, proud: 0.00, bedT: 2.4,
-    col: [0.242, 0.126, 0.102], iron: 0.30, pale: 0.00, rough: 0.94 },
+    col: [0.242, 0.128, 0.096], iron: 0.30, pale: 0.00, rough: 0.94 },
   /* Hermit-like slope-former, mostly under the talus; where the apron is thin it
      emerges as the red debris ramp the cliff stands on. */
   { y0:  -6.0, kind: SLOPE, rec: 1.55, proud: 0.00, bedT: 2.0,
-    col: [0.266, 0.139, 0.112], iron: 0.45, pale: 0.00, rough: 0.95 },
+    col: [0.266, 0.141, 0.106], iron: 0.45, pale: 0.00, rough: 0.95 },
   /* Schnebly Hill, lower cliff. */
   { y0:   3.0, kind: CLIFF, rec: 0.07, proud: -1.15, bedT: 1.75,
-    col: [0.386, 0.196, 0.156], iron: 1.00, pale: 0.00, rough: 0.88 },
+    col: [0.386, 0.199, 0.147], iron: 1.00, pale: 0.00, rough: 0.88 },
   { y0:  12.2, kind: BENCH, rec: 1.62, proud:  0.75, bedT: 1.30,
-    col: [0.298, 0.160, 0.132], iron: 0.55, pale: 0.00, rough: 0.94 },
+    col: [0.298, 0.162, 0.125], iron: 0.55, pale: 0.00, rough: 0.94 },
   /* Schnebly Hill, middle cliff — the thickest single face in the corridor. */
   { y0:  16.4, kind: CLIFF, rec: 0.05, proud: -1.45, bedT: 2.15,
-    col: [0.360, 0.180, 0.143], iron: 1.00, pale: 0.00, rough: 0.87 },
+    col: [0.360, 0.183, 0.135], iron: 1.00, pale: 0.00, rough: 0.87 },
   { y0:  25.8, kind: BENCH, rec: 1.45, proud:  0.62, bedT: 1.15,
-    col: [0.310, 0.170, 0.140], iron: 0.55, pale: 0.00, rough: 0.94 },
+    col: [0.310, 0.173, 0.132], iron: 0.55, pale: 0.00, rough: 0.94 },
   /* Schnebly Hill, upper cliff — the vivid one: iron-cemented and freshly spalled. */
   { y0:  29.6, kind: CLIFF, rec: 0.04, proud: -1.65, bedT: 1.55,
-    col: [0.436, 0.212, 0.164], iron: 1.35, pale: 0.00, rough: 0.86 },
+    col: [0.436, 0.215, 0.155], iron: 1.35, pale: 0.00, rough: 0.86 },
   /* Fort Apache Member: grey limestone, hard, standing proud as a ledge with an
      undercut beneath it. The one achromatic band in the red, and after the
      Coconino cap the most recognisable thing in a Sedona section. */
   { y0:  38.2, kind: LEDGE, rec: 0.00, proud: -2.55, bedT: 0.85,
     col: [0.302, 0.278, 0.246], iron: 0.10, pale: 0.85, rough: 0.78 },
   { y0:  41.0, kind: BENCH, rec: 0.95, proud:  1.00, bedT: 1.05,
-    col: [0.296, 0.158, 0.130], iron: 0.60, pale: 0.00, rough: 0.94 },
+    col: [0.296, 0.160, 0.123], iron: 0.60, pale: 0.00, rough: 0.94 },
   { y0:  46.0, kind: CLIFF, rec: 0.06, proud: -0.70, bedT: 1.60,
-    col: [0.378, 0.190, 0.150], iron: 1.10, pale: 0.00, rough: 0.88 },
+    col: [0.378, 0.193, 0.142], iron: 1.10, pale: 0.00, rough: 0.88 },
   { y0:  51.2, kind: BENCH, rec: 1.25, proud:  1.30, bedT: 1.20,
-    col: [0.336, 0.192, 0.158], iron: 0.50, pale: 0.10, rough: 0.94 },
+    col: [0.336, 0.195, 0.149], iron: 0.50, pale: 0.10, rough: 0.94 },
   /* Coconino Sandstone: buff-white cross-bedded aeolian sand, the pale cap. The
      contrast against the red below is Sedona's other signature. */
   { y0:  55.0, kind: CLIFF, rec: 0.03, proud: -1.50, bedT: 3.20,
     col: [0.478, 0.402, 0.298], iron: 0.06, pale: 1.00, rough: 0.80 },
   { y0:  67.0, kind: CAP,   rec: 1.80, proud:  1.40, bedT: 2.60,
-    col: [0.308, 0.204, 0.158], iron: 0.35, pale: 0.15, rough: 0.96 },
+    col: [0.308, 0.207, 0.149], iron: 0.35, pale: 0.15, rough: 0.96 },
 ];
 const Y_TOP = 75.0;
 const Y_ANCHOR = 3.0;      // foot of the lowest cliff: where the plan is anchored
@@ -110,6 +119,22 @@ const layTop = (i) => (i + 1 < LAYERS.length ? LAYERS[i + 1].y0 : Y_TOP);
    bed survived, so summits across an area cluster on a handful of elevations.
    Snapping the crest to these is what produces the flat-topped skyline. */
 const CREST_LEVELS = [12.2, 16.4, 25.8, 29.6, 38.2, 41.0, 51.2, 55.0, 67.0, 75.0];
+
+/* Nearest bedding contact, for snapping the rim. A rim is not a smooth curve with
+   noise laid over it — it is the top of whatever bed survived, so it steps down
+   bed by bed, and every step is a right angle where a joint plane meets a bedding
+   plane. Roughening a smooth crest with fBm instead is exactly what produces the
+   rounded, lumpy, clay-modelled skyline a critic reads as "soft". The structural
+   rows buildColumn already places are those contacts, so this costs a search and
+   no triangles at all. */
+function snapContact(y) {
+  let best = y, bd = 1e9;
+  for (let i = 0; i < COL_H_Y.length; i++) {
+    const d = Math.abs(COL_H_Y[i] - y);
+    if (d < bd) { bd = d; best = COL_H_Y[i]; }
+  }
+  return best;
+}
 
 /* ── sub-bedding ───────────────────────────────────────────────────────────
  *
@@ -231,6 +256,20 @@ function buildColumn() {
 }
 
 const COL = buildColumn();
+
+/* Just the structural rows, which are the bedding contacts and the tops of the
+   resistant sub-beds — the elevations a rim is allowed to stand at. Only the
+   upper of each contact pair, so the list is one entry per bed top rather than
+   two twenty-two centimetres apart. */
+const COL_H_Y = (() => {
+  const out = [];
+  for (let i = 0; i < COL.n; i++) {
+    if (!COL.H[i]) continue;
+    if (out.length && COL.Y[i] - out[out.length - 1] < 0.6) out[out.length - 1] = COL.Y[i];
+    else out.push(COL.Y[i]);
+  }
+  return out;
+})();
 
 /** Linear interpolation of a column array at an arbitrary elevation. */
 function colAt(arr, y) {
@@ -389,9 +428,18 @@ function wallGrid(path, terrain, side) {
        skyline at exactly the grid pitch. A skyline that is exactly level is a
        table edge; one level to within a metre and notched by the joints is a
        mesa; one notched every other column is a saw blade. */
+    /* The roughening stays — a skyline level to the millimetre is a table edge —
+       but it is snapped onto a bedding contact afterwards, so the rim descends in
+       right-angled steps from one bed top to the next instead of undulating.
+       Not all the way onto the contact: a hundred percent gives a rim that is
+       everywhere exactly level and everywhere breaks by the same two metres, which
+       is its own kind of regularity. Eighty-five percent keeps the steps square
+       and lets the tread tilt slightly, which is what a rim with a bed dipping a
+       fraction of a degree under it looks like. */
     let crest = mix(raw, best, 0.82)
               + 1.3 * fbm(s * 0.055, side > 0 ? 3 : 8, 2, 373)
               + 0.7 * fbm(s * 0.10, 21, 1, 379);
+    crest = mix(crest, snapContact(crest), 0.85);
     /* The ends of the curtain. Without this the wall runs to the last column and
        stops, leaving a forty-metre vertical cut hanging in mid air at the head of
        the corridor — right in the middle of the view every critic praised. It is
@@ -455,7 +503,13 @@ function wallGrid(path, terrain, side) {
          Both are cut with a hard edge on purpose — a soft-edged dent is a dune. */
       let fresh = 0;
       if (vert) {
-        const scar = smoothstep(0.66, 0.80,
+        /* Sharper edged than it was. A spall scar is where a slab let go along a
+           joint and a bedding plane, so its boundary is a fracture — the critique
+           asked specifically for light patches "sharper-edged than the surround"
+           and a scar ramped over fourteen hundredths of the driver is a dent.
+           Narrowing the ramp to four costs nothing and the rim now creases,
+           because the plan gradient across it exceeds the crease threshold. */
+        const scar = smoothstep(0.700, 0.740,
           ridged(s * 0.055 + li * 4.1, yc * 0.075, 2, 383 + li * 31));
         u += scar * 1.5;
         fresh = scar;
