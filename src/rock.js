@@ -1080,9 +1080,13 @@ float sbT = sb - sbI;
 float sbR = bedResist(sbI, lIdx);
 
 /* ---- surface grain, triplanar ----
-   Two scales, an octave and a half apart: the coarse one carries the metre-scale
-   mottle of a weathered face, the fine one the sand grain that a face filling the
-   frame has to have and that no amount of geometry can supply. */
+   Two readings of the same packing, two octaves apart. At 0.155 cycles per metre
+   the tile is 6.45 m and the map presents what it was authored as — cavernous
+   pits of five to twenty-five centimetres, laminae, granular clumps; at 0.62 the
+   same tile is 1.61 m and those features come back a quarter of the size, which
+   is the sand-grain band. The map is a packing of discrete elements rather than
+   a sum of smooth noise, which is the difference between sandstone and wax and
+   is the whole reason it was rebuilt. */
 vec3 aN = abs(gN);
 vec3 triW = pow(aN, vec3(4.0));
 triW /= max(triW.x + triW.y + triW.z, 1e-4);
@@ -1105,13 +1109,21 @@ vec3 rkN2 = domNormal(uRockN, pF, gN, 0.62);
    is not that mean turns every edge in the scene into a fixed brightness error.
    The clamp is the backstop for the same reason — the far tail of a generated
    map's histogram is not something to let multiply an albedo unbounded. */
-float lum = mix(1.0, dot(rkA, vec3(0.299, 0.587, 0.114)) / uRockLum, 0.70)
-          * mix(1.0, rkA2 / uRockLum, 0.12 + 0.32 * grainF);
-lum = clamp(lum, 0.55, 1.60);
+float lumC = dot(rkA, vec3(0.299, 0.587, 0.114));
+float lum = mix(1.0, lumC / uRockLum, 0.88)
+          * mix(1.0, rkA2 / uRockLum, 0.16 + 0.46 * grainF);
+lum = clamp(lum, 0.42, 1.85);
 
 /* Behind the rim, whatever bed capped the summit is buried under its own
    weathering products, so the colour is the debris colour and not the bed's. */
 vec3 albedo = mix(lCol, vec3(0.296, 0.170, 0.115), back * 0.55) * lum;
+/* The map's *chroma deviation*, at low weight. Its pigment is still discarded —
+   the strata are geometry and a second set of painted bands over them is the
+   failure this map used to cause — but a unit-luminance chroma ratio carries no
+   bands, only the difference between a quartz-rich lamina and an iron-cemented
+   one and between one grain and the next. Value variation alone makes a
+   grey-scale relief rubbing; a rock face's grain has minerals in it. */
+albedo *= mix(vec3(1.0), rkA / max(lumC, 1e-4), 0.26);
 lPale *= 1.0 - back * 0.85;
 
 /* ---- cross-bedding ----
@@ -1297,8 +1309,16 @@ diffuseColor.rgb *= albedo;
    only term this shader has to write it in. The grain is still fully present
    wherever there is enough light for it to matter. */
 float sTerm = smoothstep(-0.02, 0.30, dot(gN, uSunDir));
-float relW = (0.20 + 0.72 * grainF) * (0.03 + 0.97 * sTerm);
-vec3 wN = normalize(mix(gN, mix(rkN, rkN2, 0.5), relW));
+/* The two readings are combined by *adding the finer one's deviation* to the
+   coarser rather than averaging the two normals. Averaging halves both, and
+   halving the coarse reading is most of why the wall had no relief in it: the
+   6.45 m reading is the one that carries the pits and the laminae, and it is
+   present at every distance this scene ever looks at a cliff from, whereas the
+   1.61 m reading is inside the mips beyond a few metres and should fade out on
+   its own rather than dragging the other down with it. */
+float relW = (0.55 + 0.45 * grainF) * (0.05 + 0.95 * sTerm);
+vec3 nDet = normalize(rkN + (rkN2 - gN) * (0.30 + 0.70 * grainF));
+vec3 wN = normalize(mix(gN, nDet, relW));
 /* Only the soft contacts, which the mesh deliberately did not step, and only as a
    profile whose derivative is bounded. Everything hard is geometry now: a step
    function put through dFdx is a one-pixel black line beside a one-pixel white
@@ -1338,7 +1358,12 @@ float ledgeShade = (1.0 - smoothstep(0.0, 1.6, y - lBot)) * (1.0 - lVert) * 0.55
 float sbUp = bedResist(sbI + 1.0, lIdx);
 float sbLip = smoothstep(0.80, 1.0, sbT) * smoothstep(0.54, 0.74, sbUp);
 tAO = clamp(rkAO * (0.72 + 0.34 * (1.0 - cav)) - ledgeShade * 0.5 - sbLip * 0.30, 0.22, 1.0);
-tAO = mix(0.84, tAO, 0.35 + 0.65 * grainF);
+/* Held on much further than before. The map's occlusion channel is now the
+   cavity of a packing — the crevice between two touching grains and the floor of
+   a weathering pit — and that is a *tone*, not a normal: it filters correctly
+   under mip reduction and it is what keeps the material present at the distance
+   where the relief has already faded out. */
+tAO = mix(0.88, tAO, 0.55 + 0.45 * grainF);
 `;
 
 /* The mean linear luminance of a generated sRGB map, which is what a texture

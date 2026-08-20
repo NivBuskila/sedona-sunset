@@ -465,24 +465,59 @@ export function makeSand(size = 512) {
 
 /* ── canyon-wall sandstone ─────────────────────────────────────────────── */
 
-/* Nearly uniform. Bedding is now carried by elevation in the terrain shader,
-   where the colour band and the geometric ledge are the same feature; a second
-   independent set of stripes inside the tile cuts across those at a different
-   angle and the wall reads as cross-hatching. What is left here is only the
-   shade-to-shade variation within a single bed. */
-/* Salmon-terracotta with a grey-brown cast from varnish and dust — but with a
-   genuine saturated tail, which is what these were missing. Every one of the six
-   bands sat between 0.32 and 0.35 saturation, a spread of three hundredths, so
-   the rock measured 0.71 at the 99th percentile against 0.85 to 1.00 in
-   photographs of the place. A real cliff is not one pigment: the iron-oxide-rich
-   beds go vivid, the varnished faces go grey-brown, and a fresh spall scar
-   exposes unweathered rock brighter than either. The mean is what the last
-   measurement fixed and it stays; what changes is that the distribution now has
-   ends. */
-const ROCK_BANDS = [
-  C(150, 114, 101), C(163, 108, 78),  C(143, 108, 95),
-  C(168, 120, 92),  C(152, 116, 102), C(139, 106, 98),
+/* ---- why this map was rebuilt from scratch ----
+ *
+ * The previous version was a *sum* of smooth fBm — a bedding warp at two
+ * periods, a cross-bed sweep at nine, a pit field at seventy — and a sum of
+ * smooth noise is one continuous membrane however many octaves go into it.
+ * Rendered at the scale a close cliff face demands, it read as carved wax:
+ * the forms were right and the substance was missing. This is the identical
+ * failure System 1 had when its wash floor was "a bumpy membrane with rocks
+ * resting on it", and it has the identical fix.
+ *
+ * Sandstone is not noise. It is a *packing* of cemented sand grains, laid down
+ * in laminae that differ in grain size, cemented unevenly, and then eaten back
+ * by cavernous weathering into pits and honeycomb. Every one of those is a
+ * discrete element that occupies space and occludes its neighbours, so the
+ * height field below is a maximum over populations rather than a sum, the
+ * hollows are subtracted with a rim, and each texel takes the tone of whichever
+ * element won.
+ *
+ * Scale. rock.js samples this map at 0.155 cycles per metre, so the tile is
+ * 6.45 m across and one texel is 6.3 mm; it samples it a second time at 0.62,
+ * where the tile is 1.61 m and a texel is 1.6 mm. Everything here is therefore
+ * authored against the 6.45 m reading — pits of 5 to 25 cm, laminae of 8 to 20,
+ * granular clumps of 1 to 5 — and the second reading brings the same features
+ * back a quarter of the size, which is exactly the sand-grain band. One map,
+ * two octaves of material, no extra texture.
+ *
+ * Colour is nearly all *luminance*, because that is nearly all the shader takes:
+ * the strata are geometry, and letting this map's pigment through would lay a
+ * second contradictory set of bands over them. What chroma is here is the small
+ * deviation between a quartz-rich lamina and an iron-cemented one, which the
+ * shader reads at low weight so that a grain has a mineral and not just a value.
+ */
+const ROCK_MATRIX = C(150, 110,  92);   // cemented matrix, dusty salmon
+const ROCK_HARD   = C(168, 124, 101);   // well-cemented lamina, stands proud
+const ROCK_SOFT   = C(133,  96,  82);   // friable lamina, recessive and dusty
+const ROCK_QUARTZ = C(178, 158, 137);   // quartz-rich lamina, pale and smooth
+const ROCK_IRON   = C(157,  84,  55);   // iron-cemented lamina, the saturated end
+const ROCK_PITIN  = C( 86,  60,  50);   // inside a weathering pit: shade and dust
+const ROCK_DUST   = C(172, 146, 122);   // efflorescent dust on a pit rim
+
+/* Grain populations, in cells across the 6.45 m tile. 22 cells is a 29 cm cell
+   holding a 7-14 cm clump; 300 cells is a 2 cm cell holding a 5-10 mm one. Read
+   again at the 1.61 m scale those become 3 cm and 2 mm, which is the coarse and
+   the fine end of a sand. `pres` is the fraction of cells that host a grain, so
+   with four classes an order of magnitude apart the size distribution comes out
+   roughly power-law: many small, few large. */
+const RGRAINS = [
+  { f: 23,  rMin: 0.20, rMax: 0.46, pres: 0.24, hgt: 1.00, flat: 0.52, seed: 5101 },
+  { f: 57,  rMin: 0.22, rMax: 0.45, pres: 0.44, hgt: 0.40, flat: 0.62, seed: 5107 },
+  { f: 137, rMin: 0.25, rMax: 0.46, pres: 0.64, hgt: 0.155, flat: 0.72, seed: 5113 },
+  { f: 311, rMin: 0.27, rMax: 0.47, pres: 0.78, hgt: 0.062, flat: 0.80, seed: 5119 },
 ];
+for (const G of RGRAINS) G.hMax = G.hgt * G.flat;
 
 export function makeRock(size = 1024) {
   const N = size * size;
@@ -496,71 +531,169 @@ export function makeRock(size = 1024) {
       const u = x / size;
       const i = y * size + x;
 
-      /* bedding: near-horizontal strata, warped so they are not ruler lines,
-         plus the cross-bedded sweeps that make Coconino/Schnebly sandstone
-         recognisable rather than generic striped rock */
-      const warp = (pfbm(u * 2, v * 2, 2, 4, 41) - 0.5) * 0.9
-                 + (pfbm(u * 7, v * 7, 7, 3, 43) - 0.5) * 0.22;
-      const bandF = (v + warp * 0.26) * 6.0;
-      const bi = Math.floor(bandF);
-      const bt = bandF - bi;
-      const c0 = ROCK_BANDS[((bi % 6) + 6) % 6];
-      const c1 = ROCK_BANDS[(((bi + 1) % 6) + 6) % 6];
-      /* Beds meet at contacts rather than gradients, but not at knife edges —
-         a hard step repeats too legibly once the tile is seen twice. */
-      let col = mixC(c0, c1, smoothstep(0.68, 1.0, bt));
+      /* ---- bedding laminae ----
+         The shader samples this map triplanar, and on a vertical face the
+         dominant plane is zy or xy — in both of which the map's v axis is world
+         y. So laminae authored along v come out horizontal on the walls without
+         the shader having to know anything about them.
+         Warped by rather more than one lamina thickness, because a train of
+         parallel lines at a constant spacing is corrugated card: real laminae
+         undulate over several times their own spacing and pinch out. */
+      const lamW = (pfbm(u * 2, v * 2, 2, 4, 5201) - 0.5) * 3.4
+                 + (pfbm(u * 7, v * 7, 7, 3, 5203) - 0.5) * 1.15;
+      const lamC = v * 46 + lamW;
+      const lamI = ((Math.floor(lamC) % 46) + 46) % 46;
+      const lamT = lamC - Math.floor(lamC);
+      /* Two low-frequency sines rather than a hash, so neighbouring laminae are
+         weakly correlated the way a real depositional sequence is — a coarsening
+         run, then a fining one — instead of alternating at random. */
+      const lamHard = clamp(0.5 + 0.34 * Math.sin(lamI * 2.399 + 1.7)
+                                + 0.20 * Math.sin(lamI * 0.611), 0, 1);
+      const lamQtz = hash2(lamI, 3, 5211);
+      const lamFe = hash2(lamI, 9, 5217);
+      /* The contact itself: a fine recessive groove where the two laminae meet,
+         narrow and shallow. This is a real feature and it is also the only line
+         work in the map, so it is kept to a couple of texels at the coarse
+         reading and left to disappear into the mips beyond that. */
+      const contact = Math.pow(1 - Math.min(1, Math.abs(lamT - 0.5) * 2), 14.0);
 
-      const cross = pfbm(u * 9 + v * 2, v * 26, 9, 3, 613);
-      col = mixC(col, mixC(col, C(204, 190, 174), 0.5), cross * 0.18);
+      /* ---- cavernous weathering ----
+         Tafoni and honeycomb: the salt-weathering hollows that make a Sedona
+         face look eaten rather than carved, and by far the strongest single cue
+         at the two-metre viewing distance the close-up shots use. Two
+         generations, an octave and a half apart, gated by a patch field so that
+         a run of face is pitted and the next is not — cavernous weathering is
+         patchy, and a face pitted edge to edge is pumice. A pit is subtracted
+         with a *rim*, because the rim is a case-hardened crust and it is what
+         throws the shadow. */
+      const ptw = (pfbm(u * 3, v * 3, 3, 3, 5301) - 0.5) * 0.55;
+      const pitField = smoothstep(0.36, 0.74, pfbm(u * 4, v * 4, 4, 4, 5307))
+                     * (1 - lamHard * 0.62);
+      const dish = (w, presT, rMin, rSpan) => {
+        if (w.id > presT) return 0;
+        const rad = rMin + (w.id / presT) * rSpan;
+        if (w.f1 >= rad) return 0;
+        const q = w.f1 / rad;
+        return Math.pow(1 - q * q, 0.65);
+      };
+      const pwA = pworley(u * 27 + ptw, v * 27 - ptw, 27, 5311, 1.0);
+      const pwB = pworley(u * 74 - ptw, v * 74 + ptw, 74, 5317, 1.0);
+      const pitA = dish(pwA, 0.46, 0.20, 0.26) * pitField;
+      const pitB = dish(pwB, 0.58, 0.22, 0.24) * pitField * (0.45 + 0.55 * pitField);
+      const pit = clamp(pitA * 0.72 + pitB * 0.42, 0, 1);
+      /* The case-hardened lip: just outside the hollow, standing proud of it. */
+      const rimA = smoothstep(0.02, 0.0, pwA.f1 - (0.20 + (pwA.id / 0.46) * 0.26))
+                 * (pwA.id <= 0.46 ? 1 : 0) * pitField;
 
-      /* Iron-oxide concentration, in patches inside the beds. This is where the
-         top of the saturation distribution comes from: hematite cement is not
-         evenly spread through a sandstone, it is concentrated in lenses and along
-         former groundwater fronts, and those lenses are the parts of a Sedona cliff
-         that go genuinely red in the last light. A narrow threshold so it is
-         patches rather than a wash over everything, which would just move the mean. */
-      const iron = smoothstep(0.58, 0.86, pfbm(u * 5, v * 8, 5, 4, 641));
-      col = mixC(col, C(176, 82, 44), iron * 0.55);
+      /* ---- spall flakes ----
+         A slab of case-hardened surface lets go and leaves a shallow dish a few
+         decimetres across with a sharp upper edge and a feathered lower one.
+         Very shallow — this is a skin coming off, not a block. */
+      const flk = pworley(u * 7 + ptw * 0.5, v * 7, 7, 5323, 1.0);
+      const flake = dish(flk, 0.30, 0.26, 0.22)
+                  * smoothstep(0.42, 0.66, pfbm(u * 3, v * 3, 3, 3, 5329));
 
-      /* Desert varnish: dark mineral streaks running down the face. Varnish is a
-         manganese-iron clay film and it is grey-brown, not red — it is one of the
-         main reasons a real butte is less saturated than its own fresh rock. */
-      const varn = Math.pow(clamp(pfbm(u * 16, v * 2.5, 16, 4, 733) * 1.5 - 0.42, 0, 1), 1.4);
-      col = mixC(col, C(90, 76, 70), varn * 0.34);
+      /* ---- the granular packing ----
+         max, not sum: the grain occupies the space and the finer populations
+         fill in around it rather than riding on its back. */
+      let gtop = 0, gi = -1, gcell = 0, gnorm = 0;
+      for (let L = 0; L < RGRAINS.length; L++) {
+        const G = RGRAINS[L];
+        const w = pworley(u * G.f, v * G.f, G.f, G.seed, 1.0);
+        if (w.id > G.pres) continue;
+        const t = w.id / G.pres;
+        const rad = G.rMin + Math.pow(t, 1.7) * (G.rMax - G.rMin);
+        if (w.f1 >= rad) continue;
+        /* Chipped outline. A circular plan makes every grain an egg and a bed of
+           eggs is caviar; nibbling the radius with noise finer than the grain
+           gives the irregular, angular outlines that fracture actually makes. */
+        const q = (w.f1 / rad) * (0.82 + 0.34 * pfbm(u * 190, v * 190, 190, 2, 5331));
+        if (q >= 1) continue;
+        const top = G.hMax * Math.pow(1 - q * q, 0.38);
+        if (top > gtop) { gtop = top; gi = L; gcell = w.id; gnorm = top / G.hMax; }
+      }
+      /* Grain size follows the lamina: a coarse lamina presents its coarse
+         population and a fine one is nearly smooth at this scale, which is what
+         differential grain size *is* and what makes the laminae legible without
+         drawing a single line. */
+      const coarse = 0.30 + 0.70 * lamHard;
+      const grainH = gtop * (0.42 + 0.58 * coarse);
 
-      /* Jointing, at 13 cells across a 14 m tile — about one metre. Seven cells
-         put two-metre polygons on the map, and a two-metre polygon network
-         magnified across a nearby bank face reads unmistakably as cracked
-         paint. Kept shallow too: a deep joint catches the grazing sun along its
-         lip and the wall reads as scratched rather than as fractured. */
-      const jw = pworley(u * 13, v * 13, 13, 1201, 1.0);
-      const joint = 1 - smoothstep(0.0, 0.016, jw.f2 - jw.f1);
-      const pit = pfbm(u * 70, v * 70, 70, 3, 1451);
+      /* ---- assemble the height field ----
+         The matrix the grains are set into carries only what is genuinely
+         smooth about a rock face: a broad swell and the lamina step. */
+      const broad = pfbm(u * 5, v * 5, 5, 3, 5337);
+      let hh = broad * 0.20 + (lamHard - 0.5) * 0.085 + 0.055;
+      if (grainH > hh) hh = grainH; else gi = -1;
+      hh -= contact * 0.055 * (0.4 + 0.6 * (1 - lamHard));
+      hh += rimA * 0.055 - pit * 0.34 - flake * 0.085;
+      h[i] = hh;
 
-      /* Deliberately no joint relief. A Worley net at any single cell size, once
-         it is magnified across a face a few metres away, is a legible net —
-         cracked-paint wallpaper — and the lips of the grooves catch a low sun
-         and outline every cell in bright thread. Jointing at that scale is
-         System 2's problem, and it needs to be geometry, not a tiling map. */
-      h[i] = (1 - bt) * 0.06 + warp * 0.30 + cross * 0.12 + pit * 0.10
-           - smoothstep(0.9, 1.0, bt) * 0.10;
+      /* ---- colour ----
+         Lamina first, then whichever grain won, then the hollows. */
+      let col = mixC(ROCK_SOFT, ROCK_HARD, smoothstep(0.20, 0.80, lamHard));
+      col = mixC(col, ROCK_QUARTZ, smoothstep(0.66, 0.94, lamQtz) * 0.62);
+      col = mixC(col, ROCK_IRON, smoothstep(0.62, 0.93, lamFe) * 0.55);
+      col = mixC(col, ROCK_MATRIX, 0.28);
 
-      col = mixC(col, C(124, 78, 58), joint * 0.055);
-      const sp = (hash2(x, y, 2207) - 0.5) * 12;
+      if (gi >= 0) {
+        /* Keyed off the winning cell's own hash rather than the grid square:
+           with full jitter the nearest feature point is usually in a neighbouring
+           cell, so hashing the square paints tone patches that do not line up
+           with the grains they belong to — which is how a wide palette still
+           comes out as one flat tint. */
+        const gv = (gcell * 137.31) % 1;
+        /* Narrow. Clasts weathering out of a matrix are the *same lithology* as
+           the matrix — the grains in a sandstone are the sandstone — so the
+           contrast between a grain and the cement around it is a few percent,
+           not a few stops. Wide value spread here is what turns a weathered
+           face into confetti, and it is the same error the talus is making. */
+        const val = 0.90 + gv * 0.22;
+        const stone = [col[0] * val, col[1] * val, col[2] * val];
+        /* A grain barely clear of the matrix is half buried in it. */
+        const cover = smoothstep(0.12, 0.66, gnorm);
+        col = mixC(col, stone, cover);
+        /* A few grains per hundred are a different mineral — a chert pebble, a
+           varnished lithic, a quartz granule. Sparse enough to read as an
+           inclusion rather than as a palette. */
+        if (gv > 0.955) col = mixC(col, ROCK_QUARTZ, cover * 0.55);
+        else if (gv < 0.035) col = mixC(col, C(96, 78, 70), cover * 0.55);
+      }
+
+      col = mixC(col, ROCK_DUST, rimA * 0.30);
+      col = mixC(col, ROCK_PITIN, pit * 0.62);
+      col = mixC(col, ROCK_HARD, flake * 0.34);
+      col = mixC(col, mixC(col, ROCK_SOFT, 0.7), contact * 0.5);
+
+      /* Per-texel speckle. At mip 0 this is the last half-millimetre of grain and
+         it is what keeps a face two metres from the camera from looking
+         airbrushed; every mip above collapses it, which is correct. */
+      const sp = (hash2(x, y, 2207) - 0.5) * 16;
       alb[i * 4] = clamp(col[0] + sp, 0, 255);
       alb[i * 4 + 1] = clamp(col[1] + sp * 0.95, 0, 255);
       alb[i * 4 + 2] = clamp(col[2] + sp * 0.9, 0, 255);
       alb[i * 4 + 3] = 255;
 
-      rough[i] = 0.88 - cross * 0.10 + joint * 0.06 - varn * 0.14;
+      /* A pit interior is friable and dust-lined; a quartz lamina and a
+         case-hardened rim are the two smoothest things on the face. */
+      rough[i] = clamp(0.93 - lamQtz * 0.06 - rimA * 0.05 + pit * 0.05
+                            - (gi >= 0 ? 0.04 : 0), 0.6, 1.0);
     }
   }
 
-  const ao = aoFromHeight(h, size, 2, 11, 2.2);
+  /* Tight and strong: the whole point of a packing is that touching grains meet
+     in a crevice, and the crevice has to go dark or the face reads as one lumpy
+     membrane again. The far radius carries the pits. */
+  const ao = aoFromHeight(h, size, 2, 12, 3.2);
   return {
     albedo: dataTex(alb, size, true),
-    /* 14 m tile, ~0.4 m of relief → about 30 */
-    normal: dataTex(normalFromHeight(h, size, size * 0.030), size, false),
+    /* 6.45 m tile at 1024 is 6.3 mm per texel, and the field spans about 14 cm
+       of relief between a pit floor and a rim. normalFromHeight differences over
+       two texels, so the strength is relief / (2 * texel) = 0.14 / 0.0126 ≈ 11.
+       Read again at the 1.61 m scale the same map is 3.5 cm of relief over a
+       quarter of the distance, which is the same slope — a normal map is scale
+       free in slope, which is why one strength serves both readings. */
+    normal: dataTex(normalFromHeight(h, size, 11.0), size, false),
     arm: dataTex(packARM(ao, rough, h, size), size, false),
   };
 }

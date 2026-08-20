@@ -16,6 +16,9 @@ import { Terrain, buildTerrainMesh, makeTerrainMaterial } from './terrain.js';
 import { buildScatter } from './scatter.js';
 import { buildWalls, buildDistantButtes, buildTalus, makeRockMaterial } from './rock.js';
 import { buildSky, buildLights, SUN_DIR, FOG, SHADOW_HALF } from './sky.js';
+import { buildJuniper } from './juniper.js';
+import { buildVegetation } from './vegetation.js';
+import { setPlantAnisotropy } from './plantex.js';
 import {
   makeDirt, makeSand, makeRock, makeClastSurface, makeMacro, makeVariance, makeCracks,
   setAnisotropy,
@@ -98,6 +101,12 @@ for (const m of rocks) scene.add(m);
 
 const clasts = buildScatter(terrain, tex);
 for (const m of clasts) scene.add(m);
+
+/* System 3: the hero juniper, and the sparse pinyon-juniper scatter that says
+   this is 4,500 ft in Arizona rather than an empty desert. */
+setPlantAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
+for (const m of buildJuniper(terrain, tex)) scene.add(m);
+for (const m of buildVegetation(path, terrain, rocks)) scene.add(m);
 
 /* The clast material needs the viewport height to turn an instance's world radius
    into a projected pixel radius, which is what drives its level of detail. */

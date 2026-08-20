@@ -37,6 +37,18 @@ is wet grey concrete. Chasing them desaturated the floor into mauve-beige. **Do 
 them.** Anyone proposing a new colour target must measure real photographs and show the
 numbers.
 
+**Hue matters as much as saturation, and was missed for four rounds.** Real Sedona rock in
+warm light clusters at **+22° to +31°** — orange. Measured renders have sat at −15° to +3°,
+which is magenta-red, and that plum cast is a large part of why the scene kept reading as
+Mars or Wadi Rum. The B/G channel ratio is a quick proxy: real golden-hour rock runs
+0.32–0.90, with blue well below green; a magenta-cast render runs 0.87–1.21, with blue equal
+to or above green. Check hue whenever you check saturation.
+
+Saturation on rock is **solved** as of `sys2e` — mean 0.62–0.67, p95 0.87–0.92, p99 0.90–0.96
+on lit rock, inside the real-photograph range and if anything conservative. Do not push it
+up and do not let a later round pull it down. The remaining colour work is a hue rotation,
+not a saturation change.
+
 The distribution matters more than the mean. A real wash floor gets its saturation spread
 from mixed lithology — iron-stained red clasts, desert-varnished near-black pebbles, and
 orange mud stringers sitting beside pale quartz sand. That produces a long saturated tail
