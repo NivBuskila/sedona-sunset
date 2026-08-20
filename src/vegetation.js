@@ -89,54 +89,96 @@ function shrubGeo(seed) {
  * plant actually grows and is why a real one looks like a stack of paddles
  * pointing in slightly different directions rather than a bush.
  */
-function pricklyPearGeo(seed) {
+export function pricklyPearGeo(seed) {
   const rand = rng(seed);
   const parts = [];
-  const pads = [];
-  pads.push({ p: new THREE.Vector3(0, 0.16, 0), az: rand() * TAU, tilt: 0.08, s: 0.30, gen: 0 });
-  for (let i = 0; i < 7; i++) {
-    const parent = pads[(rand() * pads.length) | 0];
+
+  /** One pad: an oval disc with a domed section, built explicitly rather than
+      by squashing a sphere. Squashing a sphere on one axis gives a lens whose
+      rim is a knife edge and whose silhouette is an ellipse — the first attempt
+      produced upright blue-grey lozenges a metre and a half tall that read as
+      standing stones. A pad is a rounded slab about as tall as it is wide, two
+      centimetres thick, with a blunt rim. */
+  function pad(r, thick, seedp) {
+    const N = 18, RINGS = 4;
+    const pos = [], nrm = [], uv = [], idx = [];
+    const rr = rng(seedp);
+    const wob = [];
+    for (let i = 0; i < N; i++) wob.push(0.90 + rr() * 0.18);
+    /* front and back shells */
+    for (let side = 0; side < 2; side++) {
+      const sgn = side ? -1 : 1;
+      const base = pos.length / 3;
+      for (let k = 0; k <= RINGS; k++) {
+        const t = k / RINGS;
+        for (let i = 0; i < N; i++) {
+          const a = i / N * TAU;
+          const w = wob[i] * (0.92 + 0.10 * Math.sin(a * 2));
+          const rx = Math.cos(a) * r * t * w;
+          const ry = Math.sin(a) * r * 1.24 * t * w;
+          /* Section: full thickness in the middle, tapering to the rim. */
+          const z = sgn * thick * Math.sqrt(Math.max(0, 1 - t * t)) *
+                    (0.85 + 0.15 * Math.cos(a * 3));
+          pos.push(rx, ry + r * 1.24, z);
+          const n = new THREE.Vector3(rx * 0.30, ry * 0.30, sgn * r).normalize();
+          nrm.push(n.x, n.y, n.z);
+          uv.push(t, a / TAU);
+          if (k > 0) {
+            const p0 = base + (k - 1) * N + i, p1 = base + (k - 1) * N + (i + 1) % N;
+            const p2 = base + k * N + i, p3 = base + k * N + (i + 1) % N;
+            if (side) idx.push(p0, p1, p2, p1, p3, p2);
+            else idx.push(p0, p2, p1, p1, p2, p3);
+          }
+        }
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    g.setIndex(idx);
+    return g;
+  }
+
+  /* A clump: a couple of ground pads with two or three budding off their upper
+     rims. Total height about half a metre — these are supporting cast, and a
+     prickly pear that competes with the juniper for attention is a failure
+     whatever it looks like. */
+  const nodes = [{ p: new THREE.Vector3(0, 0, 0), az: rand() * TAU, r: 0.135, gen: 0 }];
+  for (let i = 0; i < 6; i++) {
+    const parent = nodes[(rand() * Math.min(nodes.length, 3)) | 0];
     if (parent.gen > 2) continue;
-    const az = parent.az + (rand() - 0.5) * 1.5;
-    const up = 0.55 + rand() * 0.75;
-    const s = parent.s * (0.72 + rand() * 0.25);
-    pads.push({
+    const az = parent.az + (rand() - 0.5) * 1.9;
+    nodes.push({
       p: parent.p.clone().add(new THREE.Vector3(
-        Math.cos(parent.az + 1.57) * parent.s * 0.35 * (rand() - 0.5),
-        parent.s * up * 1.6,
-        Math.sin(parent.az + 1.57) * parent.s * 0.35 * (rand() - 0.5))),
-      az, tilt: (rand() - 0.5) * 0.55, s, gen: parent.gen + 1,
+        Math.cos(az) * parent.r * (0.7 + rand() * 1.1),
+        parent.r * (0.95 + rand() * 0.75),
+        Math.sin(az) * parent.r * (0.7 + rand() * 1.1))),
+      az, r: parent.r * (0.78 + rand() * 0.22), gen: parent.gen + 1,
     });
   }
-  for (const pad of pads) {
-    const g = new THREE.SphereGeometry(1, 12, 8);
-    const p = g.attributes.position;
-    for (let i = 0; i < p.count; i++) {
-      const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
-      /* Pads are ovals, thin, with a slightly lumpy surface. */
-      const lump = 1 + 0.09 * Math.sin(y * 7.1 + x * 5.3) * (1 - Math.abs(y));
-      p.setXYZ(i, x * pad.s * 0.92 * lump, (y * 0.5 + 0.5) * pad.s * 2.5 * lump, z * pad.s * 0.15);
-    }
-    g.computeVertexNormals();
-    g.rotateZ(pad.tilt);
-    g.rotateY(pad.az);
-    g.translate(pad.p.x, pad.p.y, pad.p.z);
+  for (let i = 0; i < nodes.length; i++) {
+    const nd = nodes[i];
+    const g = pad(nd.r, nd.r * 0.135, seed + i * 97);
+    g.rotateZ((rand() - 0.5) * 0.5);
+    g.rotateX((rand() - 0.5) * 0.35);
+    g.rotateY(nd.az);
+    g.translate(nd.p.x, nd.p.y, nd.p.z);
     parts.push(g);
   }
-  const merged = mergeAll(parts);
-  return addWhite(merged);
+  return addWhite(mergeAll(parts));
 }
 
 /** An agave rosette: stiff tapered blades radiating from a point. */
-function agaveGeo(seed) {
+export function agaveGeo(seed) {
   const rand = rng(seed);
   const pos = [], nrm = [], uvs = [], idx = [];
   const n = 17;
   for (let i = 0; i < n; i++) {
     const az = i / n * TAU + (rand() - 0.5) * 0.22;
-    const pitch = 0.30 + rand() * 0.85;      // radians above horizontal
-    const len = 0.62 + rand() * 0.40;
-    const wid = 0.11 + rand() * 0.05;
+    const pitch = 0.58 + rand() * 0.72;      // radians above horizontal
+    const len = 0.40 + rand() * 0.26;
+    const wid = 0.075 + rand() * 0.035;
     const dir = new THREE.Vector3(Math.cos(az) * Math.cos(pitch), Math.sin(pitch),
                                   Math.sin(az) * Math.cos(pitch));
     const side = new THREE.Vector3(-Math.sin(az), 0, Math.cos(az));
@@ -147,7 +189,7 @@ function agaveGeo(seed) {
       /* A blade is a folded gutter, not a flat strap: the fold is what gives it
          a highlight down the middle and a real silhouette edge-on. */
       const w = wid * (1 - t * t * 0.92);
-      const droop = -0.42 * t * t * len;
+      const droop = -0.24 * t * t * len;
       const c = new THREE.Vector3()
         .copy(dir).multiplyScalar(len * t)
         .add(new THREE.Vector3(0, droop, 0));
@@ -315,13 +357,13 @@ export function buildVegetation(path, terrain, rocks) {
       } else if (roll < p * 0.505 && pear.length < 4) {
         pear.push({
           x, y: y - 0.05, z, rot: rand() * TAU,
-          sx: 0.85 + rand() * 0.40, sy: 0.85 + rand() * 0.45, sz: 0.85 + rand() * 0.40,
+          sx: 0.62 + rand() * 0.30, sy: 0.60 + rand() * 0.32, sz: 0.62 + rand() * 0.30,
           r: 0.95 + rand() * 0.14, g: 1.0, b: 0.90 + rand() * 0.14,
         });
       } else if (roll < p * 0.515 && agave.length < 2) {
         agave.push({
           x, y: y - 0.03, z, rot: rand() * TAU,
-          sx: 0.70 + rand() * 0.30, sy: 0.70 + rand() * 0.34, sz: 0.70 + rand() * 0.30,
+          sx: 0.78 + rand() * 0.30, sy: 0.78 + rand() * 0.34, sz: 0.78 + rand() * 0.30,
           r: 0.94, g: 1.0, b: 0.92,
         });
       }
@@ -341,8 +383,14 @@ export function buildVegetation(path, terrain, rocks) {
   /* Cactus and agave are succulent: waxy, so a touch glossier than anything
      else in the frame, and a blue-cast desaturated green. */
   const succMat = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(0.118, 0.145, 0.098),
-    roughness: 0.62, metalness: 0, vertexColors: true, dithering: true,
+    /* Prickly pear and agave are a pale glaucous blue-green — much lighter and
+       bluer than juniper, which is most of what distinguishes them at a
+       distance where neither has any resolvable structure. Double sided
+       because an agave blade is a single sheet and back-face culling turned
+       the rosette into a black wedge. */
+    color: new THREE.Color(0.150, 0.183, 0.126),
+    roughness: 0.74, metalness: 0, vertexColors: true, dithering: true,
+    side: THREE.DoubleSide,
   });
 
   instance(grassTuftGeo(1001), grassMat, grass, 'veg-grass', true);
