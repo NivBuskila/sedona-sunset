@@ -960,6 +960,8 @@ function layerGLSL() {
 const ROCK_PREFIX = /* glsl */`
 uniform sampler2D uRockA; uniform sampler2D uRockN; uniform sampler2D uRockM;
 uniform sampler2D uMacro; uniform sampler2D uVar; uniform sampler2D uDirtA;
+uniform sampler2D uGrit;
+uniform float uDetail;
 uniform vec3 uIron;
 uniform vec3 uVarnish;
 uniform float uRockLum;
@@ -1033,6 +1035,36 @@ vec3 domNormal(sampler2D t, vec3 p, vec3 N, float sc){
     o = vec3(n.xy + N.xy, abs(n.z) * N.z);
   }
   return normalize(o);
+}
+
+/* The same whiteout blend as domNormal, but for a tangent-space xy that has
+   already been fetched — the grit layer packs its normal alongside its tone and
+   its cavity in one texel, so the fetch happens once and the plane mapping is
+   applied afterwards. */
+vec3 domApply(vec2 nxy, vec3 N){
+  vec3 a = abs(N), o;
+  float z = sqrt(max(0.0, 1.0 - dot(nxy, nxy)));
+  if (a.y > a.x && a.y > a.z) { o = vec3(nxy + N.xz, z * N.y); o = o.xzy; }
+  else if (a.x > a.z)         { o = vec3(nxy + N.zy, z * N.x); o = o.zyx; }
+  else                        { o = vec3(nxy + N.xy, z * N.z); }
+  return normalize(o);
+}
+
+/* Distance to the nearest open joint trace of one set, in metres, as a filtered
+   tone in [0,1]. `d` is a unit azimuth in plan, `sp` the mean spacing, `w` the
+   half-width the trace should present — which is at least a pixel or the line
+   crawls. Most cell walls are *not* open joints, and where one is open its
+   position within the cell and its aperture both vary, because a fracture set
+   with a metronomic spacing is a comb. */
+float jointTrace(vec2 p, vec2 dir, float sp, float seed, float w, float thr){
+  float t = dot(p, dir) / sp;
+  float ti = floor(t), tf = t - ti;
+  float h1 = hash11(ti * 1.731 + seed);
+  float open = step(thr, h1);
+  float c = 0.5 + (hash11(ti * 3.117 + seed + 11.0) - 0.5) * 0.7;
+  float dd = abs(tf - c) * sp;
+  float ap = w * (0.55 + 1.10 * hash11(ti * 5.311 + seed + 29.0));
+  return open * (1.0 - smoothstep(ap * 0.30, ap, dd));
 }
 
 /* Shader-side only, so a large-argument hash is safe here — the CPU never has to

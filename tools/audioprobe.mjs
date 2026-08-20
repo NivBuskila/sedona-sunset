@@ -195,7 +195,46 @@ function analyse(x, sr, meta) {
   for (let i = 1; i < evs.length; i++) gaps.push(evs[i].t - (evs[i - 1].t + evs[i - 1].dur));
   gaps.sort((a, b) => a - b);
 
+  /* Footsteps are deliberately quiet enough that they do not survive the
+     event detector above — which is the brief, but "too quiet to measure" and
+     "not there" look identical in a level plot. So detect them the way they
+     actually differ from the bed: as transients. A 5 ms envelope against a
+     200 ms trailing average finds anything with a sharp attack regardless of
+     how far above the bed it sits. The control is the count outside the walk
+     segments, which should be near zero — that is what proves the steps are
+     tied to the player walking and are not a timer running underneath. */
+  /* The detector runs band-limited, so its own level figure is the level of
+     the crunch band and not of the step. Re-measure each hit against the full
+     signal, which is the number that can be compared with the bed. */
+  const steps = transients(x, sr).map(s => {
+    const i0 = Math.max(0, Math.round((s.t - 0.006) * sr));
+    const i1 = Math.min(n, i0 + Math.round(0.03 * sr));
+    let ss = 0;
+    for (let i = i0; i < i1; i++) ss += x[i] * x[i];
+    return { t: s.t, peak: db(Math.sqrt(ss / (i1 - i0))) };
+  });
+  const walkSpan = (meta && meta.segments) || [];
+  const inWalk = (t) => walkSpan.some(([a, d]) => t >= a - 0.1 && t < a + d + 0.4);
+  const stepsIn = steps.filter(s => inWalk(s.t));
+  const stepsOut = steps.filter(s => !inWalk(s.t));
+  const iv = [];
+  for (let i = 1; i < stepsIn.length; i++) {
+    const g2 = stepsIn[i].t - stepsIn[i - 1].t;
+    if (g2 < 2) iv.push(g2);
+  }
+  const lv = stepsIn.map(s => s.peak).sort((a, b) => a - b);
+  iv.sort((a, b) => a - b);
+  const walkSeconds = walkSpan.reduce((s, [, d]) => s + d, 0);
+
   return {
+    footsteps: {
+      inWalk: stepsIn.length, outsideWalk: stepsOut.length,
+      walkSeconds,
+      interval: iv.length ? { min: iv[0], median: iv[iv.length >> 1], max: iv[iv.length - 1] } : null,
+      level: lv.length
+        ? { min: lv[0], median: lv[lv.length >> 1], max: lv[lv.length - 1], spread: lv[lv.length - 1] - lv[0] }
+        : null,
+    },
     seconds: n / sr, sampleRate: sr,
     rms: db(rms), peak: db(peak), crest: db(peak) - db(rms),
     dc: dc / n,
@@ -211,6 +250,59 @@ function analyse(x, sr, meta) {
       : null,
     winLevel: wl, spec: S, meta,
   };
+}
+
+/** One RBJ bandpass, forward only — this is an envelope, phase is irrelevant. */
+function bandpass(x, sr, fc, Q) {
+  const w0 = 2 * Math.PI * fc / sr, a = Math.sin(w0) / (2 * Q), cw = Math.cos(w0);
+  const b0 = a, b1 = 0, b2 = -a, a0 = 1 + a, a1 = -2 * cw, a2 = 1 - a;
+  const y = new Float32Array(x.length);
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+  for (let i = 0; i < x.length; i++) {
+    const v = (b0 * x[i] + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2) / a0;
+    x2 = x1; x1 = x[i]; y2 = y1; y1 = v;
+    y[i] = v;
+  }
+  return y;
+}
+
+/**
+ * Sharp-attack detection: an 8 ms envelope against its own 200 ms trailing
+ * mean, run on the 800 Hz – 4 kHz band.
+ *
+ * Band-limiting first is what makes this work. Run on the full signal the
+ * detector fires constantly, because filtered noise at a few hundred hertz has
+ * only a handful of independent samples per window and so wanders by several
+ * decibels for free. In the crunch band the still air has almost no energy at
+ * all, so a footstep is a genuine order-of-magnitude excursion.
+ */
+function transients(x, sr, riseDb = 6, minGap = 0.22) {
+  x = bandpass(x, sr, 1800, 0.9);
+  const W = Math.max(1, Math.round(0.008 * sr));
+  const n = Math.floor(x.length / W);
+  const e = new Float64Array(n);
+  for (let w = 0; w < n; w++) {
+    let s = 0;
+    for (let i = w * W; i < (w + 1) * W; i++) s += x[i] * x[i];
+    e[w] = Math.sqrt(s / W);
+  }
+  const K = Math.max(2, Math.round(0.2 / (W / sr)));
+  const out = [];
+  let last = -1e9, acc = 0;
+  for (let w = 0; w < n; w++) {
+    if (w >= K) {
+      const mean = acc / K;
+      const rise = db(e[w]) - db(mean);
+      const t = w * W / sr;
+      if (rise > riseDb && e[w] > e[w - 1] && (w + 1 >= n || e[w] >= e[w + 1]) && t - last > minGap) {
+        last = t;
+        out.push({ t, peak: db(e[w]), rise });
+      }
+      acc -= e[w - K];
+    }
+    acc += e[w];
+  }
+  return out;
 }
 
 function eventCentroid(S, sr, t0, dur) {
@@ -457,6 +549,19 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
   }
   if (a.events.length > 24) say(`    … ${a.events.length - 24} more`);
   say('');
+  const fsx = a.footsteps;
+  say(`── footsteps (transient detector) ──────────────────────`);
+  say(`  ${fsx.inWalk} transients during ${fsx.walkSeconds}s of scripted walking, ` +
+      `${fsx.outsideWalk} during the ${(a.seconds - fsx.walkSeconds).toFixed(0)}s standing still`);
+  if (fsx.interval) {
+    say(`  stride interval  min ${f2(fsx.interval.min)}s  median ${f2(fsx.interval.median)}s  max ${f2(fsx.interval.max)}s`);
+  }
+  if (fsx.level) {
+    say(`  step level       min ${f2(fsx.level.min)}  median ${f2(fsx.level.median)}  ` +
+        `max ${f2(fsx.level.max)} dBFS  (spread ${f2(fsx.level.spread)} dB)`);
+    say(`  above bed        ${f2(fsx.level.median - a.bed)} dB at the median step`);
+  }
+  say('');
   say(`── hygiene ─────────────────────────────────────────────`);
   say(`  clipped samples      ${res.clipped}`);
   say(`  DC offset            L ${res.dcL.toExponential(2)}  R ${res.dcR.toExponential(2)}`);
@@ -472,7 +577,7 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
     belowSamplePct: Object.fromEntries(T.map((t, i) => [t, a.belowSamplePct[i]])),
     belowWinPct: Object.fromEntries(T.map((t, i) => [t, a.belowWinPct[i]])),
     winPercentiles: a.winPercentiles,
-    bed: a.bed, events: a.events, gapStats: a.gapStats,
+    bed: a.bed, events: a.events, gapStats: a.gapStats, footsteps: a.footsteps,
     gusts: res.gusts, coyotes: res.coyotes,
     clipped: res.clipped, dcL: res.dcL, dcR: res.dcR,
     longestSilentMs: a.longestSilentMs, perFrameMs,

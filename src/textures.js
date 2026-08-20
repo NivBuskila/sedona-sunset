@@ -698,6 +698,119 @@ export function makeRock(size = 1024) {
   };
 }
 
+/* ── grit: the footprint-locked detail layer ───────────────────────────── */
+
+/**
+ * A packing of grains and micro-pits with **no low-frequency content at all** —
+ * nothing below a fourteenth of the tile — so that it can be read at an
+ * arbitrary world scale without implying any particular physical size.
+ *
+ * That is the whole point of it. Rock is fractal, and that is not a figure of
+ * speech: it is why a photograph of a cliff has structure at the pixel scale
+ * whether the cliff is two metres away or two hundred. At two hundred metres a
+ * pixel covers a metre, and a metre of sandstone is as structured as a
+ * centimetre of it. A texture pinned to a world scale cannot express that —
+ * past the distance where its texels fall under a pixel the mip chain collapses
+ * it to its mean and the surface goes to wax. Measured, that was the entire
+ * defect: the wall's mean one-pixel luminance gradient was 0.0045 against 0.026
+ * to 0.085 on photographs of the same formations. So rock.js locks this layer's
+ * sampling scale to the pixel footprint instead.
+ *
+ * Everything is packed into one RGBA map so that costs one texture fetch:
+ *   R  tone deviation about 0.5
+ *   G  tangent-space normal x
+ *   B  tangent-space normal y
+ *   A  crevice occlusion
+ *
+ * The normal's z is recovered in the shader, which is exact for a tangent-space
+ * normal and free.
+ */
+const GRIT = [
+  { f: 14, rMin: 0.21, rMax: 0.47, pres: 0.30, hgt: 1.00, flat: 0.55, seed: 9101 },
+  { f: 33, rMin: 0.24, rMax: 0.46, pres: 0.52, hgt: 0.40, flat: 0.66, seed: 9107 },
+  { f: 79, rMin: 0.27, rMax: 0.47, pres: 0.74, hgt: 0.155, flat: 0.78, seed: 9113 },
+];
+for (const G of GRIT) G.hMax = G.hgt * G.flat;
+
+export function makeGrit(size = 256) {
+  const N = size * size;
+  const h = new Float32Array(N);
+  const tone = new Float32Array(N);
+
+  for (let y = 0; y < size; y++) {
+    const v = y / size;
+    for (let x = 0; x < size; x++) {
+      const u = x / size;
+      const i = y * size + x;
+
+      let gtop = 0, gi = -1, gcell = 0, gnorm = 0;
+      for (let L = 0; L < GRIT.length; L++) {
+        const G = GRIT[L];
+        const w = pworley(u * G.f, v * G.f, G.f, G.seed, 1.0);
+        if (w.id > G.pres) continue;
+        const t = w.id / G.pres;
+        const rad = G.rMin + Math.pow(t, 1.6) * (G.rMax - G.rMin);
+        if (w.f1 >= rad) continue;
+        /* Chipped, by noise finer than the grain itself. A circular plan makes
+           every grain an egg and a bed of eggs is caviar. */
+        const q = (w.f1 / rad) * (0.80 + 0.38 * pfbm(u * 96, v * 96, 96, 2, 9121));
+        if (q >= 1) continue;
+        const top = G.hMax * Math.pow(1 - q * q, 0.40);
+        if (top > gtop) { gtop = top; gi = L; gcell = w.id; gnorm = top / G.hMax; }
+      }
+
+      /* Weathered-out grains: the sockets left where a grain has fallen away.
+         A weathered sandstone face is as much holes as grains, and the holes are
+         the darker half of the stipple — without them the layer is only ever
+         brighter than the surface it sits on and reads as dust rather than as
+         granularity. */
+      const pw = pworley(u * 21, v * 21, 21, 9131, 1.0);
+      let socket = 0;
+      if (pw.id < 0.34) {
+        const rad = 0.20 + (pw.id / 0.34) * 0.20;
+        if (pw.f1 < rad) socket = Math.pow(1 - (pw.f1 / rad) * (pw.f1 / rad), 0.7);
+      }
+
+      /* The interstitial cement between the grains, and nothing else: two
+         octaves at 40 and 96 cells, so the lowest frequency in the whole map is
+         the coarse grain population's own. */
+      const cement = pfbm(u * 40, v * 40, 40, 2, 9137);
+      let hh = cement * 0.09;
+      if (gtop > hh) hh = gtop; else gi = -1;
+      hh -= socket * 0.42;
+      h[i] = hh;
+
+      /* Tone. Narrow on purpose and centred on zero deviation: a grain is the
+         same lithology as the cement holding it, so the contrast between them is
+         a few percent. This is where the confetti failure comes from if it is
+         got wrong, and it is got wrong by making the grains bright. */
+      let t = 0.5 + (cement - 0.5) * 0.10;
+      if (gi >= 0) {
+        const gv = (gcell * 173.7) % 1;
+        t += (gv - 0.45) * 0.20 * smoothstep(0.10, 0.60, gnorm);
+      }
+      t -= socket * 0.16;
+      t += (hash2(x, y, 9143) - 0.5) * 0.075;
+      tone[i] = clamp(t, 0, 1);
+    }
+  }
+
+  const ao = aoFromHeight(h, size, 1, 5, 4.2);
+  /* Slope, not relief: this map is read at every scale, so what has to be right
+     is the angle. A grain of radius a third of a cell standing half its radius
+     proud presents about thirty degrees at its flank, and 3.0 is what puts the
+     central difference there. */
+  const nrm = normalFromHeight(h, size, 3.0);
+  const buf = new Uint8Array(N * 4);
+  for (let i = 0; i < N; i++) {
+    buf[i * 4] = clamp(tone[i], 0, 1) * 255;
+    buf[i * 4 + 1] = nrm[i * 4];
+    buf[i * 4 + 2] = nrm[i * 4 + 1];
+    buf[i * 4 + 3] = clamp(ao[i], 0, 1) * 255;
+  }
+  return dataTex(buf, size, false);
+}
+
 /* ── clast surface, for the instanced gravel, cobbles and blocks ───────── */
 
 /**

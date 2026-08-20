@@ -306,7 +306,10 @@ export class Soundscape {
        air moving, and two narrow resonances that only speak up in a gust —
        those are the edges of the rock, and they are the difference between
        wind and a noise generator. */
-    this.windBus = g(0.05);
+    /* Starts at the lull value, not at some nominal mid level: the first
+       scheduled ramp is half a second out, and anything louder here fades down
+       into it, which is an audible "the sound just started" on page load. */
+    this.windBus = g(0.008);
     this.windBus.connect(this.dry);
     this.windSend = g(0.30);
     this.windBus.connect(this.windSend).connect(this.convolver);
