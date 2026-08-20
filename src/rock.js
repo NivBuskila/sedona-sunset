@@ -82,7 +82,7 @@ export const LAYERS = [
      undercut beneath it. The one achromatic band in the red, and after the
      Coconino cap the most recognisable thing in a Sedona section. */
   { y0:  38.2, kind: LEDGE, rec: 0.00, proud: -2.55, bedT: 0.85,
-    col: [0.345, 0.318, 0.281], iron: 0.10, pale: 0.85, rough: 0.78 },
+    col: [0.302, 0.278, 0.246], iron: 0.10, pale: 0.85, rough: 0.78 },
   { y0:  41.0, kind: BENCH, rec: 0.95, proud:  1.00, bedT: 1.05,
     col: [0.288, 0.134, 0.094], iron: 0.60, pale: 0.00, rough: 0.94 },
   { y0:  46.0, kind: CLIFF, rec: 0.06, proud: -0.70, bedT: 1.60,
@@ -92,7 +92,7 @@ export const LAYERS = [
   /* Coconino Sandstone: buff-white cross-bedded aeolian sand, the pale cap. The
      contrast against the red below is Sedona's other signature. */
   { y0:  55.0, kind: CLIFF, rec: 0.03, proud: -1.50, bedT: 3.20,
-    col: [0.610, 0.535, 0.428], iron: 0.06, pale: 1.00, rough: 0.80 },
+    col: [0.548, 0.462, 0.342], iron: 0.06, pale: 1.00, rough: 0.80 },
   { y0:  67.0, kind: CAP,   rec: 1.80, proud:  1.40, bedT: 2.60,
     col: [0.300, 0.188, 0.128], iron: 0.35, pale: 0.15, rough: 0.96 },
 ];
@@ -123,8 +123,8 @@ const CREST_LEVELS = [12.2, 16.4, 25.8, 29.6, 38.2, 41.0, 51.2, 55.0, 67.0, 75.0
 function subBed(y, li) {
   const L = LAYERS[li];
   const d = y - L.y0;
-  return d / L.bedT + 0.30 * Math.sin(d * 0.31 + li * 2.117)
-                    + 0.17 * Math.sin(d * 0.77 + li * 3.733 + 1.4);
+  return d / L.bedT + 0.55 * Math.sin(d * 0.23 + li * 2.117)
+                    + 0.30 * Math.sin(d * 0.61 + li * 3.733 + 1.4);
 }
 
 /* Resistance of a sub-bed, in [0,1], and it has to agree between here and the
@@ -147,6 +147,13 @@ function subResist(id, li) {
  * contact, so the riser is a genuine step in the mesh rather than a ramp smeared
  * over half a metre; coarse rows up the middle of a vertical face, where there
  * is nothing to resolve; fine rows on the benches, which are the curved parts.
+ *
+ * The amplitudes in subBed are large enough that bed thickness varies by about
+ * sixty percent either way and still monotonic — the summed gradient of the two
+ * sines stays under the linear term's, which is what keeps the contacts well
+ * defined. At the first setting the variation was half that and the first render
+ * showed why it was not enough: at two hundred metres a cliff of beds all within
+ * twenty percent of two metres reads as corrugated card, not as rock.
  */
 function buildColumn() {
   const ys = [];
@@ -174,11 +181,11 @@ function buildColumn() {
     let ci = 0;
     for (let y = L.y0 + 0.075; y < y1 - 0.075; y += step) {
       while (ci < contacts.length && contacts[ci] < y) {
-        put(contacts[ci] - 0.065); put(contacts[ci] + 0.065); ci++;
+        put(contacts[ci] - 0.095); put(contacts[ci] + 0.095); ci++;
       }
       put(y);
     }
-    while (ci < contacts.length) { put(contacts[ci] - 0.065); put(contacts[ci] + 0.065); ci++; }
+    while (ci < contacts.length) { put(contacts[ci] - 0.095); put(contacts[ci] + 0.095); ci++; }
   }
   put(Y_TOP);
 
@@ -333,11 +340,22 @@ function wallGrid(path, terrain, side) {
     let best = CREST_LEVELS[0], bd = 1e9;
     for (const lv of CREST_LEVELS) { const d = Math.abs(lv - raw); if (d < bd) { bd = d; best = lv; } }
     /* Pulled most of the way onto the bed top but not all of it, and then
-       roughened. A skyline that is exactly level is a table edge; a skyline level
-       to within a metre and notched by the joints is a mesa. */
-    cCrest[i] = Math.max(6.0, mix(raw, best, 0.82)
-              + 1.3 * fbm(s * 0.09, side > 0 ? 3 : 8, 2, 373)
-              + 0.7 * fbm(s * 0.32, 21, 2, 379));
+       roughened — but roughened only within the band the sampling can carry. The
+       second term used to run at 0.32 cycles per metre with two octaves, i.e.
+       down to 0.78 metre wavelength on a 0.62 metre grid, and it serrated the
+       skyline at exactly the grid pitch. A skyline that is exactly level is a
+       table edge; one level to within a metre and notched by the joints is a
+       mesa; one notched every other column is a saw blade. */
+    let crest = mix(raw, best, 0.82)
+              + 1.3 * fbm(s * 0.055, side > 0 ? 3 : 8, 2, 373)
+              + 0.7 * fbm(s * 0.10, 21, 1, 379);
+    /* The ends of the curtain. Without this the wall runs to the last column and
+       stops, leaving a forty-metre vertical cut hanging in mid air at the head of
+       the corridor — right in the middle of the view every critic praised. It is
+       walked down into the apron instead, which also widens the gap the sun sits
+       in and hands the far distance over to the buttes. */
+    const endFade = (1 - smoothstep(S1 - 46, S1 - 3, s)) * (1 - smoothstep(S0 + 40, S0 + 3, s));
+    cCrest[i] = Math.max(1.5, crest * endFade);
   }
 
   for (let i = 0; i < nu; i++) {
@@ -375,6 +393,19 @@ function wallGrid(path, terrain, side) {
       u += jointOffset(a1 * 1.7 + li * 0.37, 200 + li, 0.85);
       u += jointOffset(a3, 300 + li * 7, 1.15) * vert;
 
+      /* Resistant sub-beds stand proud, *in the mesh*. buildColumn has been
+         placing a pair of rows nineteen centimetres apart at every strong contact
+         from the start and nothing was using them: the step existed in the shader
+         as a bump instead, and a hard step differentiated by dFdx over a two-by-
+         two pixel quad is a one-pixel black line with a one-pixel white line
+         beside it — the dashed rules that crossed every bench and every talus
+         block in the first render. A bump map cannot hold an edge, only geometry
+         can, so the step goes here and the shader keeps only what is genuinely
+         smooth. Fifteen centimetres is a hand's width, which is what the risers
+         between beds on a Schnebly Hill cliff measure. */
+      const sbi = Math.floor(subBed(yc, li));
+      u -= (subResist(sbi, li) - 0.5) * 0.62 * (0.45 + 0.55 * vert);
+
       /* Alcoves and spall scars. An alcove undercuts a soft bed beneath a hard
          one, so it goes on benches and its rim is the cliff above; a spall scar is
          a shallow flat-bottomed dish where a slab let go, so it goes on cliffs.
@@ -389,11 +420,21 @@ function wallGrid(path, terrain, side) {
         u += 2.2 * smoothstep(0.60, 0.86, ridged(s * 0.028, yc * 0.055, 2, 389));
       }
 
-      /* Fine relief, and deliberately little of it. Everything the eye reads as
-         rock at this range is already above — the beds, the joints, the scars —
-         and any more smooth noise is the surface language this file replaces. */
-      u += 0.42 * fbm(s * 0.21, yc * 0.20, 3, 397 + li)
-         + 0.20 * fbm(s * 0.62, yc * 0.55, 2, 401);
+      /* Coarse relief, and *only* coarse. The first version of this line put an
+         fbm at 0.21 and another at 0.62 cycles per metre into the offset, with
+         three and two octaves on top, so its finest content sat at roughly 1.2
+         and 0.8 metre wavelengths — against a 0.62 metre sampling step. That is
+         at and past Nyquist, and the render showed exactly what undersampled
+         noise looks like on a lit surface: the whole wall covered in dead-
+         straight vertical bars about a metre and a half apart, running its full
+         height, alternating lit and shadowed because alternate columns of quads
+         had been tilted in opposite directions. It read as a barcode.
+         Everything here is now held below a quarter of the sampling frequency,
+         which is the only band a grid this size can carry. Sub-metre relief
+         belongs to the normal map, where it is filtered by mip selection and
+         cannot alias into geometry. */
+      u += 0.55 * fbm(s * 0.052, yc * 0.070, 2, 397 + li)
+         + 0.24 * fbm(s * 0.105, yc * 0.150, 1, 401);
 
       const k = j * nu + i;
       pos[k * 3] = cX[i] + cNx[i] * u;
@@ -422,7 +463,14 @@ function wallGrid(path, terrain, side) {
       pos[k * 3 + 1] = mix(yTop, ySeal, t * t * (3 - 2 * t))
                      + 1.6 * (1 - t) * fbm(s * 0.11, b * 1.7, 2, 411);
       pos[k * 3 + 2] = cZ[i] + cNz[i] * u;
-      att[k * 4] = pos[k * 3 + 1] - cDat[i];
+      /* The stratigraphic coordinate is *held* at the rim rather than following
+         the slope down. Letting it follow put the back of the rim through the
+         pale Coconino and the grey Fort Apache on the way down, so every summit
+         seen over its own crest had cream and grey bands running diagonally
+         across it — bedding is horizontal, and a band that climbs a slope is the
+         one thing that instantly reads as projected paint. Behind the rim there
+         is no section anyway: it is caprock and the debris off it. */
+      att[k * 4] = yTop - cDat[i];
       att[k * 4 + 1] = s;
       att[k * 4 + 2] = 0;
       uu[k] = u;
@@ -578,18 +626,33 @@ export function buildWalls(path, terrain, material) {
  * reads as one flat veil however the fog is tuned.
  */
 /* Lateral offset from the corridor axis, distance up-wash, base radius, height
-   scale. Every one of these is placed clear of the corridor axis by more than its
-   own radius: the gap straight up the wash with the sun sitting in it is the one
-   thing about this composition every critic has praised, and a butte across it
-   would be the single worst thing this system could do. The distances are chosen
-   against the fog: at 300, 470, 620 and 830 metres the haze passes 72, 45, 25 and
-   8 percent, which is four legibly separated steps rather than one veil. */
+   scale.
+   The first placement of this table put every butte more than forty degrees off
+   the corridor axis, on the reasoning that the gap up the wash with the sun in it
+   is the one thing about this composition every critic has praised and a butte
+   across it would be the worst thing this system could do. Rendered, the gap was
+   *empty sky* — the near walls hide everything past about twenty-five degrees, so
+   all ten had been placed behind them and the long view had no distance in it at
+   all, which is the opposite failure and just as bad.
+   The sky the camera can actually see up the wash is a narrow wedge: the near
+   walls occlude out to roughly twenty-five degrees of azimuth but their crests
+   fall away with distance, so above about eight degrees of elevation there is sky
+   from ten degrees of azimuth outward. Everything below is placed in that wedge
+   and sized to clear the near crests — which means genuinely tall, a hundred to a
+   hundred and forty metres, the scale of Bell Rock or Courthouse Butte rather
+   than of the corridor walls.
+   The sun sits at about three degrees of azimuth and eight of elevation. The two
+   long-distance entries sit almost on the axis on purpose, to put a hazed mass
+   *under* it, and are held to four degrees of elevation so the disc is never
+   touched. The four distance steps — 550, 800, 1000, 1450 metres — are chosen
+   against the fog so the haze passes them in legibly separated stages instead of
+   flattening them into one veil. */
 const BUTTES = [
-  [-330,  300, 130, 0.85], [ 285,  340, 120, 0.72],
-  [-360,  470, 170, 1.20], [ 330,  520, 150, 1.00],
-  [ 640,  430, 165, 0.80], [-640,  620, 210, 1.10],
-  [-300,  780, 190, 1.45], [ 420,  830, 230, 1.30],
-  [ 760,  900, 240, 1.15], [-880,  380, 150, 0.70],
+  [-118,  545,  95, 2.05], [ 142,  615, 105, 2.30],
+  [-222,  800, 125, 2.45], [ 268,  905, 135, 2.20],
+  [ -78, 1360, 190, 1.50], [ 214, 1500, 210, 1.70],
+  [-520,  665, 155, 1.85], [ 560,  745, 165, 1.70],
+  [ 880,  980, 205, 2.00], [-900, 1105, 215, 1.90],
 ];
 
 function butteGrid(cx, cz, rad, hs, terrain, seed) {
@@ -681,6 +744,11 @@ export function buildDistantButtes(terrain, material) {
   for (const [lat, dist, rad, hs] of BUTTES) {
     const g = creasedRing(butteGrid(lat, -dist, rad, hs, terrain, 601 + i * 97), Math.cos(0.72));
     const m = new THREE.Mesh(g, material);
+    /* Half a kilometre outside the shadow camera's box, so asking for shadows
+       only costs a second rasterisation of forty thousand triangles that lands
+       nowhere. */
+    m.castShadow = false;
+    m.receiveShadow = false;
     m.name = 'butte' + i;
     out.push(m);
     i++;
@@ -725,7 +793,7 @@ function talusBlock(seed, flat) {
        the lower Schnebly cliff, which is what most of the apron came off. */
     aR[i * 4] = 18.0 + p.getY(i) * 4.5;
     aR[i * 4 + 1] = p.getX(i) * 9.0 + p.getZ(i) * 4.0;
-    aR[i * 4 + 2] = 0.40;
+    aR[i * 4 + 2] = 0.78;   // a block that fell last winter is a fresh face
     aR[i * 4 + 3] = 0.55;
   }
   g.setAttribute('aRock', new THREE.BufferAttribute(aR, 4));
@@ -734,7 +802,14 @@ function talusBlock(seed, flat) {
 }
 
 export function buildTalus(path, terrain, material) {
-  const VAR = 4, N = 9000;
+  /* Attempts, not instances: most are rejected because they land between chutes.
+     At the first setting there were nine thousand attempts producing seventeen
+     hundred blocks up to six metres across, and the render showed why both numbers
+     were wrong — an apron of a dozen faceted tents the size of garden sheds with
+     bare ground between them, which reads as sculpture. Rockfall is graded: a
+     great many blocks between a foot and a yard, a few metres-across slabs near
+     the bottom of the cone, and nothing that competes with the cliff it fell off. */
+  const VAR = 4, N = 30000;
   const geos = [];
   for (let v = 0; v < VAR; v++) geos.push(talusBlock(3100 + v * 11, 0.46 + v * 0.12));
   const lists = geos.map(() => []);
@@ -754,16 +829,19 @@ export function buildTalus(path, terrain, material) {
 
     /* Sorted along the apron: a block that bounced to the toe is the big one. */
     const t = Math.pow(rand(), 0.65);
-    const av = toe - t * (4 + 10 * rand());
-    if (av < 4) continue;
+    const av = toe - t * (1.0 + 11 * rand());
+    if (av < 3) continue;
     /* Rockfall is episodic and arrives down the chutes, so an apron is a run of
        heaps with swept ground between them rather than an even sprinkle. */
     const chute = smoothstep(0.40, 0.78, 0.5 + 0.5 * fbm(s * 0.075, side * 3.1, 3, 421));
     if (rand() > chute * (0.35 + 0.75 * t)) continue;
 
     const x = p.x + nx * av, z = p.z + nz * av;
-    const r = (0.16 + 0.52 * Math.pow(rand(), 2.3)) * (1 + t * 2.4);
-    tr.set(x, terrain.heightAt(x, z) - r * (0.20 + 0.34 * rand()), z);
+    /* Half-extent in metres. The exponent is what makes the grading: a cube root
+       of a uniform would put most of the mass at the coarse end, a cube puts it at
+       the fine end with a thin tail of slabs, and a talus apron is the latter. */
+    const r = (0.095 + 0.55 * Math.pow(rand(), 3.4)) * (1 + t * 1.5);
+    tr.set(x, terrain.heightAt(x, z) - r * (0.30 + 0.36 * rand()), z);
     e.set(rand() * 6.283, rand() * 6.283, rand() * 6.283);
     qt.setFromEuler(e);
     sc.set(r * (0.8 + rand() * 0.5), r * (0.55 + rand() * 0.5), r * (0.8 + rand() * 0.5));
@@ -815,6 +893,7 @@ uniform sampler2D uRockA; uniform sampler2D uRockN; uniform sampler2D uRockM;
 uniform sampler2D uMacro; uniform sampler2D uVar; uniform sampler2D uDirtA;
 uniform vec3 uIron;
 uniform vec3 uVarnish;
+uniform float uRockLum;
 varying vec3 vWPos;
 varying vec3 vWNrm;
 varying vec4 vRock;
@@ -838,6 +917,12 @@ float bedResist(float id, float li) {
              + 0.16 * sin(id * 5.211 + li * 0.770);
 }
 
+/* Matched exactly by subBed() on the CPU. */
+float bedCoord(float d, float bedT, float li) {
+  return d / bedT + 0.55 * sin(d * 0.23 + li * 2.117)
+                  + 0.30 * sin(d * 0.61 + li * 3.733 + 1.4);
+}
+
 vec3 triSample(sampler2D t, vec3 p, vec3 w, float sc){
   return texture2D(t, p.zy * sc).rgb * w.x
        + texture2D(t, p.xz * sc).rgb * w.y
@@ -852,6 +937,34 @@ vec3 triNormal(sampler2D t, vec3 p, vec3 w, float sc, vec3 N){
   ny = vec3(ny.xy + N.xz, abs(ny.z) * N.y);
   nz = vec3(nz.xy + N.xy, abs(nz.z) * N.z);
   return normalize(nx.zyx * w.x + ny.xzy * w.y + nz.xyz * w.z);
+}
+
+/* Whichever of the three planes a triplanar blend would have given nearly all
+   the weight to anyway. One tap instead of three, and it is used for every map
+   whose blend seam is not visible: the fine grain scale, where the seam is
+   smaller than a texel of the coarse scale; the AO channel, which is a scalar;
+   and the ledge dust, which only exists on up-facing surfaces where the xz plane
+   already carries a hundred percent of the weight. Three of these against two
+   full triplanar calls is the difference between a shader this software
+   rasteriser can iterate on and one it cannot. */
+vec2 domUV(vec3 p, vec3 a){
+  if (a.y > a.x && a.y > a.z) return p.xz;
+  return (a.x > a.z) ? p.zy : p.xy;
+}
+
+vec3 domNormal(sampler2D t, vec3 p, vec3 N, float sc){
+  vec3 a = abs(N), n, o;
+  if (a.y > a.x && a.y > a.z) {
+    n = texture2D(t, p.xz * sc).xyz * 2.0 - 1.0;
+    o = vec3(n.xy + N.xz, abs(n.z) * N.y); o = o.xzy;
+  } else if (a.x > a.z) {
+    n = texture2D(t, p.zy * sc).xyz * 2.0 - 1.0;
+    o = vec3(n.xy + N.zy, abs(n.z) * N.x); o = o.zyx;
+  } else {
+    n = texture2D(t, p.xy * sc).xyz * 2.0 - 1.0;
+    o = vec3(n.xy + N.xy, abs(n.z) * N.z);
+  }
+  return normalize(o);
 }
 
 vec3 bumpFrom(float hgt, vec3 N, float scale){
@@ -887,9 +1000,7 @@ ${layerGLSL()}
    between beds is not large, because stratification you cannot avoid reads as
    corrugated iron, and what carries a bed at distance is the shadow line under
    its lip rather than its colour. */
-float sbY = y - lBot;
-float sb = sbY / lBedT + 0.30 * sin(sbY * 0.31 + lIdx * 2.117)
-                       + 0.17 * sin(sbY * 0.77 + lIdx * 3.733 + 1.4);
+float sb = bedCoord(y - lBot, lBedT, lIdx);
 float sbI = floor(sb);
 float sbT = sb - sbI;
 float sbR = bedResist(sbI, lIdx);
@@ -898,20 +1009,33 @@ float sbR = bedResist(sbI, lIdx);
    Two scales, an octave and a half apart: the coarse one carries the metre-scale
    mottle of a weathered face, the fine one the sand grain that a face filling the
    frame has to have and that no amount of geometry can supply. */
-vec3 triW = pow(abs(gN), vec3(4.0));
+vec3 aN = abs(gN);
+vec3 triW = pow(aN, vec3(4.0));
 triW /= max(triW.x + triW.y + triW.z, 1e-4);
+vec3 pF = vWPos + vec3(37.1, 11.3, 5.7);
 vec3 rkA = triSample(uRockA, vWPos, triW, 0.155);
-vec3 rkA2 = triSample(uRockA, vWPos + vec3(37.1, 11.3, 5.7), triW, 0.62);
-vec3 rkM = triSample(uRockM, vWPos, triW, 0.155);
+float rkA2 = dot(texture2D(uRockA, domUV(pF, aN) * 0.62).rgb, vec3(0.299, 0.587, 0.114));
+float rkAO = texture2D(uRockM, domUV(vWPos, aN) * 0.155).r;
 vec3 rkN = triNormal(uRockN, vWPos, triW, 0.155, gN);
-vec3 rkN2 = triNormal(uRockN, vWPos + vec3(37.1, 11.3, 5.7), triW, 0.62, gN);
+vec3 rkN2 = domNormal(uRockN, pF, gN, 0.62);
 
 /* The rock map's pigment is discarded and only its luminance kept. Its bands were
    authored for a wall that had no stratigraphy of its own; here the strata are
    geometry, so letting its colour through would lay a second, contradictory set
-   of bands over the first. */
-float lum = mix(1.0, dot(rkA, vec3(0.299, 0.587, 0.114)) / 0.185, 0.70)
-          * mix(1.0, dot(rkA2, vec3(0.299, 0.587, 0.114)) / 0.185, 0.12 + 0.32 * grainF);
+   of bands over the first.
+   The divisor is the map's *measured* mean linear luminance, passed in from the
+   generator, and that is not fussiness. It used to be a hand-written 0.185, which
+   is not what the map actually averages — and the consequence was visible in
+   every crop. Wherever a two-by-two pixel quad straddles a geometric edge the
+   texture derivative explodes, mip selection collapses to the top level, and the
+   sampled luminance becomes exactly the map's mean; with the wrong divisor that
+   is a fixed brightness error, so every silhouette edge and every crease in the
+   scene was outlined by a one-pixel bright line, which sampled at an angle came
+   out as the dotted rules that ran along every bench lip and every talus block.
+   With the true mean the ratio is one there and the outlines vanish. */
+float lum = mix(1.0, dot(rkA, vec3(0.299, 0.587, 0.114)) / uRockLum, 0.70)
+          * mix(1.0, rkA2 / uRockLum, 0.12 + 0.32 * grainF);
+lum = clamp(lum, 0.55, 1.60);
 
 vec3 albedo = lCol * lum;
 
@@ -952,22 +1076,37 @@ albedo *= 1.0 + sbTone;
    *vertical* — it is the one thing on a desert cliff that runs down rather than
    along, and its absence is part of why the walls read as one material. Strongest
    just under the lip of the bed that sheds it, tapering downward, and only on
-   faces steep enough for water to run rather than soak. */
-float vStreak = smoothstep(0.50, 0.86,
-    texture2D(uVar, vec2(aS * 0.62, y * 0.010)).b * 0.68
-  + texture2D(uVar, vec2(aS * 1.95 + 0.37, y * 0.004)).r * 0.52);
-float varn = clamp(vStreak * exp2(-(lTop - y) * 0.30) * lVert * (1.0 - lPale * 0.55)
-           * smoothstep(0.55, 0.20, abs(gN.y)) * (1.0 - fresh) * 1.5, 0.0, 0.80);
-albedo = mix(albedo, uVarnish * (0.55 + 0.45 * lum), varn);
+   faces steep enough for water to run rather than soak.
+   The first version of this sampled the variance map at 0.62 and 1.95 cycles per
+   metre of along-wall distance with almost no vertical variation, which put a
+   streak every metre and a half down the entire length of both walls at full
+   height. Compounded with the geometry aliasing it produced the barcode the first
+   render came back as. Varnish is not a texture, it is a *few plates*: a handful
+   per hundred metres of cliff, each hanging from one notch in the lip above it,
+   one to three metres wide, tapering out downward over three to eight metres, and
+   broken vertically because the water that plated it did not run evenly. One tap
+   carries all of that — the B channel of the variance map is already a
+   thresholded sparse mask, which is exactly the right shape for where a plate is,
+   and the other channels vary its width, its taper rate and its break-up. */
+vec4 dr = texture2D(uVar, vec2(aS * 0.085, y * 0.017));
+float vStreak = smoothstep(0.40, 0.80, dr.b * 0.86 + dr.g * 0.28);
+float hang = exp2(-(lTop - y) * (0.15 + 0.30 * dr.r));
+float vBreak = 0.55 + 0.45 * smoothstep(0.22, 0.72, dr.g);
+float varn = clamp(vStreak * hang * vBreak * lVert * (1.0 - lPale * 0.70)
+           * smoothstep(0.50, 0.14, abs(gN.y)) * (1.0 - fresh) * 1.9, 0.0, 0.68);
+albedo = mix(albedo, uVarnish * (0.62 + 0.38 * lum), varn);
 
 /* ---- dust and weathered fines on the up-facing surfaces ----
    Every ledge, bench top and joint-block shelf in a desert collects the same pale
    silt the wash floor is made of, and that is most of what makes a stair-stepped
    cliff read as stepped: the treads are a different material from the risers. */
-vec3 dust = triSample(uDirtA, vWPos, triW, 0.30);
 float dustW = smoothstep(0.34, 0.86, gN.y)
-            * (0.40 + 0.45 * smoothstep(0.35, 0.75, mac.g)) * (1.0 - lVert * 0.35);
-albedo = mix(albedo, dust * 1.05, dustW * 0.62);
+            * (0.40 + 0.45 * smoothstep(0.35, 0.75, mac.g)) * (1.0 - lVert * 0.35)
+            * (1.0 - fresh * 0.85);
+if (dustW > 0.01) {
+  vec3 dust = texture2D(uDirtA, domUV(vWPos, aN) * 0.30).rgb;
+  albedo = mix(albedo, dust * 1.05, dustW * 0.62);
+}
 
 /* ---- macro tonal variation, kept in chroma ----
    Value variance at macro scale reads as depth, not as material, and has been
@@ -975,7 +1114,12 @@ albedo = mix(albedo, dust * 1.05, dustW * 0.62);
    average an iron-rich panel with a leached one and you get a duller red, which
    is the right answer. */
 albedo *= 0.93 + 0.14 * mac.b;
-albedo = mix(albedo, albedo * vec3(0.92, 0.97, 1.08), smoothstep(0.62, 0.88, vr.r) * 0.34);
+/* The leached-iron patches are held off the pale beds. Coconino and the Fort
+   Apache limestone have little iron to leach, and a cool cast laid over an
+   already-desaturated cream band is what turned the caprock blue-white in the
+   first render — which reads as ice, not as sandstone. */
+albedo = mix(albedo, albedo * vec3(0.92, 0.97, 1.08),
+             smoothstep(0.62, 0.88, vr.r) * 0.34 * (1.0 - lPale * 0.85));
 albedo = mix(albedo, albedo * vec3(1.10, 0.97, 0.88), smoothstep(0.58, 0.86, mac.a) * 0.30);
 
 diffuseColor.rgb *= albedo;
@@ -986,12 +1130,17 @@ diffuseColor.rgb *= albedo;
    because lighting is non-linear in the normal and the average of the lit facets
    is not the lighting of the average facet — which is the mechanism behind every
    scintillating rock face in a real-time renderer. */
-float sbStep = (1.0 - smoothstep(0.0, 0.09, sbT)) - smoothstep(0.91, 1.0, sbT);
 vec3 wN = normalize(mix(gN, mix(rkN, rkN2, 0.5), 0.20 + 0.72 * grainF));
-/* Only the beds the mesh did not already step: the strong ones have real geometry
-   and adding a bump to them doubles the riser. */
-wN = bumpFrom(sbStep * (1.0 - smoothstep(0.60, 0.68, sbR)) * 0.9 + sbTone * 2.0,
-              wN, 0.10 * bedF);
+/* Only the soft contacts, which the mesh deliberately did not step, and only as a
+   profile whose derivative is bounded. Everything hard is geometry now: a step
+   function put through dFdx is a one-pixel black line beside a one-pixel white
+   one, and the piecewise-constant bed tone was doing the same thing at every
+   contact, so neither goes anywhere near a bump any more. A raised cosine over
+   the bed swells its middle and hollows its contacts, which is how a poorly
+   cemented bed weathers, and its gradient never exceeds two pi over the bed
+   thickness. */
+float soft = 1.0 - smoothstep(0.50, 0.66, sbR);
+wN = bumpFrom(cos(sbT * 6.28318) * soft * 0.42, wN, 0.10 * bedF);
 tNrmW = wN;
 
 /* Varnish is a mineral film and genuinely a little glossier than the sand grain
@@ -1005,9 +1154,28 @@ tRough = clamp(lRough * (0.94 + (sbR - 0.5) * 0.10) * mix(1.0, 0.80, varn)
    has a band of deep shade under its lip, and that band is what a stair-stepped
    cliff actually looks like from a distance. */
 float ledgeShade = (1.0 - smoothstep(0.0, 1.6, y - lBot)) * (1.0 - lVert) * 0.55;
-tAO = clamp(rkM.r * (0.72 + 0.34 * (1.0 - cav)) - ledgeShade * 0.5, 0.22, 1.0);
+tAO = clamp(rkAO * (0.72 + 0.34 * (1.0 - cav)) - ledgeShade * 0.5, 0.22, 1.0);
 tAO = mix(0.84, tAO, 0.35 + 0.65 * grainF);
 `;
+
+/* The mean linear luminance of a generated sRGB map, which is what a texture
+   fetch of it returns once every mip has been collapsed. The shader divides by
+   this to turn the map into a unit-mean multiplier; getting it by measurement
+   rather than by guess is what stops mip collapse at geometric edges from
+   becoming a visible outline. */
+function meanLinearLum(tex) {
+  const lut = new Float32Array(256);
+  for (let i = 0; i < 256; i++) {
+    const c = i / 255;
+    lut[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  }
+  const d = tex.image.data;
+  let a = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    a += 0.299 * lut[d[i]] + 0.587 * lut[d[i + 1]] + 0.114 * lut[d[i + 2]];
+  }
+  return Math.max(1e-3, a / (d.length / 4));
+}
 
 export function makeRockMaterial(tex) {
   const mat = new THREE.MeshStandardMaterial({
@@ -1027,7 +1195,8 @@ export function makeRockMaterial(tex) {
     /* Desert varnish. Dark, faintly cool, and never black — a real varnish
        measures around eight percent reflectance and still photographs as a colour
        rather than as a hole. */
-    uVarnish: { value: new THREE.Color(0.058, 0.045, 0.048) },
+    uVarnish: { value: new THREE.Color(0.062, 0.048, 0.044) },
+    uRockLum: { value: meanLinearLum(tex.rock.albedo) },
   };
 
   mat.onBeforeCompile = (shader) => {
@@ -1080,11 +1249,18 @@ export function makeRockMaterial(tex) {
          has no blue albedo to reflect, and the violet in a photograph of one is
          scattered light in the air between the rock and the lens. On a wall this
          matters more than on the floor, because a canyon wall in shade is the
-         largest single area of shadow in the frame. */
+         largest single area of shadow in the frame.
+         The magnitude matters more here than the direction did. At the first
+         setting there was a floor under it that applied at two metres, and on a
+         near-black surface — a varnish plate — an additive blue larger than the
+         surface's own reflectance turns the darkest thing in the frame into the
+         bluest, which is how the varnish streaks came back lilac. Airlight is the
+         light scattered in the *column of air* between the rock and the lens, so
+         at arm's length there is none of it, and the floor is gone. */
       float airM = 1.0 - gShadow;
-      float airD = smoothstep(2.0, 120.0, length(vWPos - cameraPosition));
+      float airD = smoothstep(4.0, 200.0, length(vWPos - cameraPosition));
       reflectedLight.indirectDiffuse +=
-        vec3(0.014, 0.028, 0.100) * airM * (0.28 + 0.72 * airD) * tAO;`);
+        vec3(0.013, 0.024, 0.072) * airM * (0.10 + 0.90 * airD) * tAO;`);
   };
   return mat;
 }

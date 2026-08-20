@@ -101,7 +101,15 @@ a stated cause — including one stated by the coordinator.
 2. Red rock buttes
 3. The juniper
 4. Lighting and sun
-5. Heat haze and atmosphere
+5. Heat haze and atmosphere — including **wind-driven sand at ground level** (saltation):
+   low ribbons of grains skipping across the wash floor, snaking around cobbles and pouring
+   off the lee edge of bank crests. Distinct from the airborne dust in the sunbeams, and
+   hugging the surface rather than filling the volume. The wind direction here must agree
+   with the deposited sand in System 1 — grains piling against the upstream face of clasts —
+   and with the wind bed in System 6, so the moving sand, the drifted sand and the sound are
+   all one weather system. Keep it sparse and intermittent; gusts, not a sandstorm. The
+   desert stillness is the feature, and the sand should mostly be still with occasional
+   movement that makes the stillness noticeable.
 6. Sound design
 7. Post-processing and polish
 
