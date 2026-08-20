@@ -750,7 +750,16 @@ function butteGrid(cx, cz, rad, hs, terrain, seed) {
       const R = over ? colAt(COL.R, cap) : COL.R[j];
       const P = over ? colAt(COL.P, cap) : COL.P[j];
       const li = layerAt(yq + 1e-5);
-      let r = r0 - (R * ret + P * 2.4) * hs;
+      /* The proud offset is clamped on the outward side, and this is why. `proud`
+         is negative for a bed that stands out as a ledge, and at a multiplier of
+         2.4 the Coconino cliff's -1.50 pushed the cap radius out by three and a
+         half metres of column space — times a height scale of up to 2.45, so
+         nearly nine metres of flare on a butte whose body is a hundred and thirty
+         across. That is a Monument Valley hoodoo: a cap wider than the neck under
+         it. Sedona's Coconino cap is a vertical cliff flush with or set back from
+         the body, so the ledges are allowed to recess freely and to stand out only
+         a little. */
+      let r = r0 - (R * ret + Math.max(P, -0.40) * 1.5) * hs;
       r -= jointOffset(a1, seed + li * 13, 9.0);
       r -= jointOffset(a2, seed + li * 7 + 5, 14.0);
       r -= 2.4 * fbm(ct * 9 + li, st * 9, 2, seed + 51);
@@ -855,9 +864,21 @@ function talusBlock(seed, flat) {
        in *its* frame, which is now some arbitrary rotation, exactly as a tipped
        slab does. The column coordinate is local height, offset into the middle of
        the lower Schnebly cliff, which is what most of the apron came off. */
-    aR[i * 4] = 18.0 + p.getY(i) * 4.5;
-    aR[i * 4 + 1] = p.getX(i) * 9.0 + p.getZ(i) * 4.0;
-    aR[i * 4 + 2] = 0.78;   // a block that fell last winter is a fresh face
+    /* The column coordinate spans little more than a single sub-bed now. At 4.5
+       it spanned nine metres of section across a block half a metre wide, so a
+       fist-sized cobble wore three bedding contacts and an iron lens, arriving at
+       whatever angle the block had been tipped to: red stripes painted diagonally
+       across the apron at angles unrelated to anything. A fallen block does carry
+       its own bedding in its own frame, but a small block is a *piece of one
+       bed*, not a section through twelve. */
+    aR[i * 4] = 18.0 + p.getY(i) * 0.9;
+    aR[i * 4 + 1] = p.getX(i) * 4.0 + p.getZ(i) * 1.8;
+    /* Lower. At 0.78 the fresh-face term was adding a fifth of full-strength
+       hematite to every block in the apron on top of whatever the lens driver
+       gave it, and a talus cone is mostly *old* blocks: they fell decades ago and
+       have varnished and dusted since. A handful of fresh faces is the point, and
+       the scar term on the walls already provides them. */
+    aR[i * 4 + 2] = 0.30;
     aR[i * 4 + 3] = 0.55;
   }
   g.setAttribute('aRock', new THREE.BufferAttribute(aR, 4));
@@ -866,6 +887,12 @@ function talusBlock(seed, flat) {
 }
 
 export function buildTalus(path, terrain, material) {
+  /* Its own material rather than the walls'. Same shader, same textures, same
+     draw-call cost — only the decimetre sampling scale differs, because these
+     blocks are twenty centimetres to two metres across and the wall's 6.45 m
+     tile gives one of them a single flat tone. That is the whole of why the
+     apron read as pale untextured polyhedra. */
+  const mat = makeRockMaterial(material.userData.tex, 5.5);
   /* Attempts, not instances: most are rejected because they land between chutes.
      At the first setting there were nine thousand attempts producing seventeen
      hundred blocks up to six metres across, and the render showed why both numbers
@@ -921,7 +948,7 @@ export function buildTalus(path, terrain, material) {
   for (let v = 0; v < VAR; v++) {
     const arr = lists[v];
     if (!arr.length) continue;
-    const im = new THREE.InstancedMesh(geos[v], material, arr.length);
+    const im = new THREE.InstancedMesh(geos[v], mat, arr.length);
     for (let i = 0; i < arr.length; i++) im.setMatrixAt(i, arr[i]);
     im.instanceMatrix.needsUpdate = true;
     im.castShadow = true;
@@ -1098,6 +1125,12 @@ float bedF   = 1.0 - smoothstep(0.09, 0.55, foot);    // sub-bed relief, 10-50 c
    filtered against. */
 float hw = clamp(fwidth(y) * 0.62, 0.012, 0.85);
 
+/* How far this facet is from the terminator, hoisted because both the relief
+   fade and the joint lips need it. With the sun eight degrees up, a facet a few
+   degrees the wrong side of the terminator receives nothing at all, so anything
+   that models a lit millimetre-scale feature has to go out with it. */
+float sTerm = smoothstep(-0.02, 0.30, dot(gN, uSunDir));
+
 ${layerGLSL()}
 
 /* ---- sub-bedding ----
@@ -1123,11 +1156,34 @@ vec3 aN = abs(gN);
 vec3 triW = pow(aN, vec3(4.0));
 triW /= max(triW.x + triW.y + triW.z, 1e-4);
 vec3 pF = vWPos + vec3(37.1, 11.3, 5.7);
-vec3 rkA = triSample(uRockA, vWPos, triW, 0.155);
-float rkA2 = dot(texture2D(uRockA, domUV(pF, aN) * 0.62).rgb, vec3(0.299, 0.587, 0.114));
-float rkAO = texture2D(uRockM, domUV(vWPos, aN) * 0.155).r;
-vec3 rkN = triNormal(uRockN, vWPos, triW, 0.155, gN);
-vec3 rkN2 = domNormal(uRockN, pF, gN, 0.62);
+float sC = 0.155 * uDetail, sF = 0.62 * uDetail;
+vec3 rkA = triSample(uRockA, vWPos, triW, sC);
+float rkA2 = dot(texture2D(uRockA, domUV(pF, aN) * sF).rgb, vec3(0.299, 0.587, 0.114));
+float rkAO = texture2D(uRockM, domUV(vWPos, aN) * sC).r;
+vec3 rkN = triNormal(uRockN, vWPos, triW, sC, gN);
+vec3 rkN2 = domNormal(uRockN, pF, gN, sF);
+
+/* ---- footprint-locked grit ----
+   The fractal term, and the one the gradient metric actually lives on. A texture
+   at a fixed world scale is gone past the distance where its texels fall under a
+   pixel: the mip chain returns its mean and the surface goes to wax, which is
+   measurably what the wall was doing at 0.0045 mean one-pixel gradient against
+   0.026 to 0.085 for photographs of this rock. Real rock does not do that
+   because real rock has structure at every scale, so the honest model is a
+   detail layer whose scale follows the pixel footprint.
+   Snapped to octaves with the bracketing pair crossfaded, so the size of the
+   grain is stable within an octave and nothing pops as the camera walks. The map
+   has no content below a fourteenth of its own tile, so reading it at whatever
+   scale the footprint asks for implies no particular physical size — which is
+   the property that makes this legitimate rather than a cheat.
+   One fetch carries tone, normal and cavity. */
+vec2 gUV = domUV(vWPos + vec3(3.7, 8.1, 12.9), aN);
+float gLod = log2(max(foot, 2e-4) * 256.0 * 1.7);
+float gFl = floor(gLod), gTw = gLod - gFl;
+float gSc = exp2(-gFl);
+vec4 grA = texture2D(uGrit, gUV * gSc);
+vec4 grB = texture2D(uGrit, gUV * gSc * 0.5);
+vec4 gr = mix(grA, grB, gTw);
 
 /* The rock map's pigment is discarded and only its luminance kept. Its bands were
    authored for a wall that had no stratigraphy of its own; here the strata are
@@ -1143,8 +1199,9 @@ vec3 rkN2 = domNormal(uRockN, pF, gN, 0.62);
    map's histogram is not something to let multiply an albedo unbounded. */
 float lumC = dot(rkA, vec3(0.299, 0.587, 0.114));
 float lum = mix(1.0, lumC / uRockLum, 0.88)
-          * mix(1.0, rkA2 / uRockLum, 0.16 + 0.46 * grainF);
-lum = clamp(lum, 0.42, 1.85);
+          * mix(1.0, rkA2 / uRockLum, 0.16 + 0.46 * grainF)
+          * (1.0 + (gr.r - 0.5) * 1.35);
+lum = clamp(lum, 0.42, 1.75);
 
 /* Behind the rim, whatever bed capped the summit is buried under its own
    weathering products, so the colour is the debris colour and not the bed's. */
@@ -1212,11 +1269,29 @@ float ironC = hash11(vi + 211.0) + 0.55 * hash11(vi + 251.0);
    one colour with a hard edge exactly on a bedding plane at both its top and its
    bottom is the definition of a painted stripe — the front stops where the
    permeability changes, which is somewhere in the bed, not at its boundary. */
-float ironV = 0.55 + 0.45 * sin((sbT + 0.31 * hash11(vi + 293.0)) * 6.28318);
+float ironPh = (sbT + 0.31 * hash11(vi + 293.0)) * 6.28318;
+float ironV = 0.55 + 0.45 * sin(ironPh);
+/* Which way the lens is closing, analytically. A hematite-cemented lamina is
+   *better cemented than the rock around it*, so it stands proud: there is a hard
+   shadow line under its lower contact and a lit arris along its top. A critic's
+   sharpest observation about these bands was that their edge should be a shadow
+   line first and a colour change second — a real cemented layer never merely
+   fades — and this is that edge, got from the derivative of the profile that
+   already places the lens rather than from a second feature that could drift
+   away from it. */
+float ironSlope = cos(ironPh);
 float ironF = smoothstep(0.78, 1.14, mac.r * 0.62 + vr.g * 0.52
                                    + (sbR - 0.5) * 0.30
                                    + (ironC - 0.775) * 0.52
                                    + (ironV - 0.55) * 0.30) * lIron;
+/* And it has to *inhabit the grain*. A colour band on a surface with no material
+   in it is a painted stripe by construction, which is why this defect and the
+   missing surface were one defect: hematite cement fills the pore space between
+   grains, so its strength varies grain to grain and it is absent where a grain
+   has weathered out. Modulating the lens by the grit layer's own tone breaks the
+   ribbon into cement without touching its peak saturation, which is what the
+   measured tail depends on. */
+ironF *= 0.45 + 1.10 * gr.r;
 /* Hematite is one mineral but its cement is not one colour: the concentration
    varies front to front, and a front rich enough to be nearly maroon sits beside
    one that is orange-red. Holding it at a single value is the other half of why
@@ -1229,11 +1304,51 @@ vec3 ironCol = mix(uIron, mix(vec3(0.400, 0.052, 0.046), vec3(0.470, 0.108, 0.02
    pigment at full strength. A cliff with no fresh faces is a cliff nothing has
    fallen off, which is not a cliff. */
 albedo = mix(albedo, ironCol * lum, clamp(ironF * 0.88 + fresh * 0.26 * lIron, 0.0, 0.92));
+float ironBase = ironF * smoothstep(0.25, 0.92, ironSlope);
+float ironTop  = ironF * smoothstep(0.25, 0.92, -ironSlope);
+albedo *= 1.0 - ironBase * 0.26;
+albedo *= 1.0 + ironTop * 0.13 * sTerm;
 
 /* A resistant bed is better cemented, so it is a little paler and a little
    smoother, and the soft bed under it is recessed and holds shadow. */
 float sbTone = (sbR - 0.5) * 0.16;
 albedo *= 1.0 + sbTone;
+
+/* ---- vertical jointing, below the scale the mesh can cut ----
+   Tensional fracture perpendicular to bedding is what carves a Sedona cliff into
+   buttresses, and the eye reads "rock" from those verticals at least as much as
+   from the bedding. The mesh cuts the metre-scale sets — see jointOffset — but it
+   cannot cut the decimetre end, where a joint is a hairline one or two pixels
+   wide, and a wall that is horizontally striped and vertically featureless is
+   the single largest thing a critic sees.
+   Driven off the same world azimuths the geometry uses, so a trace crosses the
+   wall at the same changing obliquity as the fins it belongs to and the two read
+   as one fracture system rather than as a wall with lines drawn on it.
+   Everything here is *tone*, never a bump. A crack is a groove that holds shadow
+   with an arris beside it that catches the low sun, and both of those are
+   luminance; putting a step through dFdx is what produced the dotted rules this
+   file has already had to remove twice. The half-width is held to at least a
+   pixel and a half of world footprint, which is the only filter a line needs.
+   Joints do not run the full height of a section: they terminate at bedding
+   contacts, which is what makes them look like fracture rather than like wire. */
+float jw = max(foot * 1.6, 0.022);
+vec2 jp = vWPos.xz;
+float jVert = 0.55 + 0.45 * sin(y * 1.9 + aS * 0.07);
+float jt = jointTrace(jp, vec2(0.9397, 0.3420), 1.55, 3.0, jw, 0.62) * 1.00
+         + jointTrace(jp, vec2(-0.2588, 0.9659), 2.70, 17.0, jw, 0.70) * 0.85
+         + jointTrace(jp, vec2(0.6428, -0.7660), 0.62, 41.0, jw * 0.8, 0.80) * 0.55;
+/* Only on faces steep enough to be a face. A bench top is a rubble tread, and a
+   crack drawn across one reads as a scratch on a floor. */
+float jFace = smoothstep(0.62, 0.24, abs(gN.y)) * (1.0 - back);
+float joint = clamp(jt, 0.0, 1.0) * jFace * jVert * (0.55 + 0.45 * (1.0 - lPale * 0.5));
+/* The lip beside the groove: the arris between two joint blocks is case-hardened
+   and stands a few millimetres proud, so at eight degrees of solar elevation it
+   is the brightest line on the wall. Built as the *shoulder* of the same
+   filtered profile rather than as a second feature, so it can never separate
+   from its own crack. */
+float jLip = clamp(jt * 1.7 - 0.55, 0.0, 1.0) * jFace * jVert;
+albedo *= 1.0 - joint * 0.34;
+albedo *= 1.0 + jLip * 0.10 * sTerm;
 
 /* ---- desert varnish ----
    Manganese and iron oxides washed out of the rock above and plated onto the face
@@ -1273,9 +1388,19 @@ float vLat = 1.0 - smoothstep(vW * 0.30, vW, abs(vt - vC));
 float vSrc = lTop - 0.9 - 2.2 * vh4;
 float vHang = smoothstep(vSrc + 0.7, vSrc - 0.8, y)
             * exp2(-max(0.0, vSrc - y) * (0.085 + 0.115 * vh2));
-float varn = clamp(step(0.60, vh1) * vLat * vHang * lVert * (1.0 - lPale * 0.70)
+/* Strengthened, and there are more plates. Varnish is the strongest single
+   Colorado-Plateau cue there is and it was measurably almost absent: at a third
+   of the cells carrying a plate and a ceiling of 0.60 the tongues were legible
+   only where two happened to overlap. Half the cells now carry one and they
+   reach 0.78, which is what a real manganese tongue does to a face — and because
+   a tongue is dark and *vertical* on a wall whose every other feature is
+   horizontal, it is also the cheapest thing in this shader that breaks the
+   striped read the critique complained of.
+   Broken along its own length by the grit layer, so a plate has grain in it
+   rather than being a flat wash of dark. */
+float varn = clamp(step(0.48, vh1) * vLat * vHang * lVert * (1.0 - lPale * 0.70)
            * smoothstep(0.50, 0.14, abs(gN.y)) * (1.0 - fresh)
-           * (0.60 + 0.60 * vr.g) * 1.30, 0.0, 0.60);
+           * (0.60 + 0.60 * vr.g) * (0.72 + 0.56 * gr.r) * 1.55, 0.0, 0.78);
 albedo = mix(albedo, uVarnish * (0.62 + 0.38 * lum), varn);
 
 /* ---- dust and weathered fines on the up-facing surfaces ----
@@ -1340,7 +1465,6 @@ diffuseColor.rgb *= albedo;
    terminator and is nearly gone past it, which is micro-shadowing written as the
    only term this shader has to write it in. The grain is still fully present
    wherever there is enough light for it to matter. */
-float sTerm = smoothstep(-0.02, 0.30, dot(gN, uSunDir));
 /* The two readings are combined by *adding the finer one's deviation* to the
    coarser rather than averaging the two normals. Averaging halves both, and
    halving the coarse reading is most of why the wall had no relief in it: the
@@ -1351,6 +1475,12 @@ float sTerm = smoothstep(-0.02, 0.30, dot(gN, uSunDir));
 float relW = (0.55 + 0.45 * grainF) * (0.05 + 0.95 * sTerm);
 vec3 nDet = normalize(rkN + (rkN2 - gN) * (0.30 + 0.70 * grainF));
 vec3 wN = normalize(mix(gN, nDet, relW));
+/* And the grit's own normal, which unlike the two above is present at every
+   distance because its scale follows the footprint. Faded on the terminator for
+   the reason set out below — these are millimetres of relief and at grazing
+   incidence they occlude each other completely rather than sparkling. */
+vec3 gNrm = domApply((gr.gb - 0.5) * 1.6, gN);
+wN = normalize(mix(wN, gNrm, 0.55 * (0.06 + 0.94 * sTerm)));
 /* Only the soft contacts, which the mesh deliberately did not step, and only as a
    profile whose derivative is bounded. Everything hard is geometry now: a step
    function put through dFdx is a one-pixel black line beside a one-pixel white
@@ -1389,7 +1519,12 @@ float ledgeShade = (1.0 - smoothstep(0.0, 1.6, y - lBot)) * (1.0 - lVert) * 0.55
    geometry a second time. */
 float sbUp = bedResist(sbI + 1.0, lIdx);
 float sbLip = smoothstep(0.80, 1.0, sbT) * smoothstep(0.54, 0.74, sbUp);
-tAO = clamp(rkAO * (0.72 + 0.34 * (1.0 - cav)) - ledgeShade * 0.5 - sbLip * 0.30, 0.22, 1.0);
+tAO = clamp(rkAO * (0.72 + 0.34 * (1.0 - cav)) - ledgeShade * 0.5 - sbLip * 0.30
+            - joint * 0.30 - ironBase * 0.22, 0.18, 1.0);
+/* The grit's crevice occlusion, unfiltered by distance: it is a tone, it is
+   scale-locked to the footprint, and it is what keeps the material present at
+   the range where every normal in the shader has already faded out. */
+tAO *= mix(1.0, gr.a, 0.55);
 /* Held on much further than before. The map's occlusion channel is now the
    cavity of a packing — the crevice between two touching grains and the floor of
    a weathering pit — and that is a *tone*, not a normal: it filters correctly
@@ -1417,10 +1552,21 @@ function meanLinearLum(tex) {
   return Math.max(1e-3, a / (d.length / 4));
 }
 
-export function makeRockMaterial(tex) {
+/**
+ * @param {object} tex   the shared texture set
+ * @param {number} detail multiplier on the two fixed world sampling scales. The
+ *   walls, the buttes and the talus are all made of the same rock but they are
+ *   seen at wildly different sizes, and a map tiled at 6.45 m across a 30 cm
+ *   talus block gives that block *one texel's worth* of variation — which is
+ *   exactly why the apron read as flat-shaded untextured prisms. The footprint-
+ *   locked grit layer fixes the pixel scale for everything, but the decimetre
+ *   band still has to be told how big the object is.
+ */
+export function makeRockMaterial(tex, detail = 1.0) {
   const mat = new THREE.MeshStandardMaterial({
     color: 0xffffff, roughness: 1.0, metalness: 0.0, dithering: true,
   });
+  mat.userData.tex = tex;
   mat.userData.uniforms = {
     uRockA: { value: tex.rock.albedo },
     uRockN: { value: tex.rock.normal },
@@ -1428,6 +1574,8 @@ export function makeRockMaterial(tex) {
     uMacro: { value: tex.macro },
     uVar: { value: tex.variance },
     uDirtA: { value: tex.dirt.albedo },
+    uGrit: { value: tex.grit },
+    uDetail: { value: detail },
     /* Hematite-cemented sandstone. Nearly monochromatic on purpose: the measured
        99th percentile of a real Sedona cliff is 0.85 to 1.00 saturation, and
        nothing with a blue channel above a tenth of its red can reach that. */

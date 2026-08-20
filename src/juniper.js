@@ -48,7 +48,7 @@ const TAU = Math.PI * 2;
    moves. Four degrees of local slope, so the trunk stands rather than leans off
    a bank edge, and it sits a little to the sun side of the frame centre so the
    crown is rim-lit and partly translucent rather than flatly front-lit. */
-export const JUNIPER_XZ = { x: 7.09, z: -73.33 };
+export const JUNIPER_XZ = { x: 7.16, z: -68.17 };
 
 /* Prevailing wind, as a direction the wind blows *toward*. Chosen across the
    wash rather than along it so the tree's lean reads as a lean in the hero
@@ -401,9 +401,59 @@ function buildTree(seed) {
  * sprays hang, so a fully random orientation puts too many of them face-up,
  * which reads as a hedge from above and shows the card edges from the side.
  */
+/**
+ * Crown self-occlusion, baked to vertex colour.
+ *
+ * This is not a polish pass, it is the difference between a tree and a heap of
+ * glowing confetti. Every card in the crown has a normal somewhere on the
+ * sphere, so with the sun at eight degrees a good fraction of them face it dead
+ * on and receive seven or eight times the irradiance the ground does. The first
+ * build came out with the interior of the crown blown to warm white — the
+ * measured pixels were (242, 231, 216), which is the sun's own colour clipped,
+ * not the berries and not the alpha edge.
+ *
+ * A real crown is opaque. Sun reaches the outer few centimetres and nothing
+ * else, and the shadow map cannot supply that at 17 mm per texel through a mesh
+ * made of two-millimetre sheets. So the occlusion is computed here, off the
+ * clump distribution: an ambient term from local clump density, and a
+ * directional term from the density integrated along the sun ray. Both land on
+ * the albedo, which means they also damp the transmission term — correct, since
+ * a leaf four layers deep is not backlit either.
+ */
+function crownOcclusion(clumps) {
+  const CELL = 0.6;
+  const grid = new Map();
+  for (const c of clumps) {
+    const k = `${Math.floor(c.p.x / CELL)},${Math.floor(c.p.y / CELL)},${Math.floor(c.p.z / CELL)}`;
+    let a = grid.get(k);
+    if (!a) grid.set(k, a = []);
+    a.push(c);
+  }
+  return function density(x, y, z) {
+    const i0 = Math.floor(x / CELL), j0 = Math.floor(y / CELL), k0 = Math.floor(z / CELL);
+    let d = 0;
+    for (let i = i0 - 1; i <= i0 + 1; i++) {
+      for (let j = j0 - 1; j <= j0 + 1; j++) {
+        for (let k = k0 - 1; k <= k0 + 1; k++) {
+          const a = grid.get(`${i},${j},${k}`);
+          if (!a) continue;
+          for (let m = 0; m < a.length; m++) {
+            const c = a[m];
+            const dx = c.p.x - x, dy = c.p.y - y, dz = c.p.z - z;
+            d += Math.exp(-(dx * dx + dy * dy + dz * dz) / 0.18) * (c.size / 0.40);
+          }
+        }
+      }
+    }
+    return d;
+  };
+}
+
 function foliageGeometry(clumps, seed) {
   const rand = rng(seed);
-  const pos = [], nrm = [], uvs = [], idx = [];
+  const pos = [], nrm = [], uvs = [], idx = [], vcol = [];
+  const density = crownOcclusion(clumps);
+  const S = SUN_DIR;
   const c = new THREE.Vector3(), a = new THREE.Vector3(), b = new THREE.Vector3();
   let v = 0;
   for (const cl of clumps) {
@@ -440,6 +490,16 @@ function foliageGeometry(clumps, seed) {
         nrm.push(dx / l, dy / l, dz / l);
         const uu = (sx < 0) === flip ? u1 : u0;
         uvs.push(uu, sy < 0 ? v1 : v0);
+
+        const amb = Math.exp(-0.30 * density(px, py, pz));
+        let sh = 0;
+        sh += density(px + S.x * 0.35, py + S.y * 0.35, pz + S.z * 0.35);
+        sh += density(px + S.x * 0.80, py + S.y * 0.80, pz + S.z * 0.80);
+        sh += 0.7 * density(px + S.x * 1.55, py + S.y * 1.55, pz + S.z * 1.55);
+        sh += 0.5 * density(px + S.x * 2.60, py + S.y * 2.60, pz + S.z * 2.60);
+        const sun = Math.exp(-0.26 * sh);
+        const f = clamp(0.10 + 0.90 * amb * (0.26 + 0.74 * sun), 0.08, 1);
+        vcol.push(f, f, f);
       }
       idx.push(v, v + 1, v + 2, v, v + 2, v + 3);
       v += 4;
@@ -449,6 +509,7 @@ function foliageGeometry(clumps, seed) {
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(vcol, 3));
   g.setIndex(idx);
   g.computeBoundingSphere();
   return g;
@@ -517,15 +578,19 @@ export function makeFoliageMaterial(map) {
     map,
     alphaTest: 0.42,
     side: THREE.DoubleSide,
-    roughness: 0.86,
+    /* Nearly matte. Foliage carries a real specular sheen in life, but at a
+       dielectric F0 of 0.04 with a key this strong and a view this grazing the
+       Fresnel term alone puts a white veil over the crown. */
+    roughness: 0.97,
     metalness: 0.0,
     color: 0xffffff,
+    vertexColors: true,   // crown self-occlusion, baked
     dithering: true,
   });
   const u = {
     uSunDir: { value: SUN_DIR.clone() },
-    uTrans: { value: new THREE.Color(1.65, 1.34, 0.62) },
-    uTransAmt: { value: 1.0 },
+    uTrans: { value: new THREE.Color(1.55, 1.22, 0.52) },
+    uTransAmt: { value: 0.55 },
   };
   mat.userData.uniforms = u;
   mat.onBeforeCompile = (sh) => {

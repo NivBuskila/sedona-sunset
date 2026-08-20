@@ -354,7 +354,13 @@ export function buildVegetation(path, terrain, rocks) {
   }));
   const midMat = makeFoliageMaterial(folMap);
   midMat.vertexColors = true;
-  midMat.color = new THREE.Color(0.74, 0.80, 0.68);
+  /* Much darker than the hero's foliage, and deliberately so. These stand in
+     for whole trees, and a whole tree seen from forty metres is a shadowed mass
+     with a lit fringe — it never averages anywhere near the albedo of the
+     sunlit sprays on its own outside. Left at full albedo they came out as
+     white-speckled clumps that read as patches of snow on the cliff. */
+  midMat.color = new THREE.Color(0.38, 0.42, 0.34);
+  midMat.userData.uniforms.uTransAmt.value = 0.30;
 
   /* ── the slopes ──────────────────────────────────────────────────────────*/
   const far = [];
@@ -387,9 +393,9 @@ export function buildVegetation(path, terrain, rocks) {
       /* Higher is drier and more exposed. */
       const alt = 1 - smoothstep(14, 48, p3.y);
       const cl = clusterField(p3.x, p3.z);
-      const pAcc = shelf * (0.10 + 0.90 * cl) * (0.25 + 0.75 * alt) * 0.055;
+      const pAcc = shelf * (0.10 + 0.90 * cl) * (0.25 + 0.75 * alt) * 0.040;
       if (rr() > pAcc) continue;
-      const sz = 0.9 + rr() * 2.4;
+      const sz = 0.8 + rr() * 1.9;
       const dark = 0.72 + rr() * 0.5;
       /* Anything on the near walls is close enough that a twenty-triangle blob
          would read as a blob, so it gets cards instead. */

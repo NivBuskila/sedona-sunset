@@ -20,8 +20,8 @@ import { buildJuniper } from './juniper.js';
 import { buildVegetation } from './vegetation.js';
 import { setPlantAnisotropy } from './plantex.js';
 import {
-  makeDirt, makeSand, makeRock, makeClastSurface, makeMacro, makeVariance, makeCracks,
-  setAnisotropy,
+  makeDirt, makeSand, makeRock, makeGrit, makeClastSurface, makeMacro, makeVariance,
+  makeCracks, setAnisotropy,
 } from './textures.js';
 import { createAudio } from './audio.js';
 
@@ -76,6 +76,10 @@ const tex = {
   dirt: makeDirt(1024),
   sand: makeSand(512),
   rock: makeRock(1024),
+  /* The footprint-locked detail layer. Small, because it carries no low
+     frequencies — see makeGrit for why that is the property that lets rock.js
+     read it at whatever scale a pixel happens to be. */
+  grit: makeGrit(256),
   clast: makeClastSurface(512),
   macro: makeMacro(512),
   variance: makeVariance(512),
