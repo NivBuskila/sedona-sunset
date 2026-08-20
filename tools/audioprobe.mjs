@@ -500,6 +500,33 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
   const perFrameMs = await page.evaluate(() => window.__game.audio._bench(4000));
   const ctxState = await page.evaluate(() => window.__game.audio.state);
 
+  /* The contract surface, checked from the page rather than asserted in prose.
+     System 6 adds one key to `window.__game` and must not disturb the rest,
+     and the wind state it publishes for System 5 has to be genuinely
+     unwritable rather than merely documented as read-only. */
+  const contract = await page.evaluate(() => {
+    const g = window.__game, a = g.audio;
+    const missing = ['renderer', 'fps', 'begin', 'setPaused', 'renderOnce', 'walkTo',
+      'lookAt', 'info', 'probe'].filter(k => g[k] === undefined);
+    let wrote = false;
+    try { a.wind.gust = 999; wrote = a.wind.gust === 999; } catch (e) { wrote = false; }
+    let threw = null;
+    try { a.gust(0.9); a.coyote(); a.setEnabled(false); a.setEnabled(true); }
+    catch (e) { threw = String(e); }
+    /* Determinism, with the audio system live and mid-event: the same two
+       calls must still land on the same pixels. */
+    g.walkTo(46); g.lookAt(0, 0);
+    const before = JSON.stringify(g.probe());
+    g.walkTo(0); g.lookAt(90, -20);
+    g.walkTo(46); g.lookAt(0, 0);
+    const after = JSON.stringify(g.probe());
+    return {
+      missing, windWritable: wrote, threw,
+      gustsAhead: a.gusts(a.time, a.time + 120).length,
+      probeStable: before === after,
+    };
+  });
+
   const raw = Buffer.from(res.pcm, 'base64');
   const i16 = new Int16Array(raw.buffer, raw.byteOffset, raw.byteLength / 2);
   const x = new Float32Array(i16.length);
@@ -570,6 +597,13 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
   say(`  longest true silence ${a.longestSilentMs.toFixed(1)} ms  (denormal risk if large)`);
   say(`  main-thread cost     ${perFrameMs.toFixed(4)} ms per update() call`);
   say('');
+  say(`── contract ────────────────────────────────────────────`);
+  say(`  __game keys missing  ${contract.missing.length ? contract.missing.join(', ') : 'none'}`);
+  say(`  wind writable        ${contract.windWritable}   (must be false)`);
+  say(`  gust()/coyote()      ${contract.threw || 'ok'}`);
+  say(`  gusts() next 120 s   ${contract.gustsAhead}`);
+  say(`  walkTo/lookAt stable ${contract.probeStable}`);
+  say('');
   say(`  spectrogram → shots/${path.basename(pngFile)}  (${dims.W}x${dims.H})`);
 
   fs.writeFileSync(path.join(shotsDir, `${tag}_audio.json`), JSON.stringify({
@@ -582,7 +616,7 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
     bed: a.bed, events: a.events, gapStats: a.gapStats, footsteps: a.footsteps,
     gusts: res.gusts, coyotes: res.coyotes,
     clipped: res.clipped, dcL: res.dcL, dcR: res.dcR,
-    longestSilentMs: a.longestSilentMs, perFrameMs,
+    longestSilentMs: a.longestSilentMs, perFrameMs, contract,
     pageErrors: [...new Set(errs)],
   }, null, 2));
 });
