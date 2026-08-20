@@ -206,7 +206,7 @@ function limbGeometry(pts, radii, seg, prof, twistRate, s0, flute, deadBase = 0)
          groove four centimetres deep and two wide sees very little of the sky,
          and that is what actually draws the fluting on an overcast or shadow-side
          trunk. */
-      const ao = 0.50 + 0.50 * Math.pow(shape, 0.80);
+      const ao = 0.42 + 0.58 * Math.pow(shape, 0.85);
       vcol[k * 3] = ao; vcol[k * 3 + 1] = ao; vcol[k * 3 + 2] = ao;
     }
   }
@@ -253,7 +253,7 @@ const SEG_BY_DEPTH = [72, 26, 16, 10, 7];
    is measured off photographs of old Utah junipers, not chosen for effect; the
    grooves between the ridges are deep enough to hold shadow all day and that is
    most of what gives the trunk its form at a distance. */
-const FLUTE_BY_DEPTH = [0.42, 0.34, 0.24, 0.13, 0.07];
+const FLUTE_BY_DEPTH = [0.48, 0.36, 0.24, 0.13, 0.07];
 
 function buildTree(seed) {
   const rand = rng(seed);
