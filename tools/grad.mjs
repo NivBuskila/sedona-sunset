@@ -1,0 +1,115 @@
+/* Mean absolute one-pixel luminance gradient over a region crop — the "is there
+ * any material on this surface" metric.
+ *
+ *   node tools/grad.mjs shots/sys2e_wall_lit.png 0.16 0.30 0.20 0.20
+ *   node tools/grad.mjs shots/sys2f_wall_lit.png            (uses the presets)
+ *
+ * Why this number and not variance. A surface can have plenty of variance and
+ * still be smooth — a broad Lambertian ramp across a cliff has a large standard
+ * deviation and no material in it at all. What distinguishes rock from wax is
+ * energy at the *pixel* scale, so the statistic is the mean of |dL/dx| and
+ * |dL/dy| at one-pixel separation, in linear-ish display units (luminance / 255).
+ *
+ * Measured references, from photographs of the same formations:
+ *
+ *   Courthouse Butte cliff face            0.074
+ *   Courthouse Butte cliff face (2)        0.085
+ *   Coconino surface, fine grained         0.027
+ *   Cathedral Rock face                    0.026
+ *
+ * So the floor for "this is stone" is about 0.026 and a coarse weathered
+ * Schnebly face is three times that. Anything at 0.005 is polished plastic.
+ *
+ * Also reported:
+ *   hf/lf   the share of the gradient carried at one pixel versus at four. A
+ *           high figure with a low hf/lf ratio is a blotchy quilt of large soft
+ *           cells rather than grain, which is the other way to fail this test.
+ *   sd      standard deviation of luminance over the region, for context: it is
+ *           what tells you whether a low gradient is a smooth surface or a flat
+ *           one.
+ */
+import { readFileSync } from 'node:fs';
+import { decode } from './png.mjs';
+
+/* Same windows tools/sat.mjs uses, so a colour figure and a structure figure are
+   always talking about the same patch of surface. */
+const REGIONS = {
+  wall_lit:   [['midwall', [0.16, 0.30, 0.20, 0.20]], ['upper', [0.62, 0.04, 0.20, 0.18]]],
+  wall_shade: [['face', [0.30, 0.24, 0.24, 0.24]]],
+  wash_mid:   [['wall', [0.28, 0.28, 0.18, 0.16]], ['floor', [0.34, 0.78, 0.28, 0.16]]],
+  bend:       [['wall', [0.62, 0.24, 0.20, 0.20]], ['sand', [0.30, 0.68, 0.30, 0.22]]],
+  sun_gap:    [['wall', [0.10, 0.30, 0.16, 0.24]]],
+  ground:     [['floor', [0.24, 0.32, 0.30, 0.26]]],
+  juniper:    [['wall', [0.20, 0.20, 0.20, 0.20]]],
+  wash_low:   [['wall', [0.06, 0.26, 0.18, 0.22]]],
+};
+
+function measure(img, [fx, fy, fw, fh]) {
+  const x0 = Math.round(img.w * fx), y0 = Math.round(img.h * fy);
+  const x1 = Math.min(img.w, x0 + Math.round(img.w * fw));
+  const y1 = Math.min(img.h, y0 + Math.round(img.h * fh));
+  const w = x1 - x0, hh = y1 - y0;
+  if (w < 8 || hh < 8) return null;
+  const L = new Float64Array(w * hh);
+  for (let y = 0; y < hh; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = ((y0 + y) * img.w + (x0 + x)) * img.ch;
+      L[y * w + x] =
+        (img.px[i] * 0.2126 + img.px[i + 1] * 0.7152 + img.px[i + 2] * 0.0722) / 255;
+    }
+  }
+  let g1 = 0, n1 = 0, g4 = 0, n4 = 0, sum = 0, sum2 = 0;
+  for (let y = 0; y < hh; y++) {
+    for (let x = 0; x < w; x++) {
+      const c = L[y * w + x];
+      sum += c; sum2 += c * c;
+      if (x + 1 < w) { g1 += Math.abs(L[y * w + x + 1] - c); n1++; }
+      if (y + 1 < hh) { g1 += Math.abs(L[(y + 1) * w + x] - c); n1++; }
+      if (x + 4 < w) { g4 += Math.abs(L[y * w + x + 4] - c); n4++; }
+      if (y + 4 < hh) { g4 += Math.abs(L[(y + 4) * w + x] - c); n4++; }
+    }
+  }
+  const n = w * hh, mean = sum / n;
+  return {
+    n, w, hh,
+    grad: g1 / n1,
+    grad4: g4 / n4,
+    ratio: (g1 / n1) / Math.max(1e-9, g4 / n4),
+    mean,
+    sd: Math.sqrt(Math.max(0, sum2 / n - mean * mean)),
+  };
+}
+
+const argv = process.argv.slice(2);
+const files = [];
+let region = null;
+for (let i = 0; i < argv.length; i++) {
+  if (/\.png$/i.test(argv[i])) files.push(argv[i]);
+  else { region = argv.slice(i, i + 4).map(Number); break; }
+}
+
+/* grad/L is reported beside grad because the two are not independent and reading
+   grad alone gets the diagnosis wrong in exactly the way sat.mjs warns about for
+   saturation. A gradient is a difference of luminances, so it scales with the
+   luminance it sits on: the same material at half the exposure measures half the
+   gradient. While the lighting is provisional and the lit wall sits at L 0.15
+   against 0.59-0.73 in the reference photographs, the raw figure understates the
+   material by a factor of four. grad/L is what to compare across exposures; the
+   reference faces run 0.11-0.16 by that measure. */
+const f = (x, d = 4) => x.toFixed(d);
+console.log('file                        region      grad     grad@4   hf/lf   L mean  L sd    grad/L');
+for (const file of files) {
+  const img = decode(readFileSync(file));
+  const base = file.replace(/^.*[\\/]/, '').replace(/\.png$/, '');
+  const key = Object.keys(REGIONS).find((k) => base.endsWith('_' + k));
+  const list = region ? [['crop', region]] : (REGIONS[key] || [['whole', [0.1, 0.1, 0.8, 0.8]]]);
+  let name = base.padEnd(26);
+  for (const [label, r] of list) {
+    const m = measure(img, r);
+    if (!m) continue;
+    console.log(`${name}  ${label.padEnd(9)}  ${f(m.grad)}   ${f(m.grad4)}  ` +
+      ` ${f(m.ratio, 2).padStart(5)}   ${f(m.mean, 3)}   ${f(m.sd, 3)}   ` +
+      `${f(m.grad / Math.max(1e-6, m.mean), 3)}`);
+    name = ''.padEnd(26);
+  }
+}
