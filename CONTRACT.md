@@ -21,6 +21,23 @@ a real sunset photograph of Sedona. Not stylized, not low-poly, not "good for a 
   user games on the same machine, so the running app must not saturate CPU or GPU. Keep
   draw calls under ~150 and triangles under ~3M. Use instancing for anything repeated.
 
+## Working alongside other agents
+
+Several systems are built in parallel, so more than one agent may be editing the tree at
+once.
+
+- **Never `git add -A` or `git add .`** — stage explicit paths only. An agent doing this
+  swept another's in-flight files into an unrelated commit. Nothing was lost that time; it
+  will not always be so lucky, and the commit history becomes a poor record of who changed
+  what.
+- Work in your own new modules. Do not restructure files another system owns.
+- `src/main.js` is shared. Re-read it from disk immediately before editing, make a small
+  targeted replacement, and never rewrite the whole file.
+- Commit small and often, so a collision costs minutes rather than hours.
+- Expect transient breakage from other agents mid-edit. A page error naming a file you do
+  not own is probably somebody's half-written shader, not your bug — re-check before
+  chasing it.
+
 ## Colour targets, measured from real photographs
 
 These are HSV saturation figures measured on *region crops* of real Sedona and Arizona
@@ -48,6 +65,36 @@ Saturation on rock is **solved** as of `sys2e` — mean 0.62–0.67, p95 0.87–
 on lit rock, inside the real-photograph range and if anything conservative. Do not push it
 up and do not let a later round pull it down. The remaining colour work is a hue rotation,
 not a saturation change.
+
+**Surface structure has a measured target too, and it is the one that decides photorealism.**
+`tools/grad.mjs` reports the mean absolute one-pixel luminance gradient over a region — the
+statistic that separates rock from wax, and the one that variance cannot: a broad Lambertian
+ramp across a cliff has a large standard deviation and no material in it whatsoever.
+
+| Region | grad | grad/L |
+| --- | --- | --- |
+| Courthouse Butte cliff face (photo) | 0.074 – 0.085 | 0.12 – 0.16 |
+| Coconino face, fine grained (photo) | 0.027 | ≈ 0.05 |
+| Cathedral Rock face (photo) | 0.026 | ≈ 0.05 |
+| `sys2e` `wall_lit` midwall | 0.0046 | 0.030 |
+| `sys2f` `wall_lit` midwall | 0.0120 | 0.086 |
+| `sys2f` `wall_shade` face | 0.0500 | 0.099 |
+
+Read **grad/L** when exposures differ, and while System 4's lighting is provisional they
+differ by a factor of four: a gradient is a difference of luminances, so the same material at
+half the exposure measures half the gradient, and `wall_lit` sits at L 0.14 against 0.59–0.73
+in the reference photographs. Below about 0.026 raw on a well-exposed face, a surface is
+polished plastic regardless of how good its colour is.
+
+Two things are worth knowing before attacking this number on a new surface. First, a sum of
+smooth noise cannot produce it however many octaves go in — the result is one continuous
+membrane, and both the wash floor and the cliff face failed this way. Pack discrete elements
+and combine them by maximum. Second, a texture pinned to a world scale **cannot hold the
+number at distance**: past the range where its texels fall under a pixel the mip chain
+returns its mean. Real rock is structured at every scale, which is why a photograph of a
+cliff has pixel-scale energy at two metres and at two hundred, so the honest model is a
+detail layer with no low frequencies in it whose sampling scale follows the pixel footprint.
+See `makeGrit` in `src/textures.js` and its use in `src/rock.js`.
 
 The distribution matters more than the mean. A real wash floor gets its saturation spread
 from mixed lithology — iron-stained red clasts, desert-varnished near-black pebbles, and
