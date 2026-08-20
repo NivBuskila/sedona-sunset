@@ -1149,20 +1149,34 @@ albedo *= 1.0 + rip * 0.115 * rpF;
    Two crossed pairs at incommensurate spacings and off-axis angles, which gives
    irregular patches of a quarter to a half metre without an axis-aligned grid.
 
-   Summed rather than multiplied, and that distinction decides whether any of it
-   survives. A product of band-limited terms collapses to zero the moment *either*
-   factor becomes unresolvable, so crossing an across-channel wave with an
-   along-channel one deletes both as soon as the view goes grazing — which is
-   where the first version went. Summing lets each direction fade on its own
-   schedule, so at distance the pattern degenerates from patches into streaks
-   aligned with the axis that can no longer be resolved. That degeneration is not
-   a compromise: continuous light and dark bands running across the channel is
-   precisely what a ripple field looks like at thirty metres under a low sun. */
-float mA = bsin(dot(wxz, vec2(0.83, 0.56)) / 0.34)
-         + bsin(dot(wxz, vec2(-0.56, 0.83)) / 0.41);
-float mB = bsin(dot(wxz, vec2(0.34, -0.94)) / 0.22)
-         + bsin(dot(wxz, vec2(0.94, 0.34)) / 0.26);
-float mtl = clamp(0.5 + 0.16 * mA + 0.12 * mB, 0.0, 1.0);
+   Summed rather than multiplied, because a product of band-limited terms
+   collapses to zero the moment *either* factor becomes unresolvable.
+
+   And oriented across the channel, which is the part that took three renders to
+   get right. fwidth is the sum of both screen derivatives, so every term is
+   filtered by whichever screen axis is worse — and under a grazing view the
+   vertical axis is catastrophically worse, about 0.4 m of ground per pixel at
+   twenty-five metres against a couple of centimetres horizontally. Any wave with
+   a component along the view direction is therefore filtered out entirely, which
+   is what happened to the first two attempts: measured, they changed the mid-band
+   pixels by about 1% and the metric by nothing.
+
+   What survives a grazing view is structure that varies *across* the line of
+   sight, and it happens that this is also the honest geomorphology. A ripple
+   train's crests run across the channel, so its phase varies downstream — along
+   the view axis — and at twenty-five metres a 15 cm spacing genuinely cannot be
+   resolved; no filter choice changes that. But braid channels, gravel stringers
+   and the tonal edges of bars run *with* the flow, so their variation is
+   across-channel and stays resolvable to the horizon. Those are what carry a real
+   wash floor at distance, and they are what belongs here. */
+float mA = bsin(dot(wxz, vec2(0.995, 0.100)) / 0.29)
+         + bsin(dot(wxz, vec2(0.985, -0.174)) / 0.47);
+float mB = bsin(dot(wxz, vec2(0.999, 0.045)) / 0.19)
+         + bsin(dot(wxz, vec2(0.970, 0.242)) / 0.72);
+/* Irregular along its length, so it reads as braiding rather than as the combed
+   parallel streaks this floor has been criticised for once already. */
+float mJ = 0.55 + 0.45 * (mac2.b * 0.6 + vr.g * 0.7);
+float mtl = clamp(0.5 + (0.20 * mA + 0.15 * mB) * mJ, 0.0, 1.0);
 albedo *= 1.0 + (mtl - 0.5) * 0.34 * floorM;
 albedo = mix(albedo, albedo * vec3(0.93, 0.99, 1.07),
              smoothstep(0.56, 0.78, mtl) * floorM * 0.5);

@@ -467,12 +467,21 @@ export function buildScatter(terrain, tex) {
            The two quantities do not filter alike, which is the whole point. A
            perturbed *normal* under a widening footprint is what scintillates,
            because shading is a non-linear function of it and averaging the input
-           is not averaging the output; that has to converge early, and it is what
-           fixed the hash. *Colour* averages linearly and correctly, so it only
-           has to converge once the instance is genuinely smaller than a pixel —
-           and until then it is the only thing still carrying the difference
-           between a gravel bar and the sand beside it. */
-        vFarN = 1.0 - smoothstep(2.6, 9.0, px);
+           is not averaging the output. *Colour* averages linearly and correctly,
+           so it only has to converge once the instance is genuinely smaller than
+           a pixel — and until then it is the only thing still carrying the
+           difference between a gravel bar and the sand beside it.
+
+           Even the normal fade was far too early, though, and that is separately
+           what emptied the mid distance. It was set to converge between 2.6 and 9
+           pixels of radius, which flattens a cobble that is eighteen pixels
+           across. Nothing that large aliases; the hash came from instances near
+           and below a pixel, where a single sample cannot represent the geometry
+           at all. Converging from 1.2 to 3.5 keeps real shading and a real
+           silhouette on anything four pixels across or more, which is what a 20 cm
+           cobble at thirty metres is, while still averaging out the granules that
+           actually were the problem. */
+        vFarN = 1.0 - smoothstep(1.20, 3.50, px);
         vFar  = 1.0 - smoothstep(0.70, 2.20, px);
         transformed *= smoothstep(0.60, 1.60, px);
       `)
