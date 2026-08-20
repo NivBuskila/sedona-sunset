@@ -505,7 +505,7 @@ function crownOcclusion(clumps) {
 
 function foliageGeometry(clumps, seed) {
   const rand = rng(seed);
-  const pos = [], nrm = [], uvs = [], idx = [], vcol = [];
+  const pos = [], nrm = [], uvs = [], idx = [], vcol = [], vsun = [];
   const density = crownOcclusion(clumps);
   const S = SUN_DIR;
   const c = new THREE.Vector3(), a = new THREE.Vector3(), b = new THREE.Vector3();
@@ -545,14 +545,24 @@ function foliageGeometry(clumps, seed) {
         const uu = (sx < 0) === flip ? u1 : u0;
         uvs.push(uu, sy < 0 ? v1 : v0);
 
-        const amb = Math.exp(-0.34 * density(px, py, pz));
+        /* Two occlusion terms, and they must not be conflated — the first build
+           multiplied both into the albedo and the crown went to a black mass
+           with cream flecks, no green anywhere in it: a filter for
+           green-dominant pixels found 212 out of a hundred-thousand-pixel
+           crown, all of them below value 0.09. The sky dome is the only thing
+           lighting the inside of the crown, and occluding it as hard as the sun
+           removes the plant's colour entirely.
+           So the ambient term is mild and lands on the albedo, while the sun
+           term is severe and lands only on the direct contribution. */
+        const amb = Math.exp(-0.20 * density(px, py, pz));
         let sh = 0;
         for (let t = 0.30; t < 3.2; t += 0.34) {
           sh += density(px + S.x * t, py + S.y * t, pz + S.z * t) * (t < 1.2 ? 1 : 0.7);
         }
-        const sun = Math.exp(-0.30 * sh);
-        const f = clamp(0.14 + 0.86 * amb * (0.26 + 0.74 * sun), 0.13, 1);
+        const sun = Math.exp(-0.32 * sh);
+        const f = clamp(0.46 + 0.54 * amb, 0.44, 1);
         vcol.push(f, f, f);
+        vsun.push(clamp(0.04 + 0.96 * sun * (0.35 + 0.65 * amb), 0.03, 1));
       }
       idx.push(v, v + 1, v + 2, v, v + 2, v + 3);
       v += 4;
@@ -563,6 +573,7 @@ function foliageGeometry(clumps, seed) {
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   g.setAttribute('color', new THREE.Float32BufferAttribute(vcol, 3));
+  g.setAttribute('aSun', new THREE.Float32BufferAttribute(vsun, 1));
   g.setIndex(idx);
   g.computeBoundingSphere();
   return g;
@@ -650,9 +661,13 @@ export function makeFoliageMaterial(map) {
   mat.userData.uniforms = u;
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, u);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>',
+        '#include <common>\nattribute float aSun;\nvarying float vSun;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSun = aSun;');
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>',
-        '#include <common>\nuniform vec3 uSunDir;\nuniform vec3 uTrans;\n' +
+        '#include <common>\nvarying float vSun;\nuniform vec3 uSunDir;\nuniform vec3 uTrans;\n' +
         'uniform float uTransAmt;\nuniform float uDirCap;')
       /* A foliage card is not a sheet, and the difference is not cosmetic.
          It stands in for a volume of two-millimetre cords pointing in every
@@ -672,9 +687,10 @@ export function makeFoliageMaterial(map) {
          a surface that has no coherent facet to reflect from. */
       .replace('#include <lights_fragment_end>', /* glsl */`
         #include <lights_fragment_end>
+        reflectedLight.directDiffuse *= vSun;
         reflectedLight.directDiffuse =
           uDirCap * ( 1.0 - exp( -reflectedLight.directDiffuse / uDirCap ) );
-        reflectedLight.directSpecular *= 0.28;`)
+        reflectedLight.directSpecular *= 0.28 * vSun;`)
       .replace('#include <opaque_fragment>', /* glsl */`
         {
           vec3 sunV = normalize( ( viewMatrix * vec4( uSunDir, 0.0 ) ).xyz );

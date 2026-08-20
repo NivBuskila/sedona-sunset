@@ -341,9 +341,12 @@ const rgb = (c) => `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})`;
  * as a garden conifer dropped into a desert.
  */
 const FOL = {
-  base: [96, 108, 84],
-  pale: [134, 145, 121],
-  dark: [58, 68, 54],
+  /* HSV saturation of the base is 0.19 and of the pale highlight 0.15. That is
+     what a Utah juniper measures off a photograph; anything past about 0.30 is
+     a garden conifer. */
+  base: [106, 118, 96],
+  pale: [144, 155, 132],
+  dark: [70, 80, 66],
   bronze: [124, 103, 71],
   dead: [138, 122, 96],
   berry: [118, 130, 141],

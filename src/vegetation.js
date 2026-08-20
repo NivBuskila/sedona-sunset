@@ -56,6 +56,15 @@ function addWhite(g) {
   return g;
 }
 
+/** The hero's foliage shader reads a baked sun-visibility attribute. A distant
+    bush has no crown to occlude itself with, so it supplies a constant one —
+    without which the attribute reads as zero and every bush loses its key. */
+function addSun(g) {
+  const n = g.attributes.position.count;
+  g.setAttribute('aSun', new THREE.BufferAttribute(new Float32Array(n).fill(1), 1));
+  return g;
+}
+
 /* ── near-field plant shapes ───────────────────────────────────────────────*/
 
 /** A tuft of dry bunch grass — crossed cards, unit height. */
@@ -344,14 +353,14 @@ export function buildVegetation(path, terrain, rocks) {
   /* ── mid-distance junipers on the terraces and lower slopes ──────────────
      Close enough that a blob would read as a blob, far enough that a real tree
      is not affordable: eight foliage cards on the same texture as the hero. */
-  const midGeo = addWhite(cardGeometry((arr) => {
+  const midGeo = addSun(addWhite(cardGeometry((arr) => {
     const r = rng(2002);
     for (let i = 0; i < 7; i++) {
       const a = i / 7 * TAU;
       cardTuft(Math.cos(a) * 0.17, 0.06 + r() * 0.46, Math.sin(a) * 0.17,
                0.70, 0.60, 1, r, arr, 2, 2);
     }
-  }));
+  })));
   const midMat = makeFoliageMaterial(folMap);
   midMat.vertexColors = true;
   /* Much darker than the hero's foliage, and deliberately so. These stand in
