@@ -58,8 +58,44 @@ has hit diminishing returns.
 
 So the wash floor moves on at roughly 6/10 and **terrain is revisited once real lighting
 and grading exist**, when the remaining defects can be judged against a scene that is
-actually lit. Carry the outstanding terrain defects forward — they are not forgiven, only
-deferred.
+actually lit.
+
+### Deferred terrain defects, carried forward from System 1
+
+Not forgiven, only deferred. Revisit these after System 4 and System 7.
+
+- **Midground detail collapse.** High-frequency energy in the 20–40 m band measures
+  ~0.052 against 0.115–0.137 in real arroyo photographs — a 3–5× shortfall exactly where a
+  real photograph is *busiest*, since more objects fall into each pixel when looking across
+  a surface rather than down at it. Four attempts failed to move it. The standing hypothesis
+  is that the dirt albedo has no energy at gravel scale to begin with, in which case no
+  amount of sharper sampling can recover detail that was never authored — test that offline
+  before touching the sampling again. What must carry this band is albedo and lithology
+  mottle, micro-shadow fraction as a smooth tone, correlated ripple-crest banding, patch
+  boundaries, and a handful of individual cobble silhouettes — **not** relief detail.
+- **No clast burial or scour geometry.** Named by three consecutive critics as the strongest
+  surviving "objects dropped onto a surface" tell. Needs an upstream sand fillet, a
+  downstream scour tail, imbrication (consistent upstream dip), and partial burial.
+- Uniform clast density — no flow-sorted bars, stringers or armoured lag surfaces.
+- Small clasts still ellipsoids sharing aspect ratio and long-axis orientation.
+- Sand draping over every bank crest like icing; fluvial and aeolian sand are not
+  distinguished.
+- Corduroy ripples at constant amplitude — no wavelength scaling with flow depth, no crest
+  bifurcation, no plane-bed patches.
+- Polka-dot cut banks: high-contrast pale ellipsoids on a dark matrix at uniform density.
+- Residual 1–2 px hash on *shaded* cut banks.
+- No talus cone; no mud-crack plate relief.
+- Shadow ambient is warm grey and red-dominant — needs a hemispherical skylight term so
+  shadows go cool/violet. **System 4 owns this.**
+
+### A process note worth keeping
+
+Three rounds running, the measured symptom pointed at the wrong mechanism. The "gravel
+aliasing" was actually the mud-crack net, filtered on plate size rather than crack width.
+The "exposure problem" was actually a grazing-angle specular veil, which raises value and
+crushes saturation exactly as over-exposure does. Critics are reliable about *what looks
+wrong* and unreliable about *why*. Always re-diagnose from magnified crops before acting on
+a stated cause — including one stated by the coordinator.
 
 1. Terrain and wash path
 2. Red rock buttes

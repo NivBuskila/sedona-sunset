@@ -14,6 +14,7 @@ import * as THREE from 'three';
 import { WashPath } from './path.js';
 import { Terrain, buildTerrainMesh, makeTerrainMaterial } from './terrain.js';
 import { buildScatter } from './scatter.js';
+import { buildWalls, buildDistantButtes, buildTalus, makeRockMaterial } from './rock.js';
 import { buildSky, buildLights, SUN_DIR, FOG, SHADOW_HALF } from './sky.js';
 import {
   makeDirt, makeSand, makeRock, makeClastSurface, makeMacro, makeVariance, makeCracks,
@@ -81,6 +82,18 @@ const path = new WashPath();
 const terrain = new Terrain(path);
 const terrainMesh = buildTerrainMesh(terrain, makeTerrainMaterial(tex));
 scene.add(terrainMesh);
+
+/* System 2. The rock is not part of the height field — see rock.js for why a
+   height field cannot draw a cliff — so it arrives as its own meshes: two wall
+   curtains, a set of discrete distant buttes for the aerial perspective to layer,
+   and the coarse talus at the junction between the two. */
+const rockMat = makeRockMaterial(tex);
+const rocks = [
+  ...buildWalls(path, terrain, rockMat),
+  ...buildDistantButtes(terrain, rockMat),
+  ...buildTalus(path, terrain, rockMat),
+];
+for (const m of rocks) scene.add(m);
 
 const clasts = buildScatter(terrain, tex);
 for (const m of clasts) scene.add(m);

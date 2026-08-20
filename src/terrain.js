@@ -355,9 +355,18 @@ export class Terrain {
 
     const openEnd = smoothstep(215, 330, s);   // let the far end of the wash breathe
     const wStart = f.ws + 8.5;
-    const wRun = 21 + 15 * (0.5 + 0.5 * fbm(s * 0.011, side > 0 ? 101 : 137, 3, 73));
-    const wallH = (16 + 16 * (0.5 + 0.5 * fbm(s * 0.0085, side > 0 ? 7 : 19, 3, 79))
-                 + 7 * (0.5 + 0.5 * fbm(s * 0.021, 91, 2, 83))) * (1 - 0.55 * openEnd);
+    const wRun = 18 + 14 * (0.5 + 0.5 * fbm(s * 0.011, side > 0 ? 101 : 137, 3, 73));
+    /* ---- SYSTEM 2 ----
+       This used to rise sixteen to thirty-nine metres and *was* the canyon wall.
+       It is not any more: the wall is rock, built as a curtain in rock.js, and a
+       height field cannot draw rock — y = f(x, z) is single-valued, so the
+       steepest thing it can express is a slope, which is why every round of work
+       on this surface produced a better dune. What is left here is the footslope
+       the rock stands on: the apron the talus rests against, tall enough to bury
+       the foot of the lowest cliff and to close the back of a side canyon, and
+       nothing more. The wash floor and the cut banks above are untouched. */
+    const wallH = (7 + 6 * (0.5 + 0.5 * fbm(s * 0.0085, side > 0 ? 7 : 19, 3, 79))
+                 + 3 * (0.5 + 0.5 * fbm(s * 0.021, 91, 2, 83))) * (1 - 0.40 * openEnd);
     const t = clamp((av - wStart) / wRun, 0, 1);
     const ramp = t * t * (3 - 2 * t);
     /* Exported so the shader can tell a canyon wall from a bank in the wash
@@ -368,11 +377,11 @@ export class Terrain {
     h += ramp * wallH;
     h += clamp(av - (wStart + wRun), 0, 45) * 0.20 * (0.7 + 0.3 * fbm(s * 0.02, 5, 2, 87));
 
-    /* Coarse wall form. Half ridged, so the wall breaks into spurs separated by
-       sharp divides instead of draping as one smooth dune — a wall built only
-       from fBm reads as sand however it is textured. */
-    h += ramp * (2.1 * fbm(x * 0.031, z * 0.031, 4, 117)
-               + 2.2 * (ridged(x * 0.026, z * 0.026, 3, 118) - 0.45));
+    /* Coarse footslope form. Halved along with the height above: at a seventh of
+       the relief it used to have, the amplitude that gave a thirty-metre wall its
+       spurs would give a seven-metre apron a set of pits. */
+    h += ramp * (1.05 * fbm(x * 0.031, z * 0.031, 4, 117)
+               + 1.10 * (ridged(x * 0.026, z * 0.026, 3, 118) - 0.45));
 
     /* The coarse form, kept aside for the stratigraphy below to trace. Bedding
        has to be read off a surface that the drainage has not cut into: a gully
@@ -437,8 +446,10 @@ export class Terrain {
          is the corduroy read, and it got louder once the macro tonal noise that had
          been masking it came down. Depth is not what makes drainage legible;
          convergence is, and that is what `merge` and the fans do. */
-      const cut = 2.3 * m1 * (0.30 + 0.70 * (1 - t))
-                + 0.95 * merge * gGate * smoothstep(0.50, 1.00, r2) * smoothstep(0.12, 0.72, t);
+      /* Scaled with the footslope. Two and a third metres of gully was sized for a
+         thirty-metre wall; on a seven-metre apron it is a trench. */
+      const cut = 0.90 * m1 * (0.30 + 0.70 * (1 - t))
+                + 0.38 * merge * gGate * smoothstep(0.50, 1.00, r2) * smoothstep(0.12, 0.72, t);
       h -= ramp * cut * smoothstep(0.0, 0.13, t);
 
       /* Every gully mouth drops what it carried. Widened and deepened: a debris
@@ -446,7 +457,7 @@ export class Terrain {
          deposit nothing are the other half of why they read as corduroy rather
          than as a drainage network. */
       const fanAxis = 1 - Math.min(1, Math.abs(av - f.ws - 3.0) / 9.5);
-      h += m1 * fanAxis * fanAxis * 2.7;
+      h += m1 * fanAxis * fanAxis * 1.6;
     }
 
     /* ── stratigraphy ──
@@ -489,7 +500,11 @@ export class Terrain {
          previous one — and a three-metre jump between neighbouring vertices
          renders as a row of white spikes along the bedding plane. */
       const r = mix(resistOf(bi), resistOf(bi + 1), smoothstep(0.72, 1.0, bt));
-      h += ramp * (r - 0.42) * 3.0;
+      /* Also scaled to the footslope. Real stratigraphic benching is System 2's
+         now, cut into the rock curtain where it can be vertical; three metres of
+         it on a seven-metre debris apron would be inventing rock outcrops in the
+         middle of the talus. */
+      h += ramp * (r - 0.42) * 1.0;
     }
 
     /* ── fine relief, last ──
@@ -546,10 +561,10 @@ export class Terrain {
    *  continuous with the wall it is leaving. */
   _nearShoulder(f, x, z) {
     const wStart = f.ws + 8.5;
-    const wRun = 21 + 15 * (0.5 + 0.5 * fbm(f.s * 0.011, f.side > 0 ? 101 : 137, 3, 73));
-    const wallH = 16 + 16 * (0.5 + 0.5 * fbm(f.s * 0.0085, f.side > 0 ? 7 : 19, 3, 79));
+    const wRun = 18 + 14 * (0.5 + 0.5 * fbm(f.s * 0.011, f.side > 0 ? 101 : 137, 3, 73));
+    const wallH = 7 + 6 * (0.5 + 0.5 * fbm(f.s * 0.0085, f.side > 0 ? 7 : 19, 3, 79));
     return 0.0125 * f.s + wallH + clamp(145 - (wStart + wRun), 0, 45) * 0.20
-         + 4.0 * fbm(x * 0.031, z * 0.031, 3, 117);
+         + 2.0 * fbm(x * 0.031, z * 0.031, 3, 117);
   }
 }
 
