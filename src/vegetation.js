@@ -300,25 +300,25 @@ export function buildVegetation(path, terrain, rocks) {
       if (dh < 5.5) continue;
 
       const roll = rand();
-      if (roll < p * 0.085) {
+      if (roll < p * 0.33) {
         grass.push({
           x, y: y - 0.03, z, rot: rand() * TAU,
           sx: 0.30 + rand() * 0.26, sy: 0.26 + rand() * 0.26, sz: 0.30 + rand() * 0.26,
           r: 0.86 + rand() * 0.22, g: 0.82 + rand() * 0.20, b: 0.72 + rand() * 0.18,
         });
-      } else if (roll < p * 0.105) {
+      } else if (roll < p * 0.49) {
         shrub.push({
           x, y: y - 0.04, z, rot: rand() * TAU,
           sx: 0.42 + rand() * 0.40, sy: 0.36 + rand() * 0.36, sz: 0.42 + rand() * 0.40,
           r: 0.84 + rand() * 0.26, g: 0.88 + rand() * 0.20, b: 0.78 + rand() * 0.22,
         });
-      } else if (roll < p * 0.112 && pear.length < 5) {
+      } else if (roll < p * 0.505 && pear.length < 4) {
         pear.push({
           x, y: y - 0.05, z, rot: rand() * TAU,
           sx: 0.85 + rand() * 0.40, sy: 0.85 + rand() * 0.45, sz: 0.85 + rand() * 0.40,
           r: 0.95 + rand() * 0.14, g: 1.0, b: 0.90 + rand() * 0.14,
         });
-      } else if (roll < p * 0.116 && agave.length < 3) {
+      } else if (roll < p * 0.515 && agave.length < 2) {
         agave.push({
           x, y: y - 0.03, z, rot: rand() * TAU,
           sx: 0.70 + rand() * 0.30, sy: 0.70 + rand() * 0.34, sz: 0.70 + rand() * 0.30,
@@ -402,7 +402,7 @@ export function buildVegetation(path, terrain, rocks) {
       /* Higher is drier and more exposed. */
       const alt = 1 - smoothstep(14, 48, p3.y);
       const cl = clusterField(p3.x, p3.z);
-      const pAcc = shelf * (0.10 + 0.90 * cl) * (0.25 + 0.75 * alt) * 0.040;
+      const pAcc = shelf * (0.10 + 0.90 * cl) * (0.25 + 0.75 * alt) * 0.060;
       if (rr() > pAcc) continue;
       const sz = 0.8 + rr() * 1.9;
       const dark = 0.72 + rr() * 0.5;
@@ -431,7 +431,7 @@ export function buildVegetation(path, terrain, rocks) {
        thing in this loop and ninety-odd percent of candidates are rejected
        without it. */
     const cl = clusterField(x, z);
-    if (rr() > (0.06 + 0.94 * cl) * 0.10) continue;
+    if (rr() > (0.06 + 0.94 * cl) * 0.18) continue;
     const y = terrain.heightAt(x, z);
     if (y > 60) continue;
     const e = 1.4;
