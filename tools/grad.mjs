@@ -37,10 +37,15 @@ const REGIONS = {
   wall_lit:   [['midwall', [0.16, 0.30, 0.20, 0.20]], ['upper', [0.62, 0.04, 0.20, 0.18]]],
   wall_shade: [['face', [0.30, 0.24, 0.24, 0.24]]],
   wash_mid:   [['wall', [0.28, 0.28, 0.18, 0.16]], ['floor', [0.34, 0.78, 0.28, 0.16]]],
-  bend:       [['wall', [0.62, 0.24, 0.20, 0.20]], ['sand', [0.30, 0.68, 0.30, 0.22]]],
+  /* Both of these windows were landing on sky, which averages a bright smooth
+     gradient into the figure and makes a wall look four times worse than it is.
+     Moved onto rock. Always check where a window actually falls before believing
+     a number off it — the standard deviation column is the tell: a crop with sky
+     in it reports an sd near 0.34 against 0.10 to 0.26 for a rock face. */
+  bend:       [['wall', [0.10, 0.06, 0.22, 0.26]], ['sand', [0.30, 0.68, 0.30, 0.22]]],
   sun_gap:    [['wall', [0.10, 0.30, 0.16, 0.24]]],
   ground:     [['floor', [0.24, 0.32, 0.30, 0.26]]],
-  juniper:    [['wall', [0.20, 0.20, 0.20, 0.20]]],
+  juniper:    [['wall', [0.06, 0.44, 0.18, 0.20]]],
   wash_low:   [['wall', [0.06, 0.26, 0.18, 0.22]]],
 };
 

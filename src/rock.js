@@ -222,7 +222,17 @@ function buildColumn() {
        thirty metres and three at a hundred and fifty, which is a lit ledge instead
        of a dashed line, and it is also closer to what the risers between beds on a
        Schnebly Hill cliff actually measure. */
-    const RISE = 0.22;
+    /* Taller again, and the lateral step below is smaller, for one reason: the
+       riser was still throwing a row of lit triangular teeth along every shaded
+       bench in the middle distance. A quad whose two triangles disagree strongly
+       in normal shades as two triangles, and a strip 44 cm tall carrying a 40 cm
+       lateral step across a 62 cm column pitch is exactly that — a skewed sliver
+       tilted forty-two degrees off vertical, which under an eight-degree sun
+       receives several times the irradiance of the face it interrupts. Thirty
+       centimetres of half-height against a 28 cm step is twenty-five degrees, and
+       the ratio falls with the cosine. The step is still a step; it is no longer
+       the brightest thing in the frame. */
+    const RISE = 0.30;
     let ci = 0;
     for (let y = L.y0 + 0.075; y < y1 - 0.075; y += step) {
       while (ci < contacts.length && contacts[ci] < y) {
@@ -431,15 +441,18 @@ function wallGrid(path, terrain, side) {
     /* The roughening stays — a skyline level to the millimetre is a table edge —
        but it is snapped onto a bedding contact afterwards, so the rim descends in
        right-angled steps from one bed top to the next instead of undulating.
-       Not all the way onto the contact: a hundred percent gives a rim that is
-       everywhere exactly level and everywhere breaks by the same two metres, which
-       is its own kind of regularity. Eighty-five percent keeps the steps square
-       and lets the tread tilt slightly, which is what a rim with a bed dipping a
-       fraction of a degree under it looks like. */
+       Not all the way onto the contact, and considerably less than the first
+       attempt at this. At 0.85 the rims came out cubic: every tread dead level,
+       every break exactly one bed, the whole wall milled into rectangular
+       terraces. The fault in that reasoning is that a bed top is where the rim
+       *starts*, and then it retreats — the tread is a rubble ramp sloping back
+       from a broken lip, not a machined shelf. Half strength keeps the steps
+       square where they matter, at the lip, and lets the rest of the tread carry
+       the roughening that stops it reading as geometry. */
     let crest = mix(raw, best, 0.82)
               + 1.3 * fbm(s * 0.055, side > 0 ? 3 : 8, 2, 373)
               + 0.7 * fbm(s * 0.10, 21, 1, 379);
-    crest = mix(crest, snapContact(crest), 0.85);
+    crest = mix(crest, snapContact(crest), 0.50);
     /* The ends of the curtain. Without this the wall runs to the last column and
        stops, leaving a forty-metre vertical cut hanging in mid air at the head of
        the corridor — right in the middle of the view every critic praised. It is
@@ -495,7 +508,7 @@ function wallGrid(path, terrain, side) {
          smooth. Fifteen centimetres is a hand's width, which is what the risers
          between beds on a Schnebly Hill cliff measure. */
       const sbi = Math.floor(subBed(yc, li));
-      u -= (subResist(sbi, li) - 0.5) * 0.40 * (0.45 + 0.55 * vert);
+      u -= (subResist(sbi, li) - 0.5) * 0.28 * (0.45 + 0.55 * vert);
 
       /* Alcoves and spall scars. An alcove undercuts a soft bed beneath a hard
          one, so it goes on benches and its rim is the cliff above; a spall scar is

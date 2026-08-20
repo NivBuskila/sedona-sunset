@@ -583,31 +583,42 @@ export function makeRock(size = 1024) {
          patchy, and a face pitted edge to edge is pumice. A pit is subtracted
          with a *rim*, because the rim is a case-hardened crust and it is what
          throws the shadow. */
+      /* Pulled back hard from the first attempt, which put a pit in half the
+         cells of both generations over most of the face and read as a regular
+         field of drilled holes — a golf ball, not a cliff. Cavernous weathering
+         is *patchy at every scale*: an alcove ceiling is honeycombed edge to edge
+         and the buttress beside it has three hollows on it. So the patch gate is
+         narrower, a third of the cells carry a pit instead of a half, and the
+         outline is nibbled by noise finer than the pit the way the grains are,
+         because a field of circles is as recognisable as a field of eggs. */
       const ptw = (pfbm(u * 3, v * 3, 3, 3, 5301) - 0.5) * 0.55;
-      const pitField = smoothstep(0.36, 0.74, pfbm(u * 4, v * 4, 4, 4, 5307))
+      const pitField = smoothstep(0.50, 0.82, pfbm(u * 4, v * 4, 4, 4, 5307))
                      * (1 - lamHard * 0.62);
-      const dish = (w, presT, rMin, rSpan) => {
+      const dish = (w, presT, rMin, rSpan, chip) => {
         if (w.id > presT) return 0;
         const rad = rMin + (w.id / presT) * rSpan;
         if (w.f1 >= rad) return 0;
-        const q = w.f1 / rad;
+        const q = (w.f1 / rad) * chip;
+        if (q >= 1) return 0;
         return Math.pow(1 - q * q, 0.65);
       };
+      const chipA = 0.80 + 0.40 * pfbm(u * 62, v * 62, 62, 2, 5341);
+      const chipB = 0.80 + 0.40 * pfbm(u * 150, v * 150, 150, 2, 5343);
       const pwA = pworley(u * 27 + ptw, v * 27 - ptw, 27, 5311, 1.0);
       const pwB = pworley(u * 74 - ptw, v * 74 + ptw, 74, 5317, 1.0);
-      const pitA = dish(pwA, 0.46, 0.20, 0.26) * pitField;
-      const pitB = dish(pwB, 0.58, 0.22, 0.24) * pitField * (0.45 + 0.55 * pitField);
-      const pit = clamp(pitA * 0.72 + pitB * 0.42, 0, 1);
+      const pitA = dish(pwA, 0.34, 0.20, 0.24, chipA) * pitField;
+      const pitB = dish(pwB, 0.42, 0.22, 0.22, chipB) * pitField * (0.45 + 0.55 * pitField);
+      const pit = clamp(pitA * 0.66 + pitB * 0.38, 0, 1);
       /* The case-hardened lip: just outside the hollow, standing proud of it. */
-      const rimA = smoothstep(0.02, 0.0, pwA.f1 - (0.20 + (pwA.id / 0.46) * 0.26))
-                 * (pwA.id <= 0.46 ? 1 : 0) * pitField;
+      const rimA = smoothstep(0.02, 0.0, pwA.f1 * chipA - (0.20 + (pwA.id / 0.34) * 0.24))
+                 * (pwA.id <= 0.34 ? 1 : 0) * pitField;
 
       /* ---- spall flakes ----
          A slab of case-hardened surface lets go and leaves a shallow dish a few
          decimetres across with a sharp upper edge and a feathered lower one.
          Very shallow — this is a skin coming off, not a block. */
       const flk = pworley(u * 7 + ptw * 0.5, v * 7, 7, 5323, 1.0);
-      const flake = dish(flk, 0.30, 0.26, 0.22)
+      const flake = dish(flk, 0.30, 0.26, 0.22, 0.84 + 0.32 * pfbm(u * 26, v * 26, 26, 2, 5347))
                   * smoothstep(0.42, 0.66, pfbm(u * 3, v * 3, 3, 3, 5329));
 
       /* ---- the granular packing ----
@@ -643,7 +654,7 @@ export function makeRock(size = 1024) {
       let hh = broad * 0.20 + (lamHard - 0.5) * 0.085 + 0.055;
       if (grainH > hh) hh = grainH; else gi = -1;
       hh -= contact * 0.055 * (0.4 + 0.6 * (1 - lamHard));
-      hh += rimA * 0.055 - pit * 0.34 - flake * 0.085;
+      hh += rimA * 0.055 - pit * 0.30 - flake * 0.085;
       h[i] = hh;
 
       /* ---- colour ----
