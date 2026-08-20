@@ -1007,6 +1007,15 @@ float tRough; float tAO; vec3 tNrmW; float gShadow = 1.0;
    the correct filter and costs one fwidth. */
 float hardstep(float e, float x, float w) { return smoothstep(e - w, e + w, x); }
 
+/* Shader-side only, so a large-argument hash is safe here — the CPU never has to
+   agree with it, and the argument is always an exact small integer, so every pixel
+   in a cell gets bit-identical bits. Declared up here rather than beside the rest
+   of the utilities because GLSL has no forward declarations and jointTrace needs
+   it; a function used before it is declared is a compile error, and a shader that
+   fails to compile still renders — as three's fallback — so it costs a whole
+   capture to discover. */
+float hash11(float n){ return fract(sin(n * 17.317) * 4321.717); }
+
 /* Matched exactly by subResist() on the CPU, which is why it is two low-frequency
    sines rather than the usual large-argument hash. */
 float bedResist(float id, float li) {
@@ -1078,7 +1087,7 @@ vec3 domApply(vec2 nxy, vec3 N){
 }
 
 /* Distance to the nearest open joint trace of one set, in metres, as a filtered
-   tone in [0,1]. `d` is a unit azimuth in plan, `sp` the mean spacing, `w` the
+   tone in [0,1]. dir is a unit azimuth in plan, sp the mean spacing, w the
    half-width the trace should present — which is at least a pixel or the line
    crawls. Most cell walls are *not* open joints, and where one is open its
    position within the cell and its aperture both vary, because a fracture set
@@ -1093,11 +1102,6 @@ float jointTrace(vec2 p, vec2 dir, float sp, float seed, float w, float thr){
   float ap = w * (0.55 + 1.10 * hash11(ti * 5.311 + seed + 29.0));
   return open * (1.0 - smoothstep(ap * 0.30, ap, dd));
 }
-
-/* Shader-side only, so a large-argument hash is safe here — the CPU never has to
-   agree with it, and the argument is always an exact small integer, so every pixel
-   in a cell gets bit-identical bits. */
-float hash11(float n){ return fract(sin(n * 17.317) * 4321.717); }
 
 vec3 bumpFrom(float hgt, vec3 N, float scale){
   vec3 pdx = dFdx(vWPos), pdy = dFdy(vWPos);

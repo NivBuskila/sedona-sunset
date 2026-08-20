@@ -64,6 +64,34 @@ for (const f of process.argv.slice(2)) {
         console.log(`${f}:${line + k} prose outside comment: ${t.slice(0, 62)}`);
         bad++;
       });
+
+      /* Use before declaration. GLSL has no forward declarations, so calling a
+         function defined further down the same literal is a compile error — and a
+         shader that fails to compile does not fail loudly, it silently falls back,
+         so the whole capture comes back rendered with three's default material and
+         the sixteen minutes are gone. Cheap to catch: record where each function
+         is defined and where each is first called, in the comment-stripped source,
+         and complain if the call comes first. Only names defined in this literal
+         are considered, so three's own library and the builtins are ignored. */
+      const body = lines.join('\n');
+      const defAt = new Map();
+      const defRe = /^\s*(?:float|vec2|vec3|vec4|mat2|mat3|mat4|void|bool|int)\s+([A-Za-z_]\w*)\s*\(/gm;
+      for (let m; (m = defRe.exec(body));) {
+        if (!defAt.has(m[1])) defAt.set(m[1], body.slice(0, m.index).split('\n').length - 1);
+      }
+      const callRe = /([A-Za-z_]\w*)\s*\(/g;
+      for (let m; (m = callRe.exec(body));) {
+        const name = m[1];
+        if (!defAt.has(name)) continue;
+        const at = body.slice(0, m.index).split('\n').length - 1;
+        /* The definition line itself is a match for its own name. */
+        if (at <= defAt.get(name)) {
+          if (at === defAt.get(name)) continue;
+          console.log(`${f}:${line + at} calls ${name}(), declared below at ` +
+                      `${f}:${line + defAt.get(name)}`);
+          bad++;
+        }
+      }
     }
     i = b + 1;
   }
