@@ -37,6 +37,7 @@
 import * as THREE from 'three';
 import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
 import { fbm, ridged, hash1, rng, clamp, smoothstep, mix } from './noise.js';
+import { SUN_DIR } from './sky.js';
 
 /* ── the stratigraphic column ──────────────────────────────────────────────
  *
@@ -957,6 +958,7 @@ uniform sampler2D uMacro; uniform sampler2D uVar; uniform sampler2D uDirtA;
 uniform vec3 uIron;
 uniform vec3 uVarnish;
 uniform float uRockLum;
+uniform vec3 uSunDir;
 varying vec3 vWPos;
 varying vec3 vWNrm;
 varying vec4 vRock;
@@ -1250,8 +1252,33 @@ diffuseColor.rgb *= albedo;
    contribute a normal once a pixel covers several of the features it describes,
    because lighting is non-linear in the normal and the average of the lit facets
    is not the lighting of the average facet — which is the mechanism behind every
-   scintillating rock face in a real-time renderer. */
-vec3 wN = normalize(mix(gN, mix(rkN, rkN2, 0.5), 0.20 + 0.72 * grainF));
+   scintillating rock face in a real-time renderer.
+   ---- the terminator, and the dotted rules it was really making ----
+   The bright dashes along every bench lip and every talus edge were measured, not
+   guessed at, and they were neither aliased geometry nor a shadow map: sampled,
+   the dark band came back at 31/8/5 and the dots inside it at 220/151/115 — which
+   is the *sunlit* wall's own value, pixel-exact. So isolated pixels inside a
+   surface facing away from the sun were receiving full direct light, and the only
+   thing in the shader that can do that is this line.
+   With the sun eight degrees up, a vertical cliff face receives cos 82 = 0.14 of
+   the sun's normal irradiance. A facet a few degrees *past* the terminator
+   receives none. Perturb both by a normal map with thirty degrees of slope in it
+   and the second one does not merely brighten, it overshoots the first: sin 25 is
+   0.42, three times the lit face's 0.14. So every surface within a few degrees of
+   the terminator dissolves into single pixels at three times the brightness of
+   anything around them, and a bedding riser is a band of exactly such a surface
+   running the length of the wall. It is the low sun that makes it this violent —
+   at forty degrees the same map is a texture, at eight it is a switch.
+   The fix is what the map is a model of. Those millimetres of relief occlude each
+   other, and at grazing incidence they occlude each other completely; a real
+   sandstone face does not sparkle as the terminator crosses it, it goes out. So
+   the perturbation is faded down as the *geometric* normal approaches the
+   terminator and is nearly gone past it, which is micro-shadowing written as the
+   only term this shader has to write it in. The grain is still fully present
+   wherever there is enough light for it to matter. */
+float sTerm = smoothstep(-0.05, 0.26, dot(gN, uSunDir));
+float relW = (0.20 + 0.72 * grainF) * (0.07 + 0.93 * sTerm);
+vec3 wN = normalize(mix(gN, mix(rkN, rkN2, 0.5), relW));
 /* Only the soft contacts, which the mesh deliberately did not step, and only as a
    profile whose derivative is bounded. Everything hard is geometry now: a step
    function put through dFdx is a one-pixel black line beside a one-pixel white
@@ -1267,7 +1294,8 @@ vec3 wN = normalize(mix(gN, mix(rkN, rkN2, 0.5), 0.20 + 0.72 * grainF));
    whole amplitude at every contact and dFdx still saw a cliff. A raised cosine
    that is zero at t = 0 multiplies that jump by nothing. */
 float soft = 1.0 - smoothstep(0.50, 0.66, sbR);
-wN = bumpFrom((1.0 - cos(sbT * 6.28318)) * 0.5 * soft * 0.75, wN, 0.10 * bedF);
+wN = bumpFrom((1.0 - cos(sbT * 6.28318)) * 0.5 * soft * 0.75, wN,
+              0.10 * bedF * (0.20 + 0.80 * sTerm));
 tNrmW = wN;
 
 /* Varnish is a mineral film and genuinely a little glossier than the sand grain
@@ -1332,6 +1360,9 @@ export function makeRockMaterial(tex) {
        rather than as a hole. */
     uVarnish: { value: new THREE.Color(0.058, 0.042, 0.033) },
     uRockLum: { value: meanLinearLum(tex.rock.albedo) },
+    /* Only ever read to find the terminator, never to light anything — the
+       lighting is three's and System 4's. */
+    uSunDir: { value: SUN_DIR.clone() },
   };
 
   mat.onBeforeCompile = (shader) => {
