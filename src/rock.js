@@ -178,14 +178,26 @@ function buildColumn() {
         }
       }
     }
+    /* Half the riser height. This started at 6.5 cm on the reasoning that a
+       bedding contact should be as close to a knife edge as the mesh can make it,
+       and that was exactly backwards. The riser is a real facet, and under a sun
+       eight degrees above the horizon a facet tilted thirty degrees off vertical
+       receives four to six times the irradiance a vertical cliff face does — so
+       the brightest thing on the whole wall was a strip a fifth of a metre tall,
+       which at any distance is one pixel wide and aliases into a dotted rule. The
+       feature is right and its scale was wrong: at 44 cm it is fourteen pixels at
+       thirty metres and three at a hundred and fifty, which is a lit ledge instead
+       of a dashed line, and it is also closer to what the risers between beds on a
+       Schnebly Hill cliff actually measure. */
+    const RISE = 0.22;
     let ci = 0;
     for (let y = L.y0 + 0.075; y < y1 - 0.075; y += step) {
       while (ci < contacts.length && contacts[ci] < y) {
-        put(contacts[ci] - 0.095); put(contacts[ci] + 0.095); ci++;
+        put(contacts[ci] - RISE); put(contacts[ci] + RISE); ci++;
       }
       put(y);
     }
-    while (ci < contacts.length) { put(contacts[ci] - 0.095); put(contacts[ci] + 0.095); ci++; }
+    while (ci < contacts.length) { put(contacts[ci] - RISE); put(contacts[ci] + RISE); ci++; }
   }
   put(Y_TOP);
 
@@ -404,7 +416,7 @@ function wallGrid(path, terrain, side) {
          smooth. Fifteen centimetres is a hand's width, which is what the risers
          between beds on a Schnebly Hill cliff measure. */
       const sbi = Math.floor(subBed(yc, li));
-      u -= (subResist(sbi, li) - 0.5) * 0.46 * (0.45 + 0.55 * vert);
+      u -= (subResist(sbi, li) - 0.5) * 0.40 * (0.45 + 0.55 * vert);
 
       /* Alcoves and spall scars. An alcove undercuts a soft bed beneath a hard
          one, so it goes on benches and its rim is the cliff above; a spall scar is
@@ -452,7 +464,12 @@ function wallGrid(path, terrain, side) {
        guarantees the seal whatever the terrain is doing there. */
     const kTop = (COL.n - 1) * nu + i;
     const uTop = uu[kTop], yTop = pos[kTop * 3 + 1];
-    const backRun = 26 + 16 * (0.5 + 0.5 * fbm(s * 0.014, side > 0 ? 9 : 15, 2, 409));
+    /* Short, therefore steep. At twenty-six to forty-two metres the far side of
+       each rim was a shallow ramp, and a shallow ramp descending away from a low
+       camera is *visible* — a large khaki mass above every crest, lit by nothing
+       but the sky because it faces away from the sun. The far side of a mesa is
+       another cliff, not a ramp, so it goes down fast and hides itself. */
+    const backRun = 12 + 9 * (0.5 + 0.5 * fbm(s * 0.014, side > 0 ? 9 : 15, 2, 409));
     const ySeal = Math.min(yTop - 4,
       terrain.heightAt(cX[i] + cNx[i] * (uTop + backRun), cZ[i] + cNz[i] * (uTop + backRun)) - 3.0);
     for (let b = 0; b < NBACK; b++) {
@@ -908,8 +925,6 @@ varying vec4 vRock;
 
 float tRough; float tAO; vec3 tNrmW; float gShadow = 1.0;
 
-vec2 rot2(vec2 p, float a){ float c = cos(a), s = sin(a); return vec2(c*p.x - s*p.y, s*p.x + c*p.y); }
-
 /* A contact that is hard when it can be resolved and smooth when it cannot.
    Sedona's bed boundaries are knife-sharp, and that hardness is half of what
    makes the bands read as strata rather than as a gradient — but a knife-sharp
@@ -975,6 +990,11 @@ vec3 domNormal(sampler2D t, vec3 p, vec3 N, float sc){
   return normalize(o);
 }
 
+/* Shader-side only, so a large-argument hash is safe here — the CPU never has to
+   agree with it, and the argument is always an exact small integer, so every pixel
+   in a cell gets bit-identical bits. */
+float hash11(float n){ return fract(sin(n * 17.317) * 4321.717); }
+
 vec3 bumpFrom(float hgt, vec3 N, float scale){
   vec3 pdx = dFdx(vWPos), pdy = dFdy(vWPos);
   float hdx = dFdx(hgt), hdy = dFdy(hgt);
@@ -1033,23 +1053,21 @@ vec3 rkN2 = domNormal(uRockN, pF, gN, 0.62);
    geometry, so letting its colour through would lay a second, contradictory set
    of bands over the first.
    The divisor is the map's *measured* mean linear luminance, passed in from the
-   generator, and that is not fussiness. It used to be a hand-written 0.185, which
-   is not what the map actually averages — and the consequence was visible in
-   every crop. Wherever a two-by-two pixel quad straddles a geometric edge the
-   texture derivative explodes, mip selection collapses to the top level, and the
-   sampled luminance becomes exactly the map's mean; with the wrong divisor that
-   is a fixed brightness error, so every silhouette edge and every crease in the
-   scene was outlined by a one-pixel bright line, which sampled at an angle came
-   out as the dotted rules that ran along every bench lip and every talus block.
-   With the true mean the ratio is one there and the outlines vanish. */
+   generator rather than written here as a constant, so that this is a unit-mean
+   multiplier and not a brightness change. It matters most where mips collapse:
+   wherever a two-by-two pixel quad straddles a geometric edge the texture
+   derivative explodes, the sample comes back as the map's mean, and a divisor that
+   is not that mean turns every edge in the scene into a fixed brightness error.
+   The clamp is the backstop for the same reason — the far tail of a generated
+   map's histogram is not something to let multiply an albedo unbounded. */
 float lum = mix(1.0, dot(rkA, vec3(0.299, 0.587, 0.114)) / uRockLum, 0.70)
           * mix(1.0, rkA2 / uRockLum, 0.12 + 0.32 * grainF);
 lum = clamp(lum, 0.55, 1.60);
 
 /* Behind the rim, whatever bed capped the summit is buried under its own
    weathering products, so the colour is the debris colour and not the bed's. */
-vec3 albedo = mix(lCol, vec3(0.268, 0.170, 0.128), back * 0.85) * lum;
-lPale *= 1.0 - back;
+vec3 albedo = mix(lCol, vec3(0.296, 0.170, 0.115), back * 0.55) * lum;
+lPale *= 1.0 - back * 0.85;
 
 /* ---- cross-bedding ----
    Coconino is a fossil dune field, so its laminae are not level: they sweep in
@@ -1074,10 +1092,14 @@ albedo *= 1.0 + xb * 0.085 * lPale * lVert * (1.0 - smoothstep(0.12, 0.45, foot)
    putting iron on roughly two thirds of the wall. Measured, that came out at 0.77
    mean saturation against a target band of 0.42 to 0.65 — the vivid *tail* was
    right and the vivid *mean* was the old orange-membrane failure wearing a new
-   coat. Started well above the mean of the driver instead, so a lens is a lens. */
-vec4 mac = texture2D(uMacro, rot2(vWPos.xz, 0.61) * 0.021 + vec2(y * 0.014, 0.0));
+   coat. Started well above    the mean of the driver instead, so a lens is a lens.
+   Sampled along bedding rather than in plan, and anisotropically: a groundwater
+   front follows the beds, so a lens is two or three times wider than it is tall.
+   Sampled in plan it came out as roughly circular blotches of vivid red, which on
+   a cliff face read as paint rather than as cement. */
+vec4 mac = texture2D(uMacro, vec2(aS * 0.0195 + 0.31, y * 0.052));
 vec4 vr  = texture2D(uVar, vec2(aS * 0.037, y * 0.055));
-float ironF = smoothstep(0.82, 1.02, mac.r * 0.62 + vr.g * 0.52 + (sbR - 0.5) * 0.30) * lIron;
+float ironF = smoothstep(0.80, 1.08, mac.r * 0.62 + vr.g * 0.52 + (sbR - 0.5) * 0.30) * lIron;
 /* Fresh spall faces are unweathered rock: no varnish film, no dust, and the
    pigment at full strength. A cliff with no fresh faces is a cliff nothing has
    fallen off, which is not a cliff. */
@@ -1106,26 +1128,47 @@ albedo *= 1.0 + sbTone;
    carries all of that — the B channel of the variance map is already a
    thresholded sparse mask, which is exactly the right shape for where a plate is,
    and the other channels vary its width, its taper rate and its break-up.
-   Sampled anisotropically, at six metres along the wall against eighty up it,
-   because a plate is *tall and narrow*. The intermediate version used twelve
-   metres against sixty and the plates came out nearly round: two- to four-metre
-   blotches, and a blotch of dark neutral on red under a lilac sky fill reads as
-   blue-grey mould rather than as a stain running down a cliff. */
-vec4 dr = texture2D(uVar, vec2(aS * 0.168, y * 0.0125));
-float vStreak = smoothstep(0.44, 0.80, dr.b * 0.86 + dr.g * 0.26);
-float hang = exp2(-(lTop - y) * (0.15 + 0.30 * dr.r));
-float vBreak = 0.55 + 0.45 * smoothstep(0.22, 0.72, dr.g);
-float varn = clamp(vStreak * hang * vBreak * lVert * (1.0 - lPale * 0.70)
-           * smoothstep(0.50, 0.14, abs(gN.y)) * (1.0 - fresh) * 1.8, 0.0, 0.58);
+   Both texture-driven versions failed the same way and it is worth saying why,
+   because it is not obvious. Reading a plate mask out of a tiling map means
+   reading it at essentially constant v — a plate is eighty metres tall and the map
+   is a few metres wide — so what comes back is a one-dimensional slice of the
+   map, thresholded. A thresholded 1-D slice held constant down forty metres of
+   cliff is a rectangle with hard vertical sides, and dark neutral rectangles on
+   red under a lilac sky fill read as blue-grey panels stuck to the wall.
+   No texture can fix that, because the problem is the *shape*, so the streaks are
+   built directly: cells about nine and a half metres along the wall, a third of
+   them carrying a plate, each plate a fraction of its cell wide with its edges
+   feathered over a third of its own width, hanging from a notch one to three
+   metres below the lip of the bed that sheds it and decaying downward over five to
+   twelve. Nothing is thresholded and nothing has a straight edge. It also costs no
+   texture fetch at all, which on this rasteriser pays for itself. */
+float vs = aS * 0.105;
+float vi = floor(vs), vt = vs - vi;
+float vh1 = hash11(vi), vh2 = hash11(vi + 37.0);
+float vh3 = hash11(vi + 71.0), vh4 = hash11(vi + 113.0);
+float vW = 0.055 + 0.20 * vh2;
+float vC = vW + (1.0 - 2.0 * vW) * vh3;
+float vLat = 1.0 - smoothstep(vW * 0.30, vW, abs(vt - vC));
+float vSrc = lTop - 0.9 - 2.2 * vh4;
+float vHang = smoothstep(vSrc + 0.7, vSrc - 0.8, y)
+            * exp2(-max(0.0, vSrc - y) * (0.085 + 0.115 * vh2));
+float varn = clamp(step(0.60, vh1) * vLat * vHang * lVert * (1.0 - lPale * 0.70)
+           * smoothstep(0.50, 0.14, abs(gN.y)) * (1.0 - fresh)
+           * (0.60 + 0.60 * vr.g) * 1.30, 0.0, 0.60);
 albedo = mix(albedo, uVarnish * (0.62 + 0.38 * lum), varn);
 
 /* ---- dust and weathered fines on the up-facing surfaces ----
    Every ledge, bench top and joint-block shelf in a desert collects the same pale
    silt the wash floor is made of, and that is most of what makes a stair-stepped
    cliff read as stepped: the treads are a different material from the risers. */
-float dustW = smoothstep(0.34, 0.86, gN.y)
+/* The lower threshold has to sit above the bedding risers' own tilt. A riser
+   thirty degrees off vertical has an up-component of 0.5, and letting silt
+   collect on it painted every bed contact in pale dust — the same one-pixel
+   bright line by another route. A bench at the angle of repose is 0.84, so
+   there is plenty of room between the two. */
+float dustW = smoothstep(0.58, 0.92, gN.y)
             * (0.40 + 0.45 * smoothstep(0.35, 0.75, mac.g)) * (1.0 - lVert * 0.35)
-            * (1.0 - fresh * 0.85) * (1.0 + back * 0.6);
+            * (1.0 - fresh * 0.85);
 if (dustW > 0.01) {
   vec3 dust = texture2D(uDirtA, domUV(vWPos, aN) * 0.30).rgb;
   albedo = mix(albedo, dust * 1.05, dustW * 0.62);
