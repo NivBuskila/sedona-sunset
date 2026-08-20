@@ -1147,7 +1147,8 @@ albedo *= 1.0 + rip * 0.115 * rpF;
    derivatives, so a tiling map at this scale is chosen at a blurred level and
    averages to flat under exactly the grazing view where this detail is wanted.
    Two crossed pairs at incommensurate spacings and off-axis angles, which gives
-   irregular patches of a quarter to a half metre without an axis-aligned grid. */
+   irregular patches of a quarter to a half metre without an axis-aligned grid.
+
    Summed rather than multiplied, and that distinction decides whether any of it
    survives. A product of band-limited terms collapses to zero the moment *either*
    factor becomes unresolvable, so crossing an across-channel wave with an
