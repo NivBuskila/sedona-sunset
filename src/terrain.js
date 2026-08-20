@@ -751,6 +751,26 @@ vec2 wxz = vWPos.xz;
    distant gravel looks like. Each relief term below is therefore gated by the
    footprint against its own feature size. */
 float foot = max(length(dFdx(vWPos)), length(dFdy(vWPos)));
+/* ---- manual anisotropic sampling for the floor ----
+   This is what the mid-distance flatness actually was, and four rounds of shader
+   work failed to move it because the detail was already gone before any of that
+   code ran. A pixel on the wash floor at thirty metres covers about 0.4 m along
+   the view axis and 2.6 cm across it. Mip selection uses the larger, so the dirt
+   map — which tiles at 2.6 m, so a 10 cm pebble is forty texels — is sampled at a
+   level that averages a hundred and fifty texels, and every trace of gravel is
+   filtered out. Across the pixel it was never unresolvable at all; a tenth of a
+   metre is four pixels wide.
+
+   That is exactly what anisotropic filtering exists to fix, and the textures do
+   request it, but the capture runs on a software rasteriser where the extension
+   is not something to rely on. Biasing the level by the log ratio of the two axes
+   does the same job with one tap and no extension: it sharpens toward what the
+   short axis can resolve. One tap under-filters along the long axis, so this goes
+   on albedo and not on normals — a normal is what scintillates, because shading
+   is non-linear in it, whereas colour aliasing at this scale is the grain of the
+   surface and reads as gravel. Capped at three levels, which is eight to one. */
+float footMin = min(length(dFdx(vWPos)), length(dFdy(vWPos)));
+float aniso = -clamp(log2(foot / max(footMin, 1e-5)), 0.0, 3.0);
 float grainF = 1.0 - smoothstep(0.007, 0.040, foot);   // grains, 5-30 mm
 float platF  = 1.0 - smoothstep(0.030, 0.120, foot);   // mud plates, 3-15 cm
 float rockF  = 1.0 - smoothstep(0.045, 0.260, foot);   // rock grain, 3-25 cm
@@ -787,15 +807,15 @@ float rockW = wallM * (0.34 + 0.66 *
 vec2 d1 = wxz * 0.3846;               // 2.6 m tile
 vec2 d2 = rot2(wxz, 0.83) * 0.2326;   // 4.3 m tile
 float dB = clamp(mac.g * 1.50 - 0.65, 0.12, 0.88);
-vec3 dirtA = mix(texture2D(uDirtA, d1).rgb, texture2D(uDirtA, d2).rgb, dB);
+vec3 dirtA = mix(texture2D(uDirtA, d1, aniso).rgb, texture2D(uDirtA, d2, aniso).rgb, dB);
 vec3 dirtN = mix(texture2D(uDirtN, d1).xyz, texture2D(uDirtN, d2).xyz, dB) * 2.0 - 1.0;
-vec3 dirtM = mix(texture2D(uDirtM, d1).rgb, texture2D(uDirtM, d2).rgb, dB);
+vec3 dirtM = mix(texture2D(uDirtM, d1, aniso).rgb, texture2D(uDirtM, d2, aniso).rgb, dB);
 
 /* ---- drifted sand ---- */
 vec2 s1 = rot2(wxz, 0.35) * 0.4545;   // 2.2 m tile
-vec3 sandA = texture2D(uSandA, s1).rgb;
+vec3 sandA = texture2D(uSandA, s1, aniso).rgb;
 vec3 sandN = texture2D(uSandN, s1).xyz * 2.0 - 1.0;
-vec3 sandM = texture2D(uSandM, s1).rgb;
+vec3 sandM = texture2D(uSandM, s1, aniso).rgb;
 
 /* A sand sheet ends in a crisp depositional lobe, not a crossfade. Hard
    threshold on a lobe-shaped field rather than a wide smoothstep. */
