@@ -478,7 +478,21 @@ export function buildScatter(terrain, tex) {
       `);
 
     shader.fragmentShader = ('varying float vFar;\nvarying vec3 vSeat;\nuniform vec3 uSunDir;\n' +
-      shader.fragmentShader)
+      'float gShadow = 1.0;\n' + shader.fragmentShader)
+      /* Same trick as the terrain: catch the shadow term as the lighting chunk
+         looks it up, because getShadowMask() lives in a chunk meshphysical does
+         not include. The macro is defined after the wrapper body so the call
+         inside it still resolves to the real function. */
+      .replace('#include <shadowmap_pars_fragment>', /* glsl */`
+        #include <shadowmap_pars_fragment>
+        #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
+          float capShadow(sampler2D sm, vec2 sz, float si, float sb, float sr, vec4 sc) {
+            float s = getShadow(sm, sz, si, sb, sr, sc);
+            gShadow = min(gShadow, s);
+            return s;
+          }
+          #define getShadow(a, b, c, d, e, f) capShadow(a, b, c, d, e, f)
+        #endif`)
       .replace('#include <normal_fragment_maps>', /* glsl */`
         #include <normal_fragment_maps>
         normal = normalize(mix(normal, vSeat, vFar * 0.92));
@@ -506,7 +520,7 @@ export function buildScatter(terrain, tex) {
         float aFace = 1.0 - smoothstep(0.0, 0.45, dot(normal, normalize(vec3(
           viewMatrix * vec4(uSunDir, 0.0)))));
         reflectedLight.indirectDiffuse +=
-          vec3(0.030, 0.032, 0.062) * max(aFace, 1.0 - getShadowMask()) * 0.85;
+          vec3(0.012, 0.024, 0.090) * max(aFace, 1.0 - gShadow) * 0.85;
       `);
   };
 

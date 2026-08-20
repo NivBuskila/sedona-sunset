@@ -671,10 +671,31 @@ float tRough;
    filtered shadow lookup, which runs later. */
 float gFoot = 1.0;
 float gRake = 1.0;
+float gShadow = 1.0;
 float tAO;
 vec3  tNrmW;
 
 vec2 rot2(vec2 p, float a){ float c = cos(a), s = sin(a); return vec2(c*p.x - s*p.y, s*p.x + c*p.y); }
+
+/* ---- band-limited sine ----
+   Amplitude rolls off as the phase gradient approaches half a cycle per pixel,
+   which is the Nyquist limit for this feature in this direction, so the term
+   fades out smoothly instead of aliasing.
+
+   Taking fwidth of the *phase* rather than of world position is the whole point,
+   and getting that wrong is why the first attempt at midground detail moved the
+   measured high-frequency energy by nothing at all. On the wash floor the sun is
+   at eight degrees and the camera is looking almost along the surface, so one
+   pixel covers something like half a metre along the view axis and a few
+   millimetres across it. A max of dFdx and dFdy of world position reports the
+   long axis, so every feature between a centimetre and a metre is filtered away —
+   including all the detail that is still perfectly resolvable in the
+   perpendicular direction, which for a ripple train whose crests run across the
+   channel is exactly the direction that matters. Differentiating the phase picks
+   up the anisotropy for free. */
+float bsin(float ph) {
+  return sin(ph * 6.2831853) * (1.0 - smoothstep(0.22, 0.55, fwidth(ph)));
+}
 
 vec3 tsToWorld(vec3 n, vec3 N){
   vec3 ax = abs(N.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0);
@@ -1107,14 +1128,13 @@ albedo *= 1.0 + (band - 0.5) * 0.13 * bandW;
 float rpA = 0.185, rpB = 0.127;
 float rpPh = vWPos.z + (mac2.g - 0.5) * 0.42 + (vr.r - 0.5) * 0.13;
 float rpMix = smoothstep(0.35, 0.65, mac.g);
-float rip = mix(sin(rpPh / rpA * 6.2831853), sin(rpPh / rpB * 6.2831853), rpMix);
+float rip = mix(bsin(rpPh / rpA), bsin(rpPh / rpB), rpMix);
 /* Plane-bed patches, where the flow ran fast enough to wash the ripples out
    entirely. Without them a ripple field is unbroken across the whole floor,
    which no real bed is. */
 float rpBed = smoothstep(0.30, 0.52, mac2.a * 0.7 + vr.g * 0.5);
-float rpF = (1.0 - smoothstep(0.34, 0.92, foot / rpA))
-          * bandW * rpBed * (0.45 + 0.55 * sandW);
-albedo *= 1.0 + rip * 0.105 * rpF;
+float rpF = bandW * rpBed * (0.45 + 0.55 * sandW);
+albedo *= 1.0 + rip * 0.115 * rpF;
 
 /* Cobble-scale chroma mottle. A gravel bar at thirty metres has stopped being a
    collection of readable stones and become a *tone* — greyer and flatter than the
@@ -1122,13 +1142,17 @@ albedo *= 1.0 + rip * 0.105 * rpF;
    footprint is what a mip chain does correctly and does not need help with; the
    reason the midground went flat is that the relief filter was applied to the
    pigment too.
-   Two rotated samples at incommensurate scales, because one sample of a tiling
-   map at a third of a metre is a visible grid at this range. No footprint fade on
-   either: the mip chain already averages them at exactly the right rate, and
-   hand-fading them on top is the double-filtering that flattened the midground in
-   the first place. */
-float mtl = texture2D(uVar, rot2(wxz, 0.83) * 2.90).g * 0.60
-          + texture2D(uVar, rot2(wxz, 2.31) * 1.70).b * 0.40;
+   Built from band-limited sinusoids rather than a texture fetch, for the same
+   anisotropy reason: mip level selection is driven by the longer of the two
+   derivatives, so a tiling map at this scale is chosen at a blurred level and
+   averages to flat under exactly the grazing view where this detail is wanted.
+   Two crossed pairs at incommensurate spacings and off-axis angles, which gives
+   irregular patches of a quarter to a half metre without an axis-aligned grid. */
+float mA = bsin(dot(wxz, vec2(0.83, 0.56)) / 0.34)
+         * bsin(dot(wxz, vec2(-0.56, 0.83)) / 0.41);
+float mB = bsin(dot(wxz, vec2(0.34, -0.94)) / 0.22)
+         * bsin(dot(wxz, vec2(0.94, 0.34)) / 0.26);
+float mtl = clamp(0.5 + 0.30 * mA + 0.22 * mB, 0.0, 1.0);
 albedo *= 1.0 + (mtl - 0.5) * 0.34 * floorM;
 albedo = mix(albedo, albedo * vec3(0.93, 0.99, 1.07),
              smoothstep(0.56, 0.78, mtl) * floorM * 0.5);
@@ -1244,6 +1268,11 @@ export function makeTerrainMaterial(tex) {
       #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
         float footShadow(sampler2D sm, vec2 sz, float si, float sb, float sr, vec4 sc) {
           float s = getShadow(sm, sz, si, sb, sr, sc);
+          /* Kept for the airlight term below. getShadowMask() only exists in the
+             shadow-mask chunk, which meshphysical does not include, so the value
+             has to be caught on the way past — and this wrapper is already the
+             single point every shadow lookup in the lighting chunk goes through. */
+          gShadow = min(gShadow, s);
           return gRake * mix(s, mix(s, 0.55, 0.80), 1.0 - gFoot);
         }
         #define getShadow(a, b, c, d, e, f) footShadow(a, b, c, d, e, f)
@@ -1301,10 +1330,17 @@ export function makeTerrainMaterial(tex) {
          it is three orders of magnitude below the direct term and only serves to
          wash the frame out — which is exactly the milky veil that came back as a
          regression the last two times this was attempted. */
-      float airM = 1.0 - getShadowMask();
+      float airM = 1.0 - gShadow;
       float airD = smoothstep(1.5, 46.0, length(vWPos - cameraPosition));
+      /* Weighted toward blue rather than made brighter. Measured, the first pass
+         moved shadow from rgb(65,26,21) to rgb(67,31,30) — it had neutralised the
+         red cast but stopped exactly at grey, because the term was nearly
+         achromatic. The luminance is already right: shadow sits at 34% of sunlit
+         against the 15-25% a shaded face should read, so there is no room to add
+         energy, only to redistribute it. Roughly the same total, most of it in
+         blue, which is what takes the shadow past neutral into violet. */
       reflectedLight.indirectDiffuse +=
-        vec3(0.030, 0.032, 0.062) * airM * (0.30 + 0.70 * airD) * tAO;`);
+        vec3(0.012, 0.024, 0.090) * airM * (0.30 + 0.70 * airD) * tAO;`);
   };
   mat.customProgramCacheKey = () => 'sedona-terrain-v3';
   return mat;
