@@ -780,17 +780,23 @@ export function makeGrit(size = 256) {
       hh -= socket * 0.42;
       h[i] = hh;
 
-      /* Tone. Narrow on purpose and centred on zero deviation: a grain is the
-         same lithology as the cement holding it, so the contrast between them is
-         a few percent. This is where the confetti failure comes from if it is
-         got wrong, and it is got wrong by making the grains bright. */
-      let t = 0.5 + (cement - 0.5) * 0.10;
+      /* Tone. Symmetric about zero deviation and *not* biased bright, which is
+         the distinction that matters: a grain is the same lithology as the cement
+         holding it, so the two differ by a shade, but the sockets where grains
+         have fallen out are genuinely dark and they are half the population. A
+         layer that is only ever brighter than the surface under it reads as dust;
+         one that goes both ways reads as granularity. Getting the *sign* right is
+         what separates stipple from confetti — not the amplitude, which has to be
+         substantial or the metric never moves. Measured against photographs the
+         per-pixel luminance contrast of a weathered sandstone face is eleven to
+         sixteen percent, so this is authored to reach it. */
+      let t = 0.5 + (cement - 0.5) * 0.15;
       if (gi >= 0) {
         const gv = (gcell * 173.7) % 1;
-        t += (gv - 0.45) * 0.20 * smoothstep(0.10, 0.60, gnorm);
+        t += (gv - 0.5) * 0.30 * smoothstep(0.08, 0.55, gnorm);
       }
-      t -= socket * 0.16;
-      t += (hash2(x, y, 9143) - 0.5) * 0.075;
+      t -= socket * 0.26;
+      t += (hash2(x, y, 9143) - 0.5) * 0.11;
       tone[i] = clamp(t, 0, 1);
     }
   }

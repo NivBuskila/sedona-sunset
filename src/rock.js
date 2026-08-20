@@ -269,10 +269,29 @@ const S0 = -34, S1 = 356;
 const DS = 0.62;
 const NBACK = 7;
 
-/** Wash floor datum. Both walls read the same function of s, so the Fort Apache
- *  band traces across the canyon at one height, which a real one does. */
+/** Wash floor datum, used to find the foot of the wall. This has to track the
+ *  ground, because the toe search asks where the apron has climbed three metres
+ *  above the floor and the floor is what the terrain says it is. */
 function datumAt(s) {
   return 0.0125 * Math.max(0, s) + 2.4 * fbm(s * 0.0052, 11.5, 2, 331);
+}
+
+/** Datum for the *bedding*, which is a different thing and was wrongly the same
+ *  one. Sedona's strata are dead flat over hundreds of metres — you can trace
+ *  the Fort Apache limestone from one side of a canyon to the other at the same
+ *  height — and that flatness is a signature, not a simplification. Hanging the
+ *  column off the floor datum instead put the whole section on the floor's
+ *  gradient plus a ±2.4 m wobble with a two-hundred-metre period, which is up to
+ *  four and a half degrees of dip, read back off a render as bedding that waves
+ *  and tilts down to the right.
+ *  A canyon floor does climb, and the correct consequence of that against flat
+ *  beds is that the section exposed gets *lower in the column* upstream, which is
+ *  how a canyon shallows out towards its head. So a third of the floor's trend is
+ *  kept, which is what stops the lowest cliff being buried outright, and the
+ *  wobble is gone: 0.4 cm of rise per metre is a quarter of a degree, invisible
+ *  across any run of wall the camera can see at once. */
+function bedDatumAt(s) {
+  return 0.0042 * Math.max(0, s);
 }
 
 /** Where the talus apron has climbed three metres above the datum: the foot of
@@ -299,7 +318,7 @@ function wallGrid(path, terrain, side) {
   const att = new Float32Array(nu * nv * 4);   // column y, along-wall s, freshness, cavity
   const uu = new Float32Array(nu * nv);        // lateral offset, kept for the cavity pass
 
-  const cS = new Float32Array(nu), cDat = new Float32Array(nu);
+  const cS = new Float32Array(nu), cDat = new Float32Array(nu), cBed = new Float32Array(nu);
   const cToe = new Float32Array(nu), cCrest = new Float32Array(nu);
   const cRet = new Float32Array(nu), cPrd = new Float32Array(nu);
   const cX = new Float32Array(nu), cZ = new Float32Array(nu);
@@ -316,6 +335,7 @@ function wallGrid(path, terrain, side) {
     cNz[i] = Math.sin(th) * side;
     cX[i] = p.x; cZ[i] = p.z;
     cDat[i] = datumAt(s);
+    cBed[i] = bedDatumAt(s);
     cToe[i] = toeAt(terrain, p.x, p.z, cNx[i], cNz[i], cDat[i]);
   }
 
@@ -383,7 +403,7 @@ function wallGrid(path, terrain, side) {
 
   for (let i = 0; i < nu; i++) {
     const s = cS[i];
-    const dat = cDat[i], toe = cToe[i], ret = cRet[i], prd = cPrd[i], crest = cCrest[i];
+    const dat = cBed[i], toe = cToe[i], ret = cRet[i], prd = cPrd[i], crest = cCrest[i];
     /* Joint coordinates are world azimuths, not wash-relative, so the traces cut
        the wall at a changing obliquity as the corridor bends — which is what tells
        the eye the fractures belong to the rock and not to the canyon. */
@@ -498,7 +518,7 @@ function wallGrid(path, terrain, side) {
          across it — bedding is horizontal, and a band that climbs a slope is the
          one thing that instantly reads as projected paint. Behind the rim there
          is no section anyway: it is caprock and the debris off it. */
-      att[k * 4] = yTop - cDat[i];
+      att[k * 4] = yTop - cBed[i];
       att[k * 4 + 1] = s;
       /* Flagged, by a value the freshness channel can never legitimately take, so
          the shader can tell a back slope from a cliff face. Holding the
@@ -937,7 +957,12 @@ export function buildTalus(path, terrain, material) {
        toe-coarsening keep the biggest blocks at about two metres, which is the
        size that makes the junction an event without competing with the cliff. */
     const r = (0.095 + 0.40 * Math.pow(rand(), 4.0)) * (1 + t * 1.2);
-    tr.set(x, terrain.heightAt(x, z) - r * (0.34 + 0.40 * rand()), z);
+    /* Buried deeper. A talus block sitting on the ground with a clean tangent
+       line between the two reads as composited into the frame; a real one has
+       fines washed in around it and is half swallowed. This is the cheapest half
+       of the burial cue — the sand fillet is the other half and belongs to
+       System 1's scatter, which is where the wash floor's fines are. */
+    tr.set(x, terrain.heightAt(x, z) - r * (0.46 + 0.44 * rand()), z);
     e.set(rand() * 6.283, rand() * 6.283, rand() * 6.283);
     qt.setFromEuler(e);
     sc.set(r * (0.8 + rand() * 0.5), r * (0.55 + rand() * 0.5), r * (0.8 + rand() * 0.5));
@@ -1204,8 +1229,8 @@ vec4 gr = mix(grA, grB, gTw);
 float lumC = dot(rkA, vec3(0.299, 0.587, 0.114));
 float lum = mix(1.0, lumC / uRockLum, 0.88)
           * mix(1.0, rkA2 / uRockLum, 0.16 + 0.46 * grainF)
-          * (1.0 + (gr.r - 0.5) * 1.35);
-lum = clamp(lum, 0.42, 1.75);
+          * (1.0 + (gr.r - 0.5) * 1.55);
+lum = clamp(lum, 0.40, 1.80);
 
 /* Behind the rim, whatever bed capped the summit is buried under its own
    weathering products, so the colour is the debris colour and not the bed's. */
@@ -1224,10 +1249,31 @@ lPale *= 1.0 - back * 0.85;
    inclined sets a metre or two thick, truncated flat at the top of each set. It
    is the most recognisable thing about the cap after its colour, and it is what
    stops a pale band reading as a stripe of paint. */
-float xbSet = floor(y / 2.3 + 0.21 * sin(aS * 0.031));
+float xbC = y / 2.3 + 0.21 * sin(aS * 0.031);
+float xbSet = floor(xbC);
+float xbT = xbC - xbSet;
 float xbDir = sin(xbSet * 2.7 + 1.1) > 0.0 ? 1.0 : -1.0;
-float xb = sin((y + aS * (0.42 + 0.12 * sin(aS * 0.06)) * xbDir) * 2.9 + xbSet * 5.1);
-albedo *= 1.0 + xb * 0.085 * lPale * lVert * (1.0 - smoothstep(0.12, 0.45, foot));
+float xbPh = (y + aS * (0.42 + 0.12 * sin(aS * 0.06)) * xbDir) * 2.9 + xbSet * 5.1;
+float xb = sin(xbPh);
+/* The foresets *inside* the set. One sine per set is four fat stripes, and the
+   critique's sharpest single observation about the close-up was that a real face
+   shows dozens of fine sub-parallel lines per metre sweeping in arcs, with
+   nothing at all between them here. Seven times the frequency puts a lamina every
+   five centimetres, phase-modulated by the set's own sine so the train curves
+   with the foreset instead of crossing it. */
+float xbF = sin(xbPh * 6.5 + 0.55 * sin(xbPh * 1.7));
+/* The truncation surface at the top of each set: the flat erosional cut that
+   beheaded the dune before the next one buried it. It is a *shadow line*, which
+   is what makes a cross-bed set read as a set rather than as diagonal shading.
+   The width is taken from fwidth of the *unwrapped* coordinate — fwidth of a
+   fract explodes at the wrap and puts a one-pixel line down the whole wall, which
+   is the same class of bug as the dotted rules. */
+float xbW = max(0.012, fwidth(xbC) * 1.6);
+float xbCut = 1.0 - smoothstep(0.0, xbW, min(xbT, 1.0 - xbT));
+float xbVis = lVert * (0.30 + 0.70 * lPale);
+albedo *= 1.0 + xb * 0.075 * xbVis * (1.0 - smoothstep(0.16, 0.55, foot));
+albedo *= 1.0 + xbF * 0.055 * xbVis * (1.0 - smoothstep(0.04, 0.20, foot));
+albedo *= 1.0 - xbCut * 0.16 * xbVis;
 
 /* ---- iron-oxide lenses ----
    This is where the saturated end of the distribution comes from, and the reason
@@ -1338,9 +1384,10 @@ albedo *= 1.0 + sbTone;
 float jw = max(foot * 1.6, 0.022);
 vec2 jp = vWPos.xz;
 float jVert = 0.55 + 0.45 * sin(y * 1.9 + aS * 0.07);
-float jt = jointTrace(jp, vec2(0.9397, 0.3420), 1.55, 3.0, jw, 0.62) * 1.00
-         + jointTrace(jp, vec2(-0.2588, 0.9659), 2.70, 17.0, jw, 0.70) * 0.85
-         + jointTrace(jp, vec2(0.6428, -0.7660), 0.62, 41.0, jw * 0.8, 0.80) * 0.55;
+float jt = jointTrace(jp, vec2(0.9397, 0.3420), 4.10, 3.0, jw * 2.4, 0.55) * 1.00
+         + jointTrace(jp, vec2(0.9397, 0.3420), 1.35, 7.0, jw * 1.2, 0.60) * 0.80
+         + jointTrace(jp, vec2(-0.2588, 0.9659), 2.35, 17.0, jw, 0.66) * 0.75
+         + jointTrace(jp, vec2(0.6428, -0.7660), 0.52, 41.0, jw * 0.8, 0.76) * 0.50;
 /* Only on faces steep enough to be a face. A bench top is a rubble tread, and a
    crack drawn across one reads as a scratch on a floor. */
 float jFace = smoothstep(0.62, 0.24, abs(gN.y)) * (1.0 - back);
@@ -1351,8 +1398,8 @@ float joint = clamp(jt, 0.0, 1.0) * jFace * jVert * (0.55 + 0.45 * (1.0 - lPale 
    filtered profile rather than as a second feature, so it can never separate
    from its own crack. */
 float jLip = clamp(jt * 1.7 - 0.55, 0.0, 1.0) * jFace * jVert;
-albedo *= 1.0 - joint * 0.34;
-albedo *= 1.0 + jLip * 0.10 * sTerm;
+albedo *= 1.0 - joint * 0.46;
+albedo *= 1.0 + jLip * 0.14 * sTerm;
 
 /* ---- desert varnish ----
    Manganese and iron oxides washed out of the rock above and plated onto the face
@@ -1434,7 +1481,15 @@ albedo *= 0.93 + 0.14 * mac.b;
    Apache limestone have little iron to leach, and a cool cast laid over an
    already-desaturated cream band is what turned the caprock blue-white in the
    first render — which reads as ice, not as sandstone. */
-albedo = mix(albedo, albedo * vec3(0.92, 0.97, 1.08),
+/* Warm, not cool, and this was measurably the wrong way round. Leached iron
+   leaves buff and cream, not blue-grey: what the oxide was staining is quartz
+   sand, and quartz sand with the oxide gone is the colour of sand. Multiplying a
+   red albedo by (0.92, 0.97, 1.08) raises blue eleven percent relative to green,
+   and blue at or above green is precisely the measured hue defect — real Sedona
+   rock runs a blue-to-green ratio of 0.32 to 0.90 and this render was running
+   0.87 to 1.21, which is the difference between orange and magenta. A leached
+   patch should desaturate toward warm grey and lose a little of both. */
+albedo = mix(albedo, albedo * vec3(1.03, 1.00, 0.93),
              smoothstep(0.62, 0.88, vr.r) * 0.34 * (1.0 - lPale * 0.85));
 albedo = mix(albedo, albedo * vec3(1.10, 0.97, 0.88), smoothstep(0.58, 0.86, mac.a) * 0.30);
 
@@ -1483,8 +1538,8 @@ vec3 wN = normalize(mix(gN, nDet, relW));
    distance because its scale follows the footprint. Faded on the terminator for
    the reason set out below — these are millimetres of relief and at grazing
    incidence they occlude each other completely rather than sparkling. */
-vec3 gNrm = domApply((gr.gb - 0.5) * 1.6, gN);
-wN = normalize(mix(wN, gNrm, 0.55 * (0.06 + 0.94 * sTerm)));
+vec3 gNrm = domApply((gr.gb - 0.5) * 1.9, gN);
+wN = normalize(mix(wN, gNrm, 0.72 * (0.06 + 0.94 * sTerm)));
 /* Only the soft contacts, which the mesh deliberately did not step, and only as a
    profile whose derivative is bounded. Everything hard is geometry now: a step
    function put through dFdx is a one-pixel black line beside a one-pixel white
@@ -1528,7 +1583,7 @@ tAO = clamp(rkAO * (0.72 + 0.34 * (1.0 - cav)) - ledgeShade * 0.5 - sbLip * 0.30
 /* The grit's crevice occlusion, unfiltered by distance: it is a tone, it is
    scale-locked to the footprint, and it is what keeps the material present at
    the range where every normal in the shader has already faded out. */
-tAO *= mix(1.0, gr.a, 0.55);
+tAO *= mix(1.0, gr.a, 0.75);
 /* Held on much further than before. The map's occlusion channel is now the
    cavity of a packing — the crevice between two touching grains and the floor of
    a weathering pit — and that is a *tone*, not a normal: it filters correctly

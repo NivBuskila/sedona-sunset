@@ -180,6 +180,7 @@ function limbGeometry(pts, radii, seg, prof, twistRate, s0, flute, deadBase = 0)
   const pos = new Float32Array(vcount * 3);
   const uv = new Float32Array(vcount * 2);
   const dead = new Float32Array(vcount);
+  const vcol = new Float32Array(vcount * 3);
   const uRep = Math.max(1, Math.round(TAU * radii[0] / BARK_TILE));
   const o = { r: 0, dead: 0 };
 
@@ -198,6 +199,15 @@ function limbGeometry(pts, radii, seg, prof, twistRate, s0, flute, deadBase = 0)
       uv[k * 2] = j / seg * uRep;
       uv[k * 2 + 1] = (s0 + si) / BARK_TILE;
       dead[k] = Math.max(deadBase, o.dead);
+      /* Cavity occlusion in the flutes, baked. Without it the trunk is invisible
+         whenever it is not in direct sun: the fill in this scene is a broad sky
+         dome, a smooth lobed cylinder under a dome shades almost uniformly, and
+         the first build's backlit trunk came out as a featureless pale tube. A
+         groove four centimetres deep and two wide sees very little of the sky,
+         and that is what actually draws the fluting on an overcast or shadow-side
+         trunk. */
+      const ao = 0.34 + 0.66 * Math.pow(shape, 0.70);
+      vcol[k * 3] = ao; vcol[k * 3 + 1] = ao; vcol[k * 3 + 2] = ao;
     }
   }
 
@@ -622,14 +632,37 @@ export function makeFoliageMaterial(map) {
   const u = {
     uSunDir: { value: SUN_DIR.clone() },
     uTrans: { value: new THREE.Color(1.55, 1.22, 0.52) },
-    uTransAmt: { value: 0.55 },
+    uTransAmt: { value: 1.55 },
+    uDirCap: { value: 0.42 },
   };
   mat.userData.uniforms = u;
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, u);
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>',
-        '#include <common>\nuniform vec3 uSunDir;\nuniform vec3 uTrans;\nuniform float uTransAmt;')
+        '#include <common>\nuniform vec3 uSunDir;\nuniform vec3 uTrans;\n' +
+        'uniform float uTransAmt;\nuniform float uDirCap;')
+      /* A foliage card is not a sheet, and the difference is not cosmetic.
+         It stands in for a volume of two-millimetre cords pointing in every
+         direction, so its sub-pixel average response to a directional source
+         saturates instead of following a cosine on one normal. Lit as a
+         Lambertian sheet, every card in the crown whose sphere normal happened
+         to point at the sun returned full irradiance — with the key at eight
+         degrees that is seven and a half times what the ground receives — and
+         the crown came out as a dark mass stippled with cream popcorn measuring
+         (240, 227, 211). Diagnosed twice as an alpha-cutout artefact and it was
+         a BRDF one.
+         The soft knee below is that saturation. Small values pass through
+         unchanged, so the shadow side and the fill are untouched; the peak lands
+         a little under half of the sunlit ground's radiance, which is where a
+         crown of cords actually sits. Specular is cut hard for the same reason:
+         a dielectric F0 of 0.04 at this grazing an angle is a white veil over
+         a surface that has no coherent facet to reflect from. */
+      .replace('#include <lights_fragment_end>', /* glsl */`
+        #include <lights_fragment_end>
+        reflectedLight.directDiffuse =
+          uDirCap * ( 1.0 - exp( -reflectedLight.directDiffuse / uDirCap ) );
+        reflectedLight.directSpecular *= 0.28;`)
       .replace('#include <opaque_fragment>', /* glsl */`
         {
           vec3 sunV = normalize( ( viewMatrix * vec4( uSunDir, 0.0 ) ).xyz );
@@ -637,7 +670,8 @@ export function makeFoliageMaterial(map) {
           float fwd = clamp( -dot( sunV, V ), 0.0, 1.0 );
           float phase = pow( fwd, 4.0 ) * 0.92 + 0.08;
           /* Only the parts of the sheet facing away from the sun transmit;
-             the sun-facing side is already lit by the direct term. */
+             the sun-facing side is already lit by the direct term. Added after
+             the knee, so the backlit rim is the one thing allowed to be bright. */
           float back = clamp( -dot( normalize( normal ), sunV ) * 0.5 + 0.55, 0.0, 1.0 );
           reflectedLight.directDiffuse +=
             diffuseColor.rgb * uTrans * ( phase * back * uTransAmt );

@@ -202,17 +202,36 @@ function angularClast(seed, flat, bevel) {
  * and flattening it to red would be the opposite mistake. Nothing now sits below
  * about 0.19 saturation, and the pale end has come down in value as well, because
  * a pale *and* neutral clast is the combination that reads as concrete. */
+/* ---- and why the pale end came down again ----
+ * The pale lithologies were reading as confetti in the talus and on the lower
+ * slopes, and it is worth being precise about which of the two obvious causes it
+ * actually was, because it was mostly the second.
+ *
+ * Value contrast: quartz at (0.74, 0.665, 0.545) is 0.672 luminance against the
+ * matrix's 0.431 — 1.56x, and up to 1.75x once the per-instance jitter is on top.
+ * A clast weathering out of a matrix is the same lithology as the matrix, so it
+ * should differ by a shade; 1.75x is a different material.
+ *
+ * Hue: the pale entries carried a blue-to-green ratio of 0.82 against the
+ * matrix's 0.635, so under a violet skylight they were the surfaces with enough
+ * blue albedo to actually take the violet — which is why the chips read
+ * specifically as grey-*lavender* rather than merely as bright. Nothing in a
+ * desert is neutral, and nothing pale in a desert is neutral either: an
+ * off-white Coconino pebble in a Sedona wash has been rolling in iron oxide for
+ * ten thousand years. So the pale end is dusted with the local oxide, which pulls
+ * blue down toward the matrix and takes value with it. 1.2 to 1.3x now.
+ */
 const LITH = [
   [0.72, 0.205, 0.088], // iron-stained red sandstone — carries the saturated tail
   [0.52, 0.31, 0.225],  // red Schnebly Hill sandstone
   [0.78, 0.40, 0.135],  // orange mud-coated clast
-  [0.60, 0.455, 0.320], // buff sandstone
-  [0.72, 0.615, 0.470], // off-white Coconino, dust-filmed
-  [0.50, 0.415, 0.320], // grey Fort Apache limestone under desert dust
+  [0.575, 0.428, 0.295], // buff sandstone
+  [0.64, 0.520, 0.372], // off-white Coconino, dust-filmed
+  [0.475, 0.378, 0.278], // grey Fort Apache limestone under desert dust
   [0.34, 0.275, 0.235], // desert-varnished dark pebble
-  [0.60, 0.48, 0.325],  // buff chert
-  [0.68, 0.585, 0.445], // cream caprock limestone
-  [0.74, 0.665, 0.545], // quartz, dust-filmed
+  [0.575, 0.450, 0.300], // buff chert
+  [0.61, 0.492, 0.352], // cream caprock limestone
+  [0.66, 0.552, 0.412], // quartz, dust-filmed
 ];
 /* Transported clasts came from anywhere upstream, so they are mixed — and only
    about half of them are the local red family. Talus fell off the wall thirty
@@ -843,7 +862,7 @@ export function buildScatter(terrain, tex) {
     /* Narrow. A wide per-instance value spread on top of eight lithologies mixes
        them back together — a dark limestone and a bright basalt land on the same
        screen value and the polychrome scatter stops being legible as rock types. */
-    const t = (0.86 + rand() * 0.26) * cl.tint;
+    const t = (0.84 + rand() * 0.22) * cl.tint;
     let L = LITH[lith];
     /* A clast half weathered out of a bank face is still partly coated in the
        matrix it came out of, so it differs from the bank by a shade rather than by
