@@ -838,6 +838,12 @@ export function createAudio({ camera, canvas, path, seed } = {}) {
 
   const stt = { x: 0, z: 0, speed: 0, dt: 0.016 };
 
+  /* Getters onto the live state rather than a copy, so reading is free and
+     writing does not take. */
+  const windView = Object.freeze(Object.defineProperties({}, Object.fromEntries(
+    ['gust', 'base', 'heading', 'dirX', 'dirZ', 'speed'].map(
+      k => [k, { enumerable: true, get: () => sc.wind[k] }]))));
+
   function update(dt, player) {
     const now = ctx.currentTime;
     if (!enabled || ctx.state !== 'running') {
@@ -876,10 +882,26 @@ export function createAudio({ camera, canvas, path, seed } = {}) {
     },
     /** Force a coyote now, for testing. */
     coyote() { return sc._fireCoyote(ctx.currentTime + 0.15, (Math.random() * 2 - 1) * Math.PI); },
-    /** Live weather, shared with anything visual that has to agree with it. */
-    get wind() { return sc.wind; },
-    /** Weather at an arbitrary absolute context time. */
+    /**
+     * Live weather. Read-only by construction — System 5's blowing sand has to
+     * agree with the sound, and the way that goes wrong is one of them quietly
+     * writing to the other's state.
+     */
+    wind: windView,
+    /** Weather at an arbitrary absolute context time, past or future. */
     windAt(t) { return sc.windAt(t); },
+    /**
+     * Gust windows overlapping [from, to] in context time, as
+     * `{t0, dur, peak}`. Saltation is a burst phenomenon, so anything visual
+     * wanting to spawn grains ahead of time needs the schedule, not just the
+     * instantaneous value.
+     */
+    gusts(from = ctx.currentTime, to = ctx.currentTime + 60) {
+      sc._ensureGusts(to);
+      return sc.gusts
+        .filter(g => g.t0 + g.dur >= from && g.t0 <= to)
+        .map(g => ({ t0: g.t0, dur: g.dur, peak: g.peak }));
+    },
     get time() { return ctx.currentTime; },
     get state() { return ctx.state; },
     /** Offline render of this exact graph; see tools/audioprobe.mjs. */

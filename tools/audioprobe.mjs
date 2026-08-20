@@ -127,7 +127,8 @@ function analyse(x, sr, meta) {
 
   /* Bands, from an averaged periodogram over the whole take. */
   const S = stft(x, 1024, 256);
-  const bandEdges = [20, 120, 500, 2000, 6000, sr / 2];
+  const bandEdges = [20, 120, 500, 2000, 6000, 12000]
+    .filter(f => f < sr / 2).concat(sr / 2);
   const bandPow = new Float64Array(bandEdges.length - 1);
   const avg = new Float64Array(S.bins);
   for (let f = 0; f < S.frames; f++) {
@@ -511,7 +512,8 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
 
   /* ── report ── */
   const T = a.thresholds;
-  const bandName = ['20-120', '120-500', '500-2k', '2k-6k', `6k-${Math.round(a.sampleRate / 2000)}k`];
+  const hz = (f) => (f >= 1000 ? `${+(f / 1000).toFixed(1)}k` : `${f}`);
+  const bandName = a.bandEdges.slice(0, -1).map((f, i) => `${hz(f)}-${hz(a.bandEdges[i + 1])}`);
   const lines = [];
   const say = (s) => { lines.push(s); console.log(s); };
 
