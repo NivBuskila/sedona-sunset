@@ -15,17 +15,39 @@
    hand, with a SwiftShader browser still rendering behind it. */
 import { exec } from 'node:child_process';
 import http from 'node:http';
+import fs from 'node:fs';
 
 const ps = c => exec('powershell -NoProfile -Command "' + c + '"', () => {});
-const AFFINITY = '0xF00';          // top four logical cores of twelve
+
+/* Two budgets, because the machine has two modes.
+
+   SHARED (default) is four of the twelve logical cores at Idle: the user is at
+   the keyboard, very likely gaming, and a SwiftShader run left unconstrained
+   makes that unplayable.
+
+   UNATTENDED is ten of twelve at BelowNormal, for when the user has explicitly
+   handed the machine over — overnight, say. It leaves two threads for the OS
+   and the editor so the box stays responsive, and cuts a full eight-view set
+   from roughly twenty minutes to well under ten.
+
+   Opt in with RENDER_BUDGET=unattended, or by creating a `.unattended` file in
+   the project root — the marker exists so that agents which know nothing about
+   this switch still pick it up, rather than every caller having to remember an
+   environment variable. Remove it before the user is back at the keyboard;
+   leaving it wide is the one change here that can actually spoil an evening. */
+const UNATTENDED = process.env.RENDER_BUDGET === 'unattended' ||
+  fs.existsSync(new URL('../.unattended', import.meta.url));
+const AFFINITY = UNATTENDED ? '0x3FF' : '0xF00';
+const NODE_PRIO = UNATTENDED ? 'Normal' : 'BelowNormal';
+const CHILD_PRIO = UNATTENDED ? 'BelowNormal' : 'Idle';
 
 // node does the JSON marshalling and, in some harnesses, the stepping
 ps(`$p=Get-Process -Id ${process.pid} -ErrorAction SilentlyContinue; ` +
-   `if($p){ $p.PriorityClass='BelowNormal'; $p.ProcessorAffinity=${AFFINITY} }`);
+   `if($p){ $p.PriorityClass='${NODE_PRIO}'; $p.ProcessorAffinity=${AFFINITY} }`);
 
 const tameChildren = () => ps(
   "Get-Process chrome-headless-shell -ErrorAction SilentlyContinue | ForEach-Object " +
-  `{ try { $_.PriorityClass = 'Idle'; $_.ProcessorAffinity = ${AFFINITY} } catch {} }`);
+  `{ try { $_.PriorityClass = '${CHILD_PRIO}'; $_.ProcessorAffinity = ${AFFINITY} } catch {} }`);
 setTimeout(tameChildren, 1500).unref();
 setInterval(tameChildren, 4000).unref();
 

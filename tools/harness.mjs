@@ -29,15 +29,22 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 
-/* Four of the twelve logical cores, at the bottom of the scheduler. Matches
-   lowprio.cmd's /AFFINITY F00 so the two agree. */
-const AFFINITY = 0xF00, CORES = 4;
+/* Must agree with tame.mjs, which sets the same two budgets: four of twelve
+   logical cores at Idle while the user is at the keyboard, ten of twelve at
+   BelowNormal when they have handed the machine over (RENDER_BUDGET=unattended).
+   If these two disagree the later writer wins and the cap is whatever it happens
+   to be, which is the sort of thing that is only noticed when a game stutters. */
+const UNATTENDED = process.env.RENDER_BUDGET === 'unattended' ||
+  fs.existsSync(new URL('../.unattended', import.meta.url));
+const AFFINITY = UNATTENDED ? 0x3FF : 0xF00;
+const CORES = UNATTENDED ? 10 : 4;
+const CHILD_PRIO = UNATTENDED ? 'BelowNormal' : 'Idle';
 
 /* Chromium keeps renaming the headless binary between versions, and Playwright
    may use either depending on channel; pin whichever shows up. */
 const PIN = 'powershell -NoProfile -Command "' +
   "Get-Process chrome-headless-shell,chrome,headless_shell -ErrorAction SilentlyContinue | " +
-  `ForEach-Object { try { $_.PriorityClass = 'Idle'; $_.ProcessorAffinity = ${AFFINITY} } catch {} }"`;
+  `ForEach-Object { try { $_.PriorityClass = '${CHILD_PRIO}'; $_.ProcessorAffinity = ${AFFINITY} } catch {} }"`;
 
 function pinChildren() {
   const go = () => exec(PIN, () => {});
