@@ -45,8 +45,21 @@ matched, so widen the tail rather than raising the average.
 
 ## Build order
 
-Each system is built to completion and passes visual critique before the next one starts.
-Systems are built one at a time — never two at once.
+Each system is critiqued before the next one starts, and systems are built one at a time —
+never two at once.
+
+**Terrain is deliberately being left short of the bar.** System 1 held at 5.5/10 across
+three critique rounds, not because it stopped improving but because each round fixed the
+previous blocker and exposed a new one. A growing share of what remains is not System 1's
+to fix: exposure and tonemap belong to System 7, warm-grey shadows that should be violet
+belong to System 4, and the wall surfaces get replaced wholesale by System 2. Judging
+terrain against a photorealism bar while the lighting and grading are still placeholders
+has hit diminishing returns.
+
+So the wash floor moves on at roughly 6/10 and **terrain is revisited once real lighting
+and grading exist**, when the remaining defects can be judged against a scene that is
+actually lit. Carry the outstanding terrain defects forward — they are not forgiven, only
+deferred.
 
 1. Terrain and wash path
 2. Red rock buttes

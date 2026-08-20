@@ -25,7 +25,7 @@
  */
 import * as THREE from 'three';
 import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
-import { rng, fbm, clamp } from './noise.js';
+import { rng, fbm, clamp, mix } from './noise.js';
 
 /* ── shapes ────────────────────────────────────────────────────────────── */
 
@@ -139,7 +139,14 @@ function angularClast(seed, flat, bevel) {
     const L = Math.hypot(dx, dy, dz) || 1;
     dx /= L; dy /= L; dz /= L;
     const t = 1 / Math.max(Math.abs(dx) / ax, Math.abs(dy) / ay, Math.abs(dz) / az);
-    const j = t * (0.70 + rand() * 0.40);
+    /* Pushed out to straddle the box surface rather than sitting inside it. At
+       0.70 to 1.10 most of these landed *within* the hull the eight jittered
+       corners already describe, so they contributed no vertex and the hull stayed
+       six big planes however many were requested — which is why a slab with
+       thirty-four bevel points still presented one featureless quadrilateral to
+       the camera. A convex hull only takes its extreme points, so a bevel point
+       has to be reliably outside its neighbours to become a facet at all. */
+    const j = t * (0.90 + rand() * 0.26);
     pts.push(new THREE.Vector3(dx * j, dy * j, dz * j));
   }
   const g = new ConvexGeometry(pts);
@@ -176,24 +183,48 @@ function angularClast(seed, flat, bevel) {
  * The varnished pebbles are dark grey-brown rather than black; a real desert
  * varnish measures around 0.08 reflectance but nothing in a photograph of one
  * reads as a hole. */
+/* Every entry also carries a dust film, and that is not a stylistic choice —
+ * it is what was wrong with the worst object in the last set.
+ *
+ * A half-metre clast in the near field drew grey Fort Apache limestone, which was
+ * authored at (0.47, 0.45, 0.42): a *neutral* grey, 0.11 saturation. Measured in
+ * the frame it came out at 0.169 in a scene otherwise running 0.4 to 0.6, and it
+ * read exactly as what it measured — a rectangle of grey paper composited onto a
+ * warm photograph. The lithology was defensible and the colour was not, because
+ * nothing in a desert is neutral: every exposed surface carries a film of the
+ * local dirt, and under a 3500 K key even a genuinely white rock renders warm. A
+ * neutral grey is achievable in that scene only by a manufactured object, which is
+ * precisely how the eye read it.
+ *
+ * So the achromatic end of the palette is dusted rather than deleted — the
+ * polychrome scatter is one of the most recognisable things about a Sedona wash
+ * and flattening it to red would be the opposite mistake. Nothing now sits below
+ * about 0.19 saturation, and the pale end has come down in value as well, because
+ * a pale *and* neutral clast is the combination that reads as concrete. */
 const LITH = [
   [0.72, 0.205, 0.088], // iron-stained red sandstone — carries the saturated tail
-  [0.52, 0.31, 0.235],  // red Schnebly Hill sandstone
+  [0.52, 0.31, 0.225],  // red Schnebly Hill sandstone
   [0.78, 0.40, 0.135],  // orange mud-coated clast
-  [0.62, 0.51, 0.41],   // buff sandstone
-  [0.76, 0.71, 0.64],   // off-white Coconino
-  [0.47, 0.45, 0.42],   // grey Fort Apache limestone
-  [0.31, 0.275, 0.255], // desert-varnished dark pebble
-  [0.60, 0.50, 0.36],   // buff chert
-  [0.72, 0.68, 0.62],   // cream caprock limestone
-  [0.78, 0.77, 0.74],   // quartz
+  [0.60, 0.455, 0.320], // buff sandstone
+  [0.72, 0.615, 0.470], // off-white Coconino, dust-filmed
+  [0.50, 0.415, 0.320], // grey Fort Apache limestone under desert dust
+  [0.34, 0.275, 0.235], // desert-varnished dark pebble
+  [0.60, 0.48, 0.325],  // buff chert
+  [0.68, 0.585, 0.445], // cream caprock limestone
+  [0.74, 0.665, 0.545], // quartz, dust-filmed
 ];
 /* Transported clasts came from anywhere upstream, so they are mixed — and only
    about half of them are the local red family. Talus fell off the wall thirty
    metres above it, so it is nearly all local: an apron of pale blocks reads as
    builders' rubble rather than as a collapsed wall. */
 const MIX_TRANSPORTED = [0.17, 0.20, 0.10, 0.13, 0.07, 0.10, 0.11, 0.06, 0.04, 0.02];
-const MIX_LOCAL       = [0.22, 0.46, 0.06, 0.14, 0.02, 0.02, 0.04, 0.02, 0.015, 0.005];
+/* Buff sandstone pulled back from an eighth of the local mix to under a tenth.
+   It is the palest thing with a large share, and the coarse fraction now draws
+   from this mix, so it was supplying most of the large pale plates — two of them
+   landed side by side in the near field of one frame and both read as grey card. A
+   pale clast is fine; a pale clast the size of a paving stone is what the eye
+   stops on. */
+const MIX_LOCAL       = [0.24, 0.50, 0.07, 0.09, 0.015, 0.015, 0.04, 0.02, 0.008, 0.002];
 /* Blocks and slabs get their own mix with the extremes taken out. The saturated
    iron staining and the mud coating are *coatings on small transported clasts* —
    a film picked up in the bed — and at pebble scale they are what gives the floor
@@ -226,11 +257,20 @@ const CLASSES = [
     name: 'gravel', kind: 'angular', variants: 3, count: 13000, uMax: 18,
     flat: 0.50, bevel: 8,
     rMin: 0.024, rMax: 0.090, maxSlope: 0.58, shadow: true, orient: 'surface',
-    /* Sunk deeper. A bed where every stone sits fully proud is a bed where objects
-       were placed on a surface, and that was still the read. Half of these now go in
-       past their shoulders, which also cuts the number of full silhouettes in the
-       midground and with it the variance that was hashing. */
-    imbricate: 0.28, sink: [0.52, 0.86], deepSink: 0.46, lith: CDF_T, tint: 1.0,
+    /* Imbrication raised hard, and it is the cheapest realism in the file. Water
+       stacks platy clasts like roof shingles, all dipping upstream, and that shared
+       orientation is the single most recognisable signature of fluvial transport —
+       it is what tells a geologist at a glance that a gravel was laid by a current
+       rather than dumped. At 0.28 barely a quarter of the bed was tiled and the
+       effect did not survive being averaged with the three quarters that were not:
+       reported as absent. */
+    imbricate: 0.72, sink: [0.40, 0.88], deepSink: 0.42, lith: CDF_T, tint: 1.0,
+    /* Above the median size these get a fillet of banked fines against the
+       upstream face, like the coarser classes. The tell the last two critics both
+       named is that a clast sits on undisturbed ground, and it is a tell at gravel
+       scale as much as at cobble scale — this is the size class that covers the
+       floor, so it is where the read is won or lost. */
+    scour: true, scourFrom: 0.55, scourTail: false,
     weight: (fc) => (fc.chan * (0.45 + 0.85 * fc.lag) + fc.bar * 0.85 + fc.terr * 0.22)
                   * (0.30 + 1.30 * fc.string)
                   * (1 - fc.bare * 0.95) * (1 - fc.sheet) * (1 - fc.pan),
@@ -242,8 +282,8 @@ const CLASSES = [
        down. Ellipsoids read as potatoes however they are textured. */
     name: 'cobble', kind: 'angular', variants: 4, count: 3400, uMax: 18,
     rMin: 0.070, rMax: 0.230, flat: 0.42, bevel: 14, maxSlope: 0.50, shadow: true,
-    imbricate: 0.62, sink: [0.58, 0.94], deepSink: 0.40, lith: CDF_T, tint: 1.0,
-    orient: 'surface', scour: true,
+    imbricate: 0.84, sink: [0.46, 0.92], deepSink: 0.40, lith: CDF_T, tint: 1.0,
+    orient: 'surface', scour: true, scourFrom: 0.30, scourTail: true,
     weight: (fc) => (fc.chan * (0.25 + 1.35 * fc.lag) + fc.bar * 0.55 + fc.terr * 0.10)
                   * (0.12 + 1.75 * fc.string)
                   * (1 - fc.bare * 0.98) * (1 - fc.sheet) * (1 - fc.pan),
@@ -251,7 +291,7 @@ const CLASSES = [
   {
     name: 'pavement', kind: 'angular', variants: 3, count: 2400, uMax: 26,
     rMin: 0.055, rMax: 0.190, flat: 0.50, bevel: 9, maxSlope: 0.52, shadow: true,
-    imbricate: 0, sink: [0.48, 0.66], lith: CDF_L, tint: 0.82, orient: 'surface',
+    imbricate: 0, sink: [0.35, 0.62], lith: CDF_L, tint: 0.82, orient: 'surface',
     /* desert pavement: weathered angular fragments left on the abandoned
        terrace after the fines blew out from between them */
     weight: (fc) => (fc.terr * 0.95 + fc.tal * 0.35) * (1 - fc.bare * 0.5) * (1 - fc.pan),
@@ -263,7 +303,7 @@ const CLASSES = [
        fallen sandstone, it reads as a crate. Bedded rock breaks into slabs. */
     rMin: 0.090, rMax: 0.270, sizeP: 3.0, squat: true,
     flat: 0.62, bevel: 26, maxSlope: 0.62, shadow: true,
-    imbricate: 0, sink: [0.74, 1.05], lith: CDF_B, collar: 7, tint: 0.78,
+    imbricate: 0, sink: [0.52, 0.94], lith: CDF_B, collar: 7, tint: 0.78,
     orient: 'random', taper: true,
     /* Talus only. Allowing these onto the open floor as bank slump put isolated
        half-metre boxes out in the middle of the wash, and a cluster of those at
@@ -286,7 +326,7 @@ const CLASSES = [
     name: 'slab', kind: 'angular', variants: 4, count: 220, uMax: 34,
     rMin: 0.200, rMax: 0.350, sizeP: 2.2, squat: true,
     flat: 0.62, bevel: 34, maxSlope: 0.50, shadow: true,
-    imbricate: 0, sink: [0.70, 1.00], lith: CDF_B, collar: 5, tint: 0.78,
+    imbricate: 0, sink: [0.50, 0.90], lith: CDF_B, collar: 5, tint: 0.78,
     orient: 'random', taper: true,
     /* bedding-plane slabs, which fall off a stratified wall as sheets. Apron only,
        and under half a metre: a two-metre plate with a flat top lying by itself on
@@ -299,8 +339,8 @@ const CLASSES = [
        reads as a demolished patio. */
     name: 'boulder', kind: 'angular', variants: 3, count: 110, uMax: 16,
     rMin: 0.320, rMax: 0.600, flat: 0.86, bevel: 30, maxSlope: 0.40, shadow: true,
-    imbricate: 0.55, sink: [0.56, 0.88], deepSink: 0.26, lith: CDF_B, collar: 9,
-    tint: 1.0, orient: 'surface', scour: true,
+    imbricate: 0.68, sink: [0.42, 0.82], deepSink: 0.26, lith: CDF_B, collar: 9,
+    tint: 1.0, orient: 'surface', scour: true, scourFrom: 0.0, scourTail: true,
     /* flood-transported, so they sit in the channel and on bar heads */
     weight: (fc) => (fc.chan * 1.0 + fc.bar * 0.5) * fc.lag * (0.2 + 1.6 * fc.string)
                   * (1 - fc.pan),
@@ -383,9 +423,17 @@ export function buildScatter(terrain, tex) {
          like rock is grain at the scale of a fingernail, and there was none on them.
          Scaling the UVs by the instance's own radius fixes the density in world
          space instead. The maps repeat, so this only costs a multiply. */
+      /* The constant is set from physical size, not by eye. The box projection
+         normalises local coordinates into the unit square, so one tile spans the
+         instance's full width — 2 × its radius — and the map is authored against
+         a six-centimetre tile. Hence 2/0.06 ≈ 34 tiles per metre of clast. The
+         previous 7 gave a half-metre slab a 29 cm tile, which put the map's
+         coarsest mottle at hand scale and everything finer below the resolution
+         the eye was looking at: the slab came out featureless, which was the
+         single loudest defect in the set. */
       .replace('#include <uv_vertex>', /* glsl */`
         #include <uv_vertex>
-        float uvK = clamp(length(instanceMatrix[0].xyz) * 7.0, 1.0, 7.0);
+        float uvK = clamp(length(instanceMatrix[0].xyz) * 34.0, 1.0, 18.0);
         #ifdef USE_MAP
           vMapUv *= uvK;
         #endif
@@ -408,9 +456,22 @@ export function buildScatter(terrain, tex) {
         vFar = 1.0 - smoothstep(2.6, 9.0, px);
         transformed *= smoothstep(0.60, 1.60, px);
       `)
+      /* Converging on the population mean is right — a pixel covering ten clasts
+         genuinely sees the mean of ten clasts — but converging every distant clast
+         on the *same* mean is not, and that is what flattened the mid distance. The
+         variance that survives a widening footprint is the variance at scales above
+         a pixel: a gravel bar at thirty metres still reads as a different tone from
+         the sand beside it, because the patch is metres across. So the mean itself
+         varies over tens of metres. Chroma only, at two wavelengths, no value
+         change — macro variance in luminance is what came out as pale blobs
+         floating over the midground. */
       .replace('#include <color_vertex>', /* glsl */`
         #include <color_vertex>
-        vColor = mix(vColor, uFarCol, vFar);
+        vec3 iW = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+        float pat = 0.5 + 0.25 * sin(iW.x * 0.213 + iW.z * 0.131)
+                        + 0.25 * sin(iW.z * 0.087 - iW.x * 0.052 + 2.1);
+        vec3 far = uFarCol * mix(vec3(0.90, 0.97, 1.09), vec3(1.11, 1.00, 0.87), pat);
+        vColor = mix(vColor, far, vFar);
         vSeat = normalize(normalMatrix * mat3(instanceMatrix) * vec3(0.0, 1.0, 0.0));
       `);
 
@@ -418,6 +479,16 @@ export function buildScatter(terrain, tex) {
       .replace('#include <normal_fragment_maps>', /* glsl */`
         #include <normal_fragment_maps>
         normal = normalize(mix(normal, vSeat, vFar * 0.92));
+      `)
+      /* Same reasoning as the terrain: a dust-filmed dry stone does not go
+         mirror-bright along its edges, and the stock material's specularF90 of 1.0
+         says it does. On a clast this was also lighting the near-grazing arris of
+         every faceted block as a white hairline, which is where the fireflies on
+         the sunlit crests were coming from. */
+      .replace('#include <lights_physical_fragment>', /* glsl */`
+        #include <lights_physical_fragment>
+        material.specularColor *= 0.55;
+        material.specularF90 *= 0.16;
       `);
   };
 
@@ -495,12 +566,34 @@ export function buildScatter(terrain, tex) {
 
       let rad = cl.rMin + Math.pow(rand(), cl.sizeP || 1.7) * (cl.rMax - cl.rMin);
       if (cl.taper) rad *= 0.40 + 0.60 * (1 - fc.talPos);
-      const lith = pickLith(cl.lith, rand());
 
-      emit(cl, buckets[placed % cl.variants], x, y, z, rad, lith, rand, th, nrm);
+      /* ---- lithology by size, and by what it is sitting in ----
+       * Two physical constraints, and between them they remove the large pale
+       * neutral faces that were the worst objects in the frame without touching
+       * the polychrome scatter at pebble scale, where it belongs.
+       *
+       * Competence. A flood can roll a granule from the Rim and only shove a
+       * half-metre block a few metres, so grain size and travel distance are
+       * inversely related: the small fraction is exotic and mixed, the coarse
+       * fraction is local. That is why an off-white Coconino *pebble* on red soil
+       * is one of the things people notice about these washes and an off-white
+       * Coconino *slab* in the middle of the channel is not a thing that happens.
+       *
+       * Provenance. A clast weathering out of a cut bank came out of that bank,
+       * so it is the same material as the matrix around it and the contrast
+       * between them is low. Drawing bank clasts from the general mix is what
+       * turned the bank faces into near-white ellipsoids on a near-black ground —
+       * measured as polka dots, and correctly. */
+      const sizeFr = clamp((rad - cl.rMin) / Math.max(1e-6, cl.rMax - cl.rMin), 0, 1);
+      const bankF = clamp((1 - nrm.y - 0.20) / 0.28, 0, 1);
+      let cdfUse = cl.lith;
+      if (cdfUse === CDF_T && (bankF > 0.25 || rand() < Math.pow(sizeFr, 1.2))) cdfUse = CDF_L;
+      const lith = pickLith(cdfUse, rand());
+
+      emit(cl, buckets[placed % cl.variants], x, y, z, rad, lith, rand, th, nrm, bankF);
       placed++;
 
-      if (cl.scour && rad > cl.rMin + (cl.rMax - cl.rMin) * 0.30) {
+      if (cl.scour && sizeFr > cl.scourFrom) {
         /* Upstream is up-wash: the flood came down the wash, so it stalls against
            the face pointing back the way it came. */
         const ux = Math.sin(th), uz = -Math.cos(th);
@@ -509,10 +602,18 @@ export function buildScatter(terrain, tex) {
           sx: rad * (1.30 + rand() * 0.55), sy: rad * (0.34 + rand() * 0.20),
           sz: rad * (0.72 + rand() * 0.34), sink: 0.42,
         });
-        wedges.push({
-          x: x - ux * rad * 1.75, z: z - uz * rad * 1.75, th,
-          sx: rad * (0.55 + rand() * 0.30), sy: rad * (0.20 + rand() * 0.14),
-          sz: rad * (1.9 + rand() * 1.5), sink: 0.52,
+        /* Shorter and wider than it was, and that is a bug fix rather than a
+           taste change. At up to 3.4 radii long by 0.85 wide by 0.34 thick the
+           tail was a ten-to-one sliver, and several thousand of those scattered
+           across the floor were reported as "matchsticks or splinters — at their
+           current aspect ratio they look like litter". A real depositional tail is
+           a low tapered swell of fines, closer to twice as long as it is wide, and
+           it belongs mostly *below* the surface: it is a change in the shape of
+           the bed, not an object lying on it. */
+        if (cl.scourTail) wedges.push({
+          x: x - ux * rad * 1.35, z: z - uz * rad * 1.35, th,
+          sx: rad * (0.80 + rand() * 0.34), sy: rad * (0.22 + rand() * 0.14),
+          sz: rad * (1.35 + rand() * 0.75), sink: 0.60,
         });
       }
 
@@ -535,9 +636,13 @@ export function buildScatter(terrain, tex) {
     });
   });
 
-  /* collar clasts, as one extra rounded bucket */
+  /* collar clasts, as one extra bucket.
+     Angular, like everything else. These were the last smooth ellipsoids in the
+     scene and they cluster against the largest clasts and up the bank faces,
+     which is exactly where the eye goes — a faceted boulder ringed by eight
+     smooth eggs reads as two different materials. */
   if (collars.length) {
-    const g = roundedClast(0, 4.4, 0.5);
+    const g = angularClast(5519, 0.58, 7);
     const rand = rng(31337);
     const list = [];
     for (const c of collars) {
@@ -552,7 +657,8 @@ export function buildScatter(terrain, tex) {
       quat.multiply(spin);
       const t = 0.82 + rand() * 0.36;
       const cl0 = LITH[c.lith];
-      const cfl = Math.max(1, 0.30 / Math.max(1e-4, Math.min(cl0[0], cl0[1], cl0[2]) * t));
+      const clum = 0.2126 * cl0[0] + 0.7152 * cl0[1] + 0.0722 * cl0[2];
+      const cfl = Math.min(1.5, Math.max(1, 0.26 / Math.max(1e-4, clum * t)));
       list.push({
         x: c.x, y: y - c.rad * 0.45, z: c.z,
         q: quat.clone(),
@@ -600,7 +706,7 @@ export function buildScatter(terrain, tex) {
   return meshes;
 
   /* ── placement of one instance ── */
-  function emit(cl, bucket, x, y, z, rad, lith, rand, th, n) {
+  function emit(cl, bucket, x, y, z, rad, lith, rand, th, n, bankF = 0) {
     if (cl.imbricate > 0 && rand() < cl.imbricate) {
       /* Imbrication: platy clasts stack like roof shingles, their flat faces
          dipping upstream and their long axes across the flow. It is the single
@@ -625,12 +731,14 @@ export function buildScatter(terrain, tex) {
       quat.setFromUnitVectors(up, n);
       spin.setFromAxisAngle(up, rand() * Math.PI * 2);
       quat.multiply(spin);
-      /* Pulled back from seventy-two degrees. A tabular slab stood on edge on a
-         talus slope cantilevers out of the ground however deeply its centre is
-         sunk, and a half-metre plate jutting horizontally out of a bank reads as a
-         signpost. Blocks in a real apron are wedged against each other at shallow
-         angles, not propped on end. */
-      const tilt = Math.pow(rand(), 1.6) * 0.68;         // up to ~39 degrees
+      /* Pulled back again, and further for the tabular classes. A plate tilted
+         even thirty degrees presents its thin edge to the camera as a knife-edged
+         sliver wherever the ground falls away under it, and one of those in the
+         near field was described as "a paper-thin knife-edged wing floating over
+         the sand". The thinner the clast, the less tilt it can carry before its
+         silhouette stops being a rock. Blocks in a real apron are wedged against
+         each other at shallow angles in any case, not propped on end. */
+      const tilt = Math.pow(rand(), 1.6) * (cl.squat ? 0.34 : 0.60);
       const ta = rand() * Math.PI * 2;
       spin.setFromAxisAngle(bx.set(Math.cos(ta), 0, Math.sin(ta)), tilt);
       quat.multiply(spin);
@@ -646,12 +754,29 @@ export function buildScatter(terrain, tex) {
       quat.multiply(spin);
     }
 
-    /* Burial. A clast that has sat through one flood is worked down into the bed;
-       a bed where every stone sits fully proud is a bed where objects were placed
-       on a surface, which is exactly what it looks like. A fraction go right down
-       to their shoulders so the bed reads as clast-rich rather than sprinkled. */
-    let sink = rad * (cl.sink[0] + rand() * (cl.sink[1] - cl.sink[0]));
-    if (cl.deepSink && rand() < cl.deepSink) sink = rad * (0.88 + rand() * 0.30);
+    /* Fallen sandstone is bedded, so it breaks squat and tabular rather than
+       equant. A block as tall as it is wide, sat on a slope, is a tent — and a
+       slope of tents is the exact silhouette of scattered folded card. */
+    const yf = cl.squat ? 0.44 + rand() * 0.30
+             : (cl.kind === 'angular' ? 0.82 : 0.70) * (1 + rand() * 0.5);
+
+    /* ---- burial, measured against thickness rather than radius ----
+     * A clast that has sat through one flood is worked down into the bed, and a
+     * bed where every stone sits fully proud is a bed where objects were placed on
+     * a surface, which is exactly what it kept reading as.
+     *
+     * The depth has to be a fraction of the clast's *vertical* half-extent, not of
+     * its radius, and getting that wrong produced two opposite failures at once.
+     * A tabular slab is only 0.44 to 0.74 radii thick, so sinking it by 0.70 to
+     * 1.00 radii buried it past its own top surface — and then, wherever the
+     * ground fell away beside it, one corner emerged as a thin blade with no body
+     * behind it. Meanwhile the near-equant boulders, sunk by the same fraction of
+     * a much larger half-height, barely settled at all. Expressed against
+     * thickness, "sunk to the shoulders" means the same thing for both.
+     */
+    const halfH = rad * yf;
+    let sink = halfH * (cl.sink[0] + rand() * (cl.sink[1] - cl.sink[0]));
+    if (cl.deepSink && rand() < cl.deepSink) sink = halfH * (0.92 + rand() * 0.16);
     /* Per-instance value spread, times a per-class factor: talus is dusty and
        sits in the wall's own shadow half the day, and pale blocks at that scale
        read as builders' rubble unless they are knocked back. */
@@ -659,7 +784,15 @@ export function buildScatter(terrain, tex) {
        them back together — a dark limestone and a bright basalt land on the same
        screen value and the polychrome scatter stops being legible as rock types. */
     const t = (0.86 + rand() * 0.26) * cl.tint;
-    const L = LITH[lith];
+    let L = LITH[lith];
+    /* A clast half weathered out of a bank face is still partly coated in the
+       matrix it came out of, so it differs from the bank by a shade rather than by
+       a colour. This is the difference between a section through alluvium and a
+       field of polka dots. */
+    if (bankF > 0.01) {
+      const k = bankF * 0.55;
+      L = [mix(L[0], MATRIX_COL[0], k), mix(L[1], MATRIX_COL[1], k), mix(L[2], MATRIX_COL[2], k)];
+    }
     /* Albedo floor. Three multipliers stack here — lithology, the per-class dust
        factor and the per-instance value jitter — and the product of the low end of
        all three used to land at about 0.02 linear albedo once the clast texture
@@ -670,18 +803,28 @@ export function buildScatter(terrain, tex) {
        about a sixth of the sunlit value, and the fill it picks up from a violet sky
        dome over a warm bed only reads as violet if there is some albedo left for it
        to act on — below this the fill *is* the colour and the stone comes out navy. */
-    const fl = Math.max(1, 0.30 / Math.max(1e-4, Math.min(L[0], L[1], L[2]) * t));
-    /* Fallen sandstone is bedded, so it breaks squat and tabular rather than
-       equant. A block as tall as it is wide, sat on a slope, is a tent — and a
-       slope of tents is the exact silhouette of scattered folded card. */
-    const yf = cl.squat ? 0.44 + rand() * 0.30
-             : (cl.kind === 'angular' ? 0.82 : 0.70) * (1 + rand() * 0.5);
+    /* On luminance, and capped — as a multiplier on the darkest *channel* this was
+       a bug with visible consequences. The iron-stained red is (0.72, 0.205,
+       0.088), so keying the floor off its blue channel asked for a gain of four,
+       and the whole tint went up with it: a dump of the instance colours showed
+       clasts leaving here at 2.46 linear albedo. Nothing reflects two and a half
+       times the light that falls on it. Those instances rendered as blown white
+       specks, which is most of what the surviving one-to-two-pixel white chips on
+       the shaded banks were — diagnosed twice as an aliasing problem and it was an
+       arithmetic one. Luminance is what "no rock reads at zero" was ever about, and
+       the cap keeps a saturated pigment from being brightened into a light source. */
+    const lum = 0.2126 * L[0] + 0.7152 * L[1] + 0.0722 * L[2];
+    const fl = Math.min(1.5, Math.max(1, 0.26 / Math.max(1e-4, lum * t)));
+    /* Horizontal aspect held near one. Combined with the hull's own axis jitter
+       the previous spread could reach two to one in plan and, on a clast already
+       flattened to half its width, that is a splinter rather than a stone. */
+    const ex = 0.88 + rand() * 0.30;
     bucket.push({
       x, y: y - sink, z,
       q: quat.clone(),
-      sx: rad * (0.84 + rand() * 0.46),
-      sy: rad * yf,
-      sz: rad * (0.84 + rand() * 0.46),
+      sx: rad * ex,
+      sy: halfH,
+      sz: rad * (ex * 0.62 + 0.30 + rand() * 0.20),
       r: L[0] * t * fl, g: L[1] * t * fl, b: L[2] * t * fl,
     });
   }

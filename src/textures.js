@@ -162,12 +162,20 @@ const GRAIN_COL = [
   C(168, 56, 22),     // iron-stained red — carries the saturated tail
   C(133, 88, 68),     // red Schnebly sandstone
   C(176, 100, 34),    // orange mud coating
-  C(152, 128, 108),   // buff sandstone
-  C(190, 180, 166),   // off-white Coconino
-  C(120, 115, 110),   // grey siltstone
+  /* The pale end is dusted, for the same reason the instanced lithologies are.
+     Quartz at (196, 188, 178) is 0.09 saturation and off-white Coconino 0.13, and
+     those two are 16 percent of the mix — so a sixth of the floor's grain
+     population was very nearly neutral and very nearly white. Averaged over a
+     footprint that is a pale grey haze laid over the oxide, and it put the floor's
+     value up against the clipping point where saturation cannot exist. A grain of
+     quartz sand in a Sedona wash is not clean quartz: it has been rolling in iron
+     oxide and dust for ten thousand years. */
+  C(150, 122, 96),    // buff sandstone
+  C(186, 166, 138),   // off-white Coconino, dust-filmed
+  C(122, 110, 98),    // grey siltstone
   C(76, 68, 63),      // desert-varnished dark
-  C(196, 188, 178),   // quartz
-  C(172, 158, 137),   // cream limestone
+  C(190, 174, 150),   // quartz, dust-filmed
+  C(170, 148, 118),   // cream limestone
 ];
 const GRAIN_MIX = [0.10, 0.24, 0.08, 0.15, 0.10, 0.13, 0.07, 0.06, 0.07];
 const GRAIN_CDF = (() => { let a = 0; return GRAIN_MIX.map(v => (a += v)); })();
@@ -326,11 +334,25 @@ export function makeDirt(size = 1024) {
 
 /* ── wind-drifted sand: the finer, pinker material ─────────────────────── */
 
-/* Drifted sand is the palest and least saturated material in the scene: it is
-   sorted quartz with the oxide fines blown out of it. */
-const SAND_LOW = C(130, 87, 62);
-const SAND_MID = C(162, 118, 88);
-const SAND_TOP = C(186, 145, 114);
+/* Drifted sand is the palest material in the scene, but not the least saturated,
+   and conflating those two was the reason five of the eight frames measured under
+   half the saturation of a real dusk wash floor.
+   Measured: the sand-dominated regions came out at 0.35 to 0.41 saturation
+   against 0.47 for a photograph of a sandy wash at low dusk sun, and every one of
+   them sat at value 0.76 or above — one at 0.87. The tone curve's shoulder pulls
+   the channels together up there, so those two facts are the same fact.
+   The fix is not exposure. Inverting the tone curve on the measured pixels shows
+   that dropping exposure from 0.82 to 0.46 — far more than the frame can survive,
+   it puts the lit rock face at value 0.25 — buys the sand six hundredths of
+   saturation, because a pale pixel stays pale when you dim it. What was wrong is
+   the pigment: this was quartz-white with a wash of oxide over it, and real wash
+   sand is oxide-stained sand. So each tone here is a quarter darker and about a
+   quarter more saturated, which lands the rendered sheet near value 0.63 where
+   the curve still has room for chroma. It stays lighter than the compacted dirt
+   beside it, which is the one relationship that has to hold. */
+const SAND_LOW = C(120, 80, 50);
+const SAND_MID = C(150, 104, 69);
+const SAND_TOP = C(171, 123, 86);
 
 export function makeSand(size = 512) {
   const N = size * size;
@@ -351,9 +373,31 @@ export function makeSand(size = 512) {
          not how a patch of drifted sand in a wash looks. */
       const warp = pfbm(u * 3, v * 3, 3, 3, 17) - 0.5;
       const warp2 = pfbm(u * 11, v * 11, 11, 2, 19) - 0.5;
-      const rip = 0.5 + 0.5 * Math.sin((v * 9 + warp * 2.2 + warp2 * 0.7 + u * 1.0) * Math.PI * 2);
-      const cover = smoothstep(0.34, 0.62, pfbm(u * 5, v * 5, 5, 3, 23));
-      const ripple = Math.pow(rip, 1.5) * 0.62 * cover;
+      /* ---- two wavelengths, and why one is not enough ----
+         Ripple wavelength scales with the depth and speed of the flow that built
+         the train, so it varies across a wash floor by a factor of two or more
+         within a few metres. A single frequency, however hard its phase is
+         warped, keeps a constant *spacing*, and constant spacing at constant
+         amplitude across a whole floor is the combed-hair read: the previous pass
+         overcorrected a floor with no bedform into a floor that was one bedform.
+         Frequency cannot be varied continuously in a tiling map — the phase would
+         not close — so two integer trains are crossfaded by a low-frequency
+         field instead, which gives the same read for the same cost. */
+      const wlSel = smoothstep(0.36, 0.68, pfbm(u * 2, v * 2, 2, 3, 21));
+      const rip9  = 0.5 + 0.5 * Math.sin((v * 9  + warp * 2.2 + warp2 * 0.7 + u * 1.0) * Math.PI * 2);
+      const rip15 = 0.5 + 0.5 * Math.sin((v * 15 + warp * 3.4 + warp2 * 1.1 + u * 2.0) * Math.PI * 2);
+      const rip = mix(rip9, rip15, wlSel);
+      /* Coverage narrowed, plus a genuine plane-bed mask. Where a flood ran fast
+         enough it planes the bed off flat and leaves no ripples at all, and those
+         bare patches between ripple fields are as much of the signature as the
+         ripples: a bed rippled edge to edge is a bed that only ever saw one flow
+         regime. */
+      const cover = smoothstep(0.40, 0.70, pfbm(u * 5, v * 5, 5, 3, 23));
+      const plane = 1 - smoothstep(0.52, 0.74, pfbm(u * 3, v * 3, 3, 3, 25));
+      /* Amplitude varies independently of coverage, so the train fades in and out
+         along its own length rather than being present or absent. */
+      const amp = 0.42 + 0.72 * pfbm(u * 4, v * 4, 4, 3, 27);
+      const ripple = Math.pow(rip, 1.5) * 0.62 * cover * plane * amp;
       /* A second, finer train crossing the first. A dry wash bed carries relict
          current ripples from the last flood with wind ripples worked across them
          at an angle over the weeks since, and the interference between two
@@ -426,13 +470,18 @@ export function makeSand(size = 512) {
    independent set of stripes inside the tile cuts across those at a different
    angle and the wall reads as cross-hatching. What is left here is only the
    shade-to-shade variation within a single bed. */
-/* Salmon-terracotta with a grey-brown cast from varnish and dust, at about a
-   third saturation. Measured against photographs, real Sedona rock sits near
-   0.33 mean even under a warm low sun; the 0.54 these carried before renders,
-   once multiplied by a warm key, at roughly double reality. */
+/* Salmon-terracotta with a grey-brown cast from varnish and dust — but with a
+   genuine saturated tail, which is what these were missing. Every one of the six
+   bands sat between 0.32 and 0.35 saturation, a spread of three hundredths, so
+   the rock measured 0.71 at the 99th percentile against 0.85 to 1.00 in
+   photographs of the place. A real cliff is not one pigment: the iron-oxide-rich
+   beds go vivid, the varnished faces go grey-brown, and a fresh spall scar
+   exposes unweathered rock brighter than either. The mean is what the last
+   measurement fixed and it stays; what changes is that the distribution now has
+   ends. */
 const ROCK_BANDS = [
-  C(150, 114, 101), C(157, 121, 107), C(143, 108, 95),
-  C(161, 126, 112), C(152, 116, 102), C(146, 110, 97),
+  C(150, 114, 101), C(163, 108, 78),  C(143, 108, 95),
+  C(168, 120, 92),  C(152, 116, 102), C(139, 106, 98),
 ];
 
 export function makeRock(size = 1024) {
@@ -463,6 +512,15 @@ export function makeRock(size = 1024) {
 
       const cross = pfbm(u * 9 + v * 2, v * 26, 9, 3, 613);
       col = mixC(col, mixC(col, C(204, 190, 174), 0.5), cross * 0.18);
+
+      /* Iron-oxide concentration, in patches inside the beds. This is where the
+         top of the saturation distribution comes from: hematite cement is not
+         evenly spread through a sandstone, it is concentrated in lenses and along
+         former groundwater fronts, and those lenses are the parts of a Sedona cliff
+         that go genuinely red in the last light. A narrow threshold so it is
+         patches rather than a wash over everything, which would just move the mean. */
+      const iron = smoothstep(0.58, 0.86, pfbm(u * 5, v * 8, 5, 4, 641));
+      col = mixC(col, C(176, 82, 44), iron * 0.55);
 
       /* Desert varnish: dark mineral streaks running down the face. Varnish is a
          manganese-iron clay film and it is grey-brown, not red — it is one of the
@@ -514,9 +572,17 @@ export function makeRock(size = 1024) {
  * Coconino, dark basalt off the Rim and buff chert alongside the local red
  * sandstone, and a single-lithology gravel field is one of the loudest tells
  * there is. So this map carries only luminance structure — mottling, grit,
- * quartz veining — and every scrap of hue comes from the per-instance tint in
- * scatter.js. Mean value is set near 0.42 linear so the tints there can be read
- * as plain multipliers on a target albedo.
+ * quartz veining, bedding lamination — and every scrap of hue comes from the
+ * per-instance tint in scatter.js. Mean value is set near 0.42 linear so the
+ * tints there can be read as plain multipliers on a target albedo.
+ *
+ * The tile is scaled per instance to hold texel density constant in world space,
+ * so everything here is authored against a fixed physical size — roughly six
+ * centimetres across the tile. That is what lets one map serve a two-centimetre
+ * granule and a half-metre bedding slab: at these frequencies the slab gets
+ * millimetre lamination and fingernail-scale grit, which is what a metre of
+ * sandstone actually presents, rather than one stretched copy of a map that
+ * describes centimetres.
  */
 export function makeClastSurface(size = 512) {
   const N = size * size;
@@ -532,9 +598,39 @@ export function makeClastSurface(size = 512) {
       const mot = pfbm(u * 6, v * 6, 6, 4, 3301);
       const grit = pfbm(u * 44, v * 44, 44, 3, 3307);
       const vein = pridged(u * 5, v * 5, 5, 3, 3313);
-      h[i] = mot * 0.5 + grit * 0.22 + vein * 0.12;
+
+      /* ---- bedding lamination ----
+         The single largest reason the big talus slabs read as grey card. A block
+         that spalled off a stratified wall is a *section* through that
+         stratigraphy: the laminae it was deposited in run across the broken face
+         and continue over its arrises onto the next facet, and that continuity is
+         most of what says "this is a piece of rock" rather than "this is a
+         quadrilateral". Twenty-two periods across a six-centimetre tile is a
+         three-millimetre lamina, which is the real scale in Schnebly Hill
+         sandstone. Warped so they are not ruler-straight, and sheared slightly by
+         u so they cross each facet at an angle instead of lining up with its
+         edges. */
+      /* Warped far harder than the first attempt, and with the shear removed.
+         Twenty-two straight laminae sheared by a constant multiple of u are a
+         diagonal grating, and a diagonal grating crossed by the per-lamina
+         hardness hash came out as woven fabric — a regular cross-hatch, legible
+         as a *pattern* rather than as rock, which on a large flat facet is no
+         better than the featureless grey it replaced. Real laminae undulate over
+         several times their own spacing, so the warp has to be worth more than one
+         wavelength for the train to stop being a train. */
+      const lamW = (pfbm(u * 3, v * 3, 3, 3, 3319) - 0.5) * 5.2
+                 + (pfbm(u * 8, v * 8, 8, 2, 3323) - 0.5) * 1.6;
+      const lam = 0.5 + 0.5 * Math.sin((v * 22 + lamW) * Math.PI * 2);
+      /* Alternate laminae differ in grain size, so they weather at different
+         rates and one stands slightly proud of its neighbour. A few tenths of a
+         millimetre — enough to catch a raking sun as a fine ribbed texture, not
+         enough to read as corrugation, and that margin is narrow. */
+      const lamHard = 0.5 + 0.5 * Math.sin(Math.floor(v * 22 + lamW) * 2.399);
+
+      h[i] = mot * 0.5 + grit * 0.22 + vein * 0.12 + lam * lamHard * 0.05;
 
       let g = 152 + mot * 52 + grit * 16;
+      g += (lam - 0.5) * 7 * (0.35 + 0.65 * lamHard);
       g = mix(g, 214, Math.pow(clamp(vein - 0.62, 0, 1) * 2.6, 1.5) * 0.6);  // quartz vein
       const sp = (hash2(x, y, 4409) - 0.5) * 18;
       const val = clamp(g + sp, 0, 255);
@@ -545,17 +641,18 @@ export function makeClastSurface(size = 512) {
       /* Never glossy. A dry stone in a wash has a matte, dust-filmed surface, and
          a roughness dipping into the 0.7s under a hard low key puts a specular
          sparkle on every clast facing the sun. */
-      rough[i] = 0.88 - grit * 0.05 + mot * 0.06;
+      rough[i] = 0.88 - grit * 0.05 + mot * 0.06 - lam * lamHard * 0.02;
     }
   }
   const ao = aoFromHeight(h, size, 2, 8, 2.0);
   return {
     albedo: dataTex(alb, size, true),
-    /* One tile spans a whole clast. Pushed harder than the physical relief of a
-       water-worn pebble would justify, because it also has to stand in for the
-       sub-facet steps on a fractured block — a perfectly flat hull face reads as
-       card. */
-    normal: dataTex(normalFromHeight(h, size, size * 0.042), size, false),
+    /* A six-centimetre tile at 512 is 0.12 mm per texel, and the field carries
+       something like 4 mm of relief across the mottle and the lamination, which
+       puts the strength around 33. Well under what the old whole-clast tiling
+       needed, because the features are now physically small rather than being one
+       pebble's worth of shape stretched over a slab. */
+    normal: dataTex(normalFromHeight(h, size, size * 0.065), size, false),
     arm: dataTex(packARM(ao, rough, h, size), size, false),
   };
 }

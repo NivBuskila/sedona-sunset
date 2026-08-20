@@ -15,6 +15,14 @@
  * and varnished near-black pebbles beside pale quartz sand — and a narrow band at
  * the right mean still reads as procedural.
  *
+ * Value is reported beside saturation because the two are not independent at the
+ * top of the range and reading saturation alone gets the diagnosis wrong. HSV
+ * saturation is (max-min)/max, and the tone curve's shoulder pulls the channels
+ * together as they approach white, so a surface driven to V 0.90 cannot carry a
+ * saturation of 0.5 whatever its albedo is. A floor measuring low on saturation
+ * and high on value is over-exposed, not under-pigmented, and pushing pigment at
+ * it only clips harder. See tools/tone.mjs.
+ *
  * Targets, from CONTRACT.md, measured on real photographs:
  *   Sedona rock, warm low sun   mean 0.42-0.65   p95 0.59-1.00
  *   Sunlit dry wash floor       mean 0.47-0.56   p95 0.67-0.74   p99 0.88
@@ -45,17 +53,18 @@ function measure(img, [fx, fy, fw, fh]) {
   const x0 = Math.round(img.w * fx), y0 = Math.round(img.h * fy);
   const x1 = Math.min(img.w, x0 + Math.round(img.w * fw));
   const y1 = Math.min(img.h, y0 + Math.round(img.h * fh));
-  const vals = [];
+  const sats = [], vals = [];
   for (let y = y0; y < y1; y++) {
     for (let x = x0; x < x1; x++) {
       const i = (y * img.w + x) * img.ch;
       const r = img.px[i], g = img.px[i + 1], b = img.px[i + 2];
       const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
       if (mx < 12) continue;              // crushed black carries no hue
-      vals.push((mx - mn) / mx);
+      sats.push((mx - mn) / mx);
+      vals.push(mx / 255);
     }
   }
-  return stats(vals);
+  return { s: stats(sats), v: stats(vals) };
 }
 
 /* Fixed crops, one surface each, chosen so no window contains sky or straddles a
@@ -72,7 +81,8 @@ const REGIONS = {
 };
 
 const f = (x) => x == null ? '  —  ' : x.toFixed(3);
-console.log('file                     region        n      mean   p50    p95    p99');
+console.log('file                     region      ' +
+  '  sat mean  p50    p95    p99   |  V mean   p50    p95');
 
 for (const file of argv) {
   const img = decode(readFileSync(file));
@@ -81,8 +91,10 @@ for (const file of argv) {
   const list = region ? [['crop', region]] : (REGIONS[key] || [['whole', [0, 0, 1, 1]]]);
   let name = base.padEnd(23);
   for (const [label, r] of list) {
-    const s = measure(img, r);
-    console.log(`${name}  ${label.padEnd(10)} ${String(s ? s.n : 0).padStart(8)}  ${f(s && s.mean)} ${f(s && s.p50)} ${f(s && s.p95)} ${f(s && s.p99)}`);
+    const { s, v } = measure(img, r);
+    console.log(`${name}  ${label.padEnd(10)}  ` +
+      `${f(s && s.mean)} ${f(s && s.p50)} ${f(s && s.p95)} ${f(s && s.p99)}  | ` +
+      ` ${f(v && v.mean)} ${f(v && v.p50)} ${f(v && v.p95)}`);
     name = ''.padEnd(23);
   }
 }

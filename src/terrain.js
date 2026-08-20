@@ -15,10 +15,14 @@
  * (clast sorting, mud pans, talus) reads the same cross-section, so the surface
  * and the sediment on it describe the same flood.
  *
- * Two per-vertex outputs travel with the mesh:
- *   aRef  elevation *before* the stratigraphic benching pass, so the shader can
- *         put band colour exactly where the geometry put the ledge
- *   aPan  ponded-silt coverage, so mud cracks appear only where mud could form
+ * Per-vertex outputs travel with the mesh, each so that the shader can put a
+ * material exactly where the geomorphology put the deposit:
+ *   aRef    elevation *before* the stratigraphic benching pass, so band colour
+ *           lands exactly where the geometry put the ledge
+ *   aPan    ponded-silt coverage, so mud cracks appear only where mud could form
+ *   aWall   canyon wall against wash bank, which slope alone cannot distinguish
+ *   aSheet  slack-water sand sheet, so drifted sand is deposited by a mechanism
+ *           rather than painted onto whatever happens to be flat
  */
 import * as THREE from 'three';
 import { fbm, ridged, clamp, smoothstep, mix } from './noise.js';
@@ -51,6 +55,25 @@ export class Terrain {
     this._f2 = {};
     this.oRef = 0;   // pre-bench elevation
     this.oPan = 0;   // ponded silt coverage
+    this.oSheet = 0; // slack-water sand sheet coverage
+  }
+
+  /**
+   * Slack-water sand sheet: where the flow was slow enough to drop its fine
+   * fraction and not strong enough to leave a coarse lag. The inside of a bend,
+   * clear of the active channel.
+   *
+   * Split out so the mesh can carry it to the shader. Sand was being placed on a
+   * slope test alone, and a slope test cannot tell a bar top from a channel bed —
+   * so a pale sheet glazed the whole floor including the thalweg, which is the one
+   * place a flood scours down to gravel every time. Deposition is a mechanism, and
+   * the mechanism is already in `facies`; this is the same expression, hoisted so
+   * both the clast scatter and the surface shader read one answer.
+   */
+  sheetField(x, z, f) {
+    return (1 - f.bendOut)
+      * smoothstep(0.44, 0.68, 0.5 + 0.5 * fbm(x * 0.048, z * 0.048, 3, 241))
+      * smoothstep(f.wc + 0.5, f.wc + 3.0, f.av);
   }
 
   heightAt(x, z) {
@@ -171,9 +194,7 @@ export class Terrain {
 
     /* Slack water on the inside of a bend drops a sand sheet, and a sand sheet
        has almost no clasts in it at all. */
-    const sheet = (1 - f.bendOut)
-      * smoothstep(0.44, 0.68, 0.5 + 0.5 * fbm(x * 0.048, z * 0.048, 3, 241))
-      * smoothstep(f.wc + 0.5, f.wc + 3.0, av);
+    const sheet = this.sheetField(x, z, f);
     bar = Math.max(0, bar - sheet * 1.3);
 
     /* Coarse lag concentrates in bands where the flood was steepest, and
@@ -210,6 +231,7 @@ export class Terrain {
     const { s, u, av, side, bendOut } = f;
     this.oPan = 0;
     this.oWall = 0;
+    this.oSheet = 0;
 
     /* ── far field ──
        Distant mesa country, so the sky has a horizon to sit against and the
@@ -302,6 +324,7 @@ export class Terrain {
     const pan = this.panField(x, z, f);
     h -= pan * 0.16;
     this.oPan = pan;
+    this.oSheet = this.sheetField(x, z, f);
 
     /* ── talus apron and canyon wall ──
        The apron sits at the angle of repose; the wall above is steeper. The
@@ -572,6 +595,7 @@ export function buildTerrainMesh(terrain, material) {
   const ref = new Float32Array(count);
   const pan = new Float32Array(count);
   const wall = new Float32Array(count);
+  const sheet = new Float32Array(count);
   const q = {};
 
   for (let j = 0; j < nz; j++) {
@@ -588,6 +612,7 @@ export function buildTerrainMesh(terrain, material) {
       ref[k] = terrain.oRef;
       pan[k] = terrain.oPan;
       wall[k] = terrain.oWall;
+      sheet[k] = terrain.oSheet;
     }
   }
 
@@ -606,6 +631,7 @@ export function buildTerrainMesh(terrain, material) {
   g.setAttribute('aRef', new THREE.BufferAttribute(ref, 1));
   g.setAttribute('aPan', new THREE.BufferAttribute(pan, 1));
   g.setAttribute('aWall', new THREE.BufferAttribute(wall, 1));
+  g.setAttribute('aSheet', new THREE.BufferAttribute(sheet, 1));
   g.setIndex(new THREE.BufferAttribute(idx, 1));
   g.computeVertexNormals();
   g.computeBoundingSphere();
@@ -637,6 +663,7 @@ varying vec3 vWNrm;
 varying float vRef;
 varying float vPan;
 varying float vWall;
+varying float vSheet;
 
 float tRough;
 /* Pixel-footprint confidence, 1 near and 0 once a pixel covers many grains, and
@@ -762,8 +789,28 @@ float sandF = mac.r * 1.15 + (mac2.r - 0.5) * 0.55 + (vr.b - 0.5) * 0.30;
    metres across, not a facies covering a third of the floor, and at the previous
    coverage the pan was competing with the gravel bed for the frame. */
 float panRaw = smoothstep(0.24, 0.62, vPan);
-float sandW = smoothstep(0.62, 0.68, sandF) * (1.0 - rockW)
-            * smoothstep(0.30, 0.10, slope) * (1.0 - panRaw * 0.9);
+/* ---- sand only on ground flat enough to hold it ----
+   The slope gate ran out to 0.30, which is a face of about forty-five degrees, so
+   sand carried straight over every bank crest and down the far side in an
+   unbroken sheet — described as icing on a cake, or flour spilled from above, and
+   that is exactly what an unbounded slope gate looks like. Neither mechanism that
+   puts sand on a slope works that way. Fluvial sand is deposited by water and
+   water does not climb: it fills the channel and the slack water inside bends and
+   stops at a slip-face. Aeolian sand does climb, but only where it has a wind
+   fetch, and it rests at the angle of repose with a distinct toe — it cannot glaze
+   a crest and continue over the lip. Confined to genuinely flat ground, the first
+   mechanism is modelled correctly and the second is simply absent, which is a far
+   better answer than both of them being wrong. */
+/* And gated on the deposit, not just on the gradient. A pale sheet was running
+   the length of the channel including straight down the thalweg — measured at
+   value 0.82 with saturation 0.27, the worst-reading surface in the set, and
+   geologically backwards: the thalweg is the one place a flood scours to gravel
+   every single time it runs. vSheet is the slack-water field the clast scatter
+   already uses to keep stones *out* of the sand, so gating the sand on it makes
+   the two agree instead of describing different floods. */
+float sandW = smoothstep(0.62, 0.68, sandF) * smoothstep(0.10, 0.42, vSheet)
+            * (1.0 - rockW) * (1.0 - wallM)
+            * smoothstep(0.135, 0.045, slope) * (1.0 - panRaw * 0.9);
 
 /* ---- raking grain shadows, marched in the height map ----
  * With the sun at eight degrees, a one-centimetre grain throws a shadow seven
@@ -789,7 +836,22 @@ for (int k = 1; k <= 8; k++) {
   float hs = texture2D(uDirtM, d1 + uSunStep * t).b;
   rake = max(rake, hs - (dirtH + t * uSunRise));
 }
-gRake = 1.0 - clamp(rake * 3.4, 0.0, 1.0) * 0.88 * grainF * smoothstep(0.35, 0.10, slope);
+/* ---- and the part that must survive the footprint ----
+   Fading this out with the grains, as it was, threw away the wrong half. Two
+   different quantities are tangled here. *Which* grains are shadowed is a
+   per-grain fact and it stops being resolvable once a pixel covers several of
+   them, so that has to go. *How much* of the surface is shadowed is a property of
+   the bed and is true at any distance: a packed grain bed under an eight-degree sun
+   has something like a quarter of its area in shadow whether you can see the
+   individual shadows or not. Losing it made the mid-distance floor brighter and
+   flatter than the near field, which is the measured symptom — high-frequency
+   energy falling three to five fold with depth where a real photograph's
+   mid-distance band is the busiest part of the frame.
+   So the resolved term crossfades into the mean rather than into nothing. It
+   cools as well as darkens for free, because this multiplies the warm key only and
+   what is left is the violet sky fill. */
+float rakeRes = clamp(rake * 3.4, 0.0, 1.0);
+gRake = 1.0 - mix(0.26, rakeRes, grainF) * 0.88 * smoothstep(0.35, 0.10, slope);
 
 vec3 gA  = mix(dirtA, sandA, sandW);
 vec3 gM  = mix(dirtM, sandM, sandW);
@@ -965,6 +1027,62 @@ vec3 wN     = normalize(mix(gWN, rockWN, rockW));
    interesting has to happen below that. */
 float bright = (0.90 + mac.g * 0.20) * (0.95 + mac2.g * 0.10) * (0.96 + vr.g * 0.09);
 albedo *= bright;
+
+/* ---- what actually carries the mid distance ----
+ * Measured, the floor's high-frequency energy fell three to five fold between the
+ * near field and twenty to forty metres, where a real dry-wash photograph either
+ * holds level or *rises* — the mid-distance band is the busiest part of the frame,
+ * because more objects fall into each pixel and the eye is looking across the
+ * surface rather than down at it. The previous round fixed a grazing-angle hash by
+ * filtering relief against the pixel footprint, which was right, and took the
+ * albedo variance out with it, which was not.
+ *
+ * The distinction is scale, not kind. A cobble at thirty metres is below a pixel,
+ * so its *shape* has to average out and its normal has to stop being perturbed. Its
+ * *colour* does not average out, because the thing the eye reads at that range is
+ * not one cobble but the tone of the gravel bar it belongs to against the sand
+ * beside it — and that patch is metres across, tens of pixels, nowhere near the
+ * resolution limit. So variance below a pixel is filtered and variance above it is
+ * not, and everything below runs unfiltered by construction.
+ *
+ * Two terms. Facies patches, because a wash floor is a mosaic of surfaces with
+ * genuinely different colours — an armoured gravel lag is greyer and flatter than
+ * the clean sand sheet next to it, and ground still damp under the surface is
+ * darker and more purple than either. Both are expressed in *chroma*, not value:
+ * value variance at macro scale is what came out as milky blobs floating over the
+ * midground, twice, and the lesson from that is not to abandon macro variance but
+ * to keep it out of the luminance channel where the eye reads it as depth.
+ */
+float floorM = (1.0 - rockW) * (1.0 - wallM) * smoothstep(0.34, 0.12, slope);
+/* Narrow thresholds on purpose: the edge of a gravel lag or a sand lobe is a crisp
+   line shaped by the flow that laid it, and a wide crossfade is the visible
+   material seam the floor was criticised for two rounds ago. */
+float lagP  = smoothstep(0.47, 0.59, mac2.b * 0.66 + vr.g * 0.52) * floorM * (1.0 - sandW);
+float dampP = smoothstep(0.58, 0.71, mac.b * 0.70 + vr.r * 0.46) * floorM;
+/* A hue rotation, not a desaturation. The first attempt mixed the lag patches
+   toward their own luminance and cost the one region already measuring at target
+   eight hundredths of saturation — the frame has three separate desaturating
+   passes over it already (the dust base, the varnish patches, the haze) and a
+   fourth is how a floor ends up as the narrow mauve band this has twice been. A
+   scaling of the channels keeps the chroma and moves the hue, which is what
+   distinguishes a mixed-lithology gravel armour from the oxide-stained fines
+   around it in the first place. */
+albedo = mix(albedo, albedo * vec3(0.94, 0.98, 1.06), lagP * 0.42);
+albedo = mix(albedo, albedo * vec3(1.06, 0.86, 0.86), dampP * 0.34);
+
+/* Ripple banding, in world space rather than in the sand map, and that is the
+   whole point of it. A ripple train's individual crests are a quarter of a metre
+   apart and gone by fifteen metres, but the crests are not independent — they
+   align into bands a metre or two wide running across the channel, and a
+   correlated feature at that wavelength is still several pixels deep at forty
+   metres. Uncorrelated pebble noise cannot survive downsampling and this can,
+   which is why it belongs here and not in a tiling albedo map where the mip chain
+   averages it away. Amplitude is small and purely tonal — it is the shadowed flank
+   of each band being marginally darker, not a bump. */
+float bandPh = vWPos.z * 0.62 + (mac2.r - 0.5) * 5.4 + (vr.b - 0.5) * 2.4;
+float band = 0.5 + 0.5 * sin(bandPh * 6.2831853);
+float bandW = floorM * smoothstep(0.34, 0.58, mac.r * 0.62 + vr.g * 0.5);
+albedo *= 1.0 + (band - 0.5) * 0.13 * bandW;
 /* Not on the mud: dried silt goes dusty buff, and a violet cast over it turns
    the pans into lilac lace. */
 /* The grey-violet patches are patches. Run at half strength over most of the
@@ -1041,13 +1159,14 @@ export function makeTerrainMaterial(tex) {
 
     shader.vertexShader =
       'attribute float aRef;\nattribute float aPan;\nattribute float aWall;\n' +
+      'attribute float aSheet;\n' +
       'varying vec3 vWPos;\nvarying vec3 vWNrm;\nvarying float vRef;\nvarying float vPan;\n' +
-      'varying float vWall;\n' +
+      'varying float vWall;\nvarying float vSheet;\n' +
       shader.vertexShader;
     shader.vertexShader = shader.vertexShader
       .replace('#include <begin_vertex>',
         '#include <begin_vertex>\n  vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\n' +
-        '  vRef = aRef;\n  vPan = aPan;\n  vWall = aWall;')
+        '  vRef = aRef;\n  vPan = aPan;\n  vWall = aWall;\n  vSheet = aSheet;')
       .replace('#include <beginnormal_vertex>',
         '#include <beginnormal_vertex>\n  vWNrm = normalize(mat3(modelMatrix) * objectNormal);');
 
@@ -1080,7 +1199,31 @@ export function makeTerrainMaterial(tex) {
         }
         #define getShadow(a, b, c, d, e, f) footShadow(a, b, c, d, e, f)
       #endif`);
+    /* ---- kill the grazing-angle specular sheen ----
+     * This is what the floor's missing saturation actually was, and it took three
+     * wrong diagnoses to find. Measured across the eight frames, floor saturation
+     * ordered itself perfectly by how far the view axis pointed into the sun and
+     * how grazing it was: 0.53 looking across the wash, 0.50 looking down at it,
+     * 0.41 up-wash, 0.29 straight into the sun. Nothing about albedo is
+     * view-dependent, so it was never a pigment problem — and inverting the tone
+     * curve on those pixels showed exposure was powerless too, a stop and a half
+     * moving the worst region by five hundredths.
+     *
+     * MeshStandardMaterial sets specularF90 to 1.0, so the Fresnel term climbs to
+     * fully reflective white at grazing incidence. That is right for a smooth
+     * dielectric and badly wrong for this: dry dirt and sand are rough, porous and
+     * dust-coated, the coherent surface reflection is broken up by roughness at
+     * every scale and by multiple scattering between grains, and a wash floor does
+     * not turn into a mirror when you look along it. Leaving it at 1.0 laid a
+     * near-white veil of the sun's own colour over every surface seen edge-on,
+     * which desaturated it, drove its value toward clipping, and picked out the
+     * ripple crests as the pale streaks that read as combed hair or ski tracks.
+     * A little is real, so a little is kept. */
     shader.fragmentShader = shader.fragmentShader
+      .replace('#include <lights_physical_fragment>', /* glsl */`
+      #include <lights_physical_fragment>
+      material.specularColor *= 0.55;
+      material.specularF90 *= 0.16;`)
       .replace('#include <map_fragment>', SURFACE)
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = tRough;')
       .replace('#include <normal_fragment_maps>',

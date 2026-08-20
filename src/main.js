@@ -43,8 +43,16 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
    two degrees of solar elevation is about twenty to one between a sun-facing
    rock face and level ground, so an exposure that lifts the wash floor to a
    comfortable middle grey flattens everything else into pale cream. A
-   photographer would let the floor sit dark and keep the walls. */
-renderer.toneMappingExposure = 0.82;
+   photographer would let the floor sit dark and keep the walls.
+   Trimmed, but only a little, and the measurement is the reason it is only a
+   little. Five of the eight frames had their floor sitting at value 0.76 to 0.87
+   where the tone curve's shoulder has no room left for chroma, so exposure was the
+   obvious suspect. Inverting the curve on those exact pixels says otherwise: two
+   thirds of a stop down buys six hundredths of saturation and costs the lit rock
+   face a third of its value. The washed-out regions were washed out because they
+   were pale sand, and the pigment is fixed in textures.js. This much is worth
+   having for the highlight roll-off; more would be paying for nothing. */
+renderer.toneMappingExposure = 0.74;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.shadowMap.autoUpdate = true;

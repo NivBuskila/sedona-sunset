@@ -38,10 +38,14 @@ export const SUN_DIR = new THREE.Vector3(
   Math.sin(SUN_AZ), Math.sin(SUN_EL), -Math.cos(SUN_AZ)).normalize();
 
 export const HORIZON = new THREE.Color(0.94, 0.66, 0.46);
-/* Haze is scattered light off dust and it is nearly achromatic with a warm bias.
-   A strongly saturated fog colour tints every distant surface orange and is half
-   of why the whole frame measured as one hue. */
-export const FOG = new THREE.Color(0.72, 0.58, 0.52);
+/* Haze is scattered light off dust, so it is warm and only mildly saturated —
+   but "nearly achromatic" was too far. At 0.28 saturation and 0.72 value this was
+   a pale grey veil, and everything it touched converged on a colour more neutral
+   than any surface in the scene: the far mesas lost their separation into
+   ridgelines and read as one flat milky sheet. Distance in a desert desaturates
+   toward the *sky's* colour, which at this hour is a warm dusty rose, not toward
+   grey. Darker as well, so the far field recedes instead of glowing. */
+export const FOG = new THREE.Color(0.62, 0.45, 0.40);
 
 const VERT = /* glsl */`
 varying vec3 vDir;
@@ -155,8 +159,23 @@ export function buildLights() {
      is only tens of centimetres long. Sized to what the tighter map can afford, and
      no more — grain-scale occlusion is marched analytically in the terrain shader
      rather than asked of the map, which is what makes that affordable. */
+  /* ---- and why the normal offset had to come almost all the way back down ----
+     Every centimetre of normal offset is a centimetre of shadow deleted from the
+     base of whatever casts it, which is peter-panning, and at 3.8 cm it was enough
+     to detach the contact entirely: a half-metre slab in the near field had its
+     lower edge sitting over lit sand with the cast shadow only picking up well
+     below and to the right, so the object read as composited into the frame rather
+     than resting on it. A contact shadow that does not start at the contact line is
+     worse than no contact shadow, because the eye reads the gap as the object
+     floating.
+     It is affordable because the constant bias is already doing the work. The
+     ortho frustum spans 970 m of depth, so -0.00035 is 34 cm along the light ray,
+     and on level ground under an 8-degree sun the surface only moves about 12 cm
+     of depth across a shadow texel — nearly three texels of slack, which is what
+     acne needs. Grain-scale occlusion, the other thing the offset was covering
+     for, is marched analytically in the terrain shader instead. */
   sun.shadow.bias = -0.00035;
-  sun.shadow.normalBias = 0.038;
+  sun.shadow.normalBias = 0.011;
   /* Wider PCF. Four taps spread over two texels is still not much of a filter, but
      it turns the residual per-pixel decision into a gradient. */
   sun.shadow.radius = 1.9;
@@ -178,7 +197,26 @@ export function buildLights() {
      never black. The lit side barely moves — it is dominated by the key — so this
      buys the shadow end without milking the frame, which is the failure mode the
      first attempt at a cool fill ran into. */
-  const hemi = new THREE.HemisphereLight(0xc0b2cc, 0xa8907c, 2.15);
+  /* ---- where the cool fill belongs, and where it does not ----
+     The shadows were measuring warm grey with no sky colour in them, so the
+     obvious move was to push this light's sky half toward blue-violet. That is
+     wrong, and it went wrong in a way worth recording. A HemisphereLight
+     interpolates by the surface normal's y, so its sky colour lands *hardest on
+     horizontal, upward-facing surfaces* — which in this scene means the broad top
+     face of every tabular clast lying on the floor. Those are the surfaces most
+     directly lit by the sun; making the fill violet turned the pale-lithology ones
+     into slabs of blue-grey card. The cool half belongs on faces turned *away*
+     from the sun, and this light cannot express that, because a hemisphere has no
+     notion of where the sun is. The `bounce` light below can, and does.
+     So this stays a mild warm lilac — which is also the honest dome average at
+     sunset, since most of the sky's energy at this hour is in the warm band near
+     the horizon, not at the violet zenith — over a distinctly warm bounce off the
+     red floor, and the cool comes from a direction instead.
+     Intensity down as well. A shaded facet was measuring 45 to 50 percent of the
+     sunlit value against the 15 to 25 percent a real shadowed Sedona face sits at,
+     and an over-strong fill is the frame's fourth desaturating pass: a nearly
+     neutral light on a red albedo washes the red out wherever it lands. */
+  const hemi = new THREE.HemisphereLight(0xbfb0c4, 0x9c6f52, 1.85);
 
   /* The bright sky immediately around the sun is a large, soft source in its
      own right. Casts nothing. */
@@ -187,11 +225,15 @@ export function buildLights() {
 
   /* Wash of light off the far canyon wall, from behind. Cool, because that wall
      is itself mostly sky-lit at this hour. */
-  /* Carries most of the violet now that the dome has been pulled back. It only
-     reaches faces turned away from the sun, which is exactly where the cool half
-     of the warm/cool split is supposed to land. */
-  const bounce = new THREE.DirectionalLight(0xa79cc0, 1.15);
-  bounce.position.set(-SUN_DIR.x * 300, 130, 320);
+  /* Carries the violet, all of it now. This is the only light in the rig that
+     knows where the sun is and can therefore put a cool cast on precisely the
+     faces the sun does not reach, which is what the warm/cool split actually is.
+     Kept low to the horizon on purpose: raised to 130 it had a large upward
+     component and spilled onto horizontal clast tops, which is the same mistake
+     the hemisphere light was making. At this height it rakes the sun-averted
+     vertical faces and very little else. */
+  const bounce = new THREE.DirectionalLight(0x8c98d4, 1.95);
+  bounce.position.set(-SUN_DIR.x * 300, 52, 320);
 
   return { sun, hemi, glow, bounce };
 }
