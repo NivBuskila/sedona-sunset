@@ -414,7 +414,7 @@ export function buildScatter(terrain, tex) {
     Object.assign(shader.uniforms, mat.userData.uniforms);
 
     shader.vertexShader = ('uniform float uVpH;\nuniform vec3 uFarCol;\n' +
-      'varying float vFar;\nvarying vec3 vSeat;\n' + shader.vertexShader)
+      'varying float vFar;\nvarying float vFarN;\nvarying vec3 vSeat;\n' + shader.vertexShader)
       /* ---- constant texel density across three orders of size ----
          The hull UVs are per-face box projections normalised into the unit square,
          so every facet gets exactly one tile of the surface map however large the
@@ -455,7 +455,25 @@ export function buildScatter(terrain, tex) {
         vec3 iCen = (modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
         float iRad = length(instanceMatrix[0].xyz);
         float px = 0.5 * uVpH * projectionMatrix[1][1] * iRad / max(-iCen.z, 0.05);
-        vFar = 1.0 - smoothstep(2.6, 9.0, px);
+        /* ---- two fades, not one ----
+           These were a single threshold, and sharing it is what emptied the mid
+           distance. Worked through at the capture height: a 20 cm cobble at
+           thirty metres projects to a 3 px radius, so it is six pixels across and
+           an unmistakable object with a readable shadow — and it was arriving 97%
+           converged on the population mean colour with its normal 90% flattened.
+           The mid-distance band was being deliberately erased at exactly the
+           range the eye travels through.
+
+           The two quantities do not filter alike, which is the whole point. A
+           perturbed *normal* under a widening footprint is what scintillates,
+           because shading is a non-linear function of it and averaging the input
+           is not averaging the output; that has to converge early, and it is what
+           fixed the hash. *Colour* averages linearly and correctly, so it only
+           has to converge once the instance is genuinely smaller than a pixel —
+           and until then it is the only thing still carrying the difference
+           between a gravel bar and the sand beside it. */
+        vFarN = 1.0 - smoothstep(2.6, 9.0, px);
+        vFar  = 1.0 - smoothstep(0.70, 2.20, px);
         transformed *= smoothstep(0.60, 1.60, px);
       `)
       /* Converging on the population mean is right — a pixel covering ten clasts
@@ -477,7 +495,8 @@ export function buildScatter(terrain, tex) {
         vSeat = normalize(normalMatrix * mat3(instanceMatrix) * vec3(0.0, 1.0, 0.0));
       `);
 
-    shader.fragmentShader = ('varying float vFar;\nvarying vec3 vSeat;\nuniform vec3 uSunDir;\n' +
+    shader.fragmentShader = ('varying float vFar;\nvarying float vFarN;\n' +
+      'varying vec3 vSeat;\nuniform vec3 uSunDir;\n' +
       'float gShadow = 1.0;\n' + shader.fragmentShader)
       /* Same trick as the terrain: catch the shadow term as the lighting chunk
          looks it up, because getShadowMask() lives in a chunk meshphysical does
@@ -495,7 +514,7 @@ export function buildScatter(terrain, tex) {
         #endif`)
       .replace('#include <normal_fragment_maps>', /* glsl */`
         #include <normal_fragment_maps>
-        normal = normalize(mix(normal, vSeat, vFar * 0.92));
+        normal = normalize(mix(normal, vSeat, vFarN * 0.92));
       `)
       /* Same reasoning as the terrain: a dust-filmed dry stone does not go
          mirror-bright along its edges, and the stock material's specularF90 of 1.0

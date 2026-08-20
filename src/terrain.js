@@ -1148,11 +1148,20 @@ albedo *= 1.0 + rip * 0.115 * rpF;
    averages to flat under exactly the grazing view where this detail is wanted.
    Two crossed pairs at incommensurate spacings and off-axis angles, which gives
    irregular patches of a quarter to a half metre without an axis-aligned grid. */
+   Summed rather than multiplied, and that distinction decides whether any of it
+   survives. A product of band-limited terms collapses to zero the moment *either*
+   factor becomes unresolvable, so crossing an across-channel wave with an
+   along-channel one deletes both as soon as the view goes grazing — which is
+   where the first version went. Summing lets each direction fade on its own
+   schedule, so at distance the pattern degenerates from patches into streaks
+   aligned with the axis that can no longer be resolved. That degeneration is not
+   a compromise: continuous light and dark bands running across the channel is
+   precisely what a ripple field looks like at thirty metres under a low sun. */
 float mA = bsin(dot(wxz, vec2(0.83, 0.56)) / 0.34)
-         * bsin(dot(wxz, vec2(-0.56, 0.83)) / 0.41);
+         + bsin(dot(wxz, vec2(-0.56, 0.83)) / 0.41);
 float mB = bsin(dot(wxz, vec2(0.34, -0.94)) / 0.22)
-         * bsin(dot(wxz, vec2(0.94, 0.34)) / 0.26);
-float mtl = clamp(0.5 + 0.30 * mA + 0.22 * mB, 0.0, 1.0);
+         + bsin(dot(wxz, vec2(0.94, 0.34)) / 0.26);
+float mtl = clamp(0.5 + 0.16 * mA + 0.12 * mB, 0.0, 1.0);
 albedo *= 1.0 + (mtl - 0.5) * 0.34 * floorM;
 albedo = mix(albedo, albedo * vec3(0.93, 0.99, 1.07),
              smoothstep(0.56, 0.78, mtl) * floorM * 0.5);
