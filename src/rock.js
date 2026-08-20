@@ -156,13 +156,20 @@ function subResist(id, li) {
  * twenty percent of two metres reads as corrugated card, not as rock.
  */
 function buildColumn() {
-  const ys = [];
-  const put = (y) => { if (!ys.length || y > ys[ys.length - 1] + 1e-4) ys.push(y); };
+  const ys = [], hd = [];
+  /* The second argument marks the row as a structural boundary: the seam between
+     this row and the one below it is a bedding arête and must never be welded
+     smooth, however small the angle across it happens to be at some particular
+     column. See creasedMesh for why that matters. */
+  const put = (y, hard) => {
+    if (!ys.length || y > ys[ys.length - 1] + 1e-4) { ys.push(y); hd.push(hard ? 1 : 0); }
+    else if (hard) hd[hd.length - 1] = 1;
+  };
 
   for (let li = 0; li < LAYERS.length; li++) {
     const L = LAYERS[li], y1 = layTop(li);
-    put(L.y0 - 0.075);
-    put(L.y0 + 0.075);
+    put(L.y0 - 0.075, 1);
+    put(L.y0 + 0.075, 1);
     const step = isVert(L.kind) ? 0.95 : L.kind === BENCH ? 0.58 : 1.70;
     /* Sub-bed contacts, but only the resistant ones. A riser is worth two extra
        rows when it is going to be twenty centimetres of shadow line; the soft
@@ -193,16 +200,19 @@ function buildColumn() {
     let ci = 0;
     for (let y = L.y0 + 0.075; y < y1 - 0.075; y += step) {
       while (ci < contacts.length && contacts[ci] < y) {
-        put(contacts[ci] - RISE); put(contacts[ci] + RISE); ci++;
+        put(contacts[ci] - RISE, 1); put(contacts[ci] + RISE, 1); ci++;
       }
       put(y);
     }
-    while (ci < contacts.length) { put(contacts[ci] - RISE); put(contacts[ci] + RISE); ci++; }
+    while (ci < contacts.length) {
+      put(contacts[ci] - RISE, 1); put(contacts[ci] + RISE, 1); ci++;
+    }
   }
   put(Y_TOP);
 
   const n = ys.length;
   const Y = Float32Array.from(ys);
+  const H = Uint8Array.from(hd);
   const R = new Float32Array(n);      // cumulative retreat
   const P = new Float32Array(n);      // the bed's own proud offset
   let acc = 0;
@@ -216,7 +226,7 @@ function buildColumn() {
   let r0 = 0;
   for (let i = 0; i < n; i++) if (Y[i] <= Y_ANCHOR) r0 = R[i];
   for (let i = 0; i < n; i++) R[i] -= r0;
-  return { Y, R, P, n };
+  return { Y, R, P, H, n };
 }
 
 const COL = buildColumn();
@@ -503,7 +513,9 @@ function wallGrid(path, terrain, side) {
   }
 
   cavityPass(att, uu, nu, nv);
-  return { pos, att, nu, nv };
+  const hard = new Uint8Array(nv);
+  hard.set(COL.H);
+  return { pos, att, nu, nv, hard };
 }
 
 /* How far a point sits back from its own neighbourhood. A cleft between two fins,
@@ -535,9 +547,26 @@ function cavityPass(att, uu, nu, nv) {
  * and the edge stays hard. This is the difference between a cliff and a dune and
  * it cannot be bought with a normal map, because a normal map cannot change a
  * silhouette or the shading discontinuity across one.
+ *
+ * An angle threshold alone is not enough, and this is where the dotted rules
+ * along every bench lip came from. The riser at a bedding contact is tilted by
+ * whatever the difference in the two beds' proud offsets happens to be, and that
+ * difference varies column to column with the joint offsets and the coarse
+ * relief — so along one contact the riser crosses the threshold and back
+ * repeatedly. Where it is under, the seam welds and the top of the riser is
+ * shaded as a continuation of the lit face above it; where it is over, the seam
+ * creases and the same pixel is shaded as the underside of an overhang. Adjacent
+ * columns therefore alternate between the brightest and the darkest tone on the
+ * wall, one pixel tall, all the way along the contact: a dotted rule, and one
+ * that no amount of widening the riser can remove because the alternation is in
+ * the *decision*, not in the facet.
+ *
+ * So the rows that buildColumn deliberately placed as structural boundaries carry
+ * a flag, and a seam across one of those rows never welds regardless of angle.
+ * The contact then reads as one continuous arête, which is what it is.
  */
 function creasedMesh(grid, cosT, flip) {
-  const { pos, att, nu, nv } = grid;
+  const { pos, att, nu, nv, hard } = grid;
   const qu = nu - 1, qv = nv - 1;
   const nq = qu * qv;
   const sgn = flip ? -1 : 1;
@@ -585,11 +614,15 @@ function creasedMesh(grid, cosT, flip) {
       const base = vi;
       for (let c = 0; c < 4; c++) {
         const gi = i + (c & 1), gj = j + (c >> 1);
+        /* A vertex on a flagged row may only gather from quads on its own side of
+           that row, and `own` is at row j by construction. */
+        const walled = hard && hard[gj];
         acc.copy(own);
         for (let dj = -1; dj <= 0; dj++) {
           for (let di = -1; di <= 0; di++) {
             const qx = gi + di, qy = gj + dj;
             if (qx < 0 || qy < 0 || qx >= qu || qy >= qv) continue;
+            if (walled && qy !== j) continue;
             const q2 = qy * qu + qx;
             if (q2 === qi || !live[q2]) continue;
             oth.set(qn[q2 * 3], qn[q2 * 3 + 1], qn[q2 * 3 + 2]);
@@ -745,12 +778,17 @@ function butteGrid(cx, cz, rad, hs, terrain, seed) {
       att[k * 4 + 3] = 0.5;
     }
   }
-  return { pos, att, nu, nv };
+  /* Subsampled rows, so a contact pair only survives as a boundary where both of
+     its rows were kept; the rest of the section is carried by tone at this
+     distance anyway. */
+  const hard = new Uint8Array(nv);
+  for (let jj = 1; jj < ny; jj++) hard[jj] = COL.H[rows[jj]] & COL.H[rows[jj] - 1] ? 1 : 0;
+  return { pos, att, nu, nv, hard };
 }
 
 /** `creasedMesh` with the u axis wrapped, for the radial buttes. */
 function creasedRing(grid, cosT) {
-  const { pos, att, nu, nv } = grid;
+  const { pos, att, nu, nv, hard } = grid;
   const nu2 = nu + 1;
   const p2 = new Float32Array(nu2 * nv * 3), a2 = new Float32Array(nu2 * nv * 4);
   for (let j = 0; j < nv; j++) {
@@ -760,7 +798,7 @@ function creasedRing(grid, cosT) {
       for (let c = 0; c < 4; c++) a2[dst * 4 + c] = att[src * 4 + c];
     }
   }
-  return creasedMesh({ pos: p2, att: a2, nu: nu2, nv }, cosT, false);
+  return creasedMesh({ pos: p2, att: a2, nu: nu2, nv, hard }, cosT, false);
 }
 
 export function buildDistantButtes(terrain, material) {
@@ -1099,7 +1137,28 @@ albedo *= 1.0 + xb * 0.085 * lPale * lVert * (1.0 - smoothstep(0.12, 0.45, foot)
    a cliff face read as paint rather than as cement. */
 vec4 mac = texture2D(uMacro, vec2(aS * 0.0195 + 0.31, y * 0.052));
 vec4 vr  = texture2D(uVar, vec2(aS * 0.037, y * 0.055));
-float ironF = smoothstep(0.80, 1.08, mac.r * 0.62 + vr.g * 0.52 + (sbR - 0.5) * 0.30) * lIron;
+
+/* Cells about nine and a half metres along the wall, shared with the varnish
+   below. Both features need the same thing from them — a run of cliff face that
+   is either doing something or not — and one floor and four hashes is cheaper
+   than a texture fetch. */
+float vs = aS * 0.105;
+float vi = floor(vs), vt = vs - vi;
+float vh1 = hash11(vi), vh2 = hash11(vi + 37.0);
+float vh3 = hash11(vi + 71.0), vh4 = hash11(vi + 113.0);
+
+/* The along-strike break-up. Without it the driver varies only over the macro
+   map's fifty-metre period and the bed's own resistance, so a lens that opens at
+   all opens along the whole visible run of its bed: a ribbon of vivid red thirty
+   metres long and one bed tall, with the constant width and the constant hue that
+   makes it read as tape rather than as cement. Groundwater fronts are not that
+   tidy; adding a term that decorrelates every nine and a half metres cuts the
+   ribbons into lenses without touching their peak saturation, which is the part
+   the measured tail depends on. */
+float ironC = hash11(vi + 211.0) + 0.55 * hash11(vi + 251.0);
+float ironF = smoothstep(0.80, 1.08, mac.r * 0.62 + vr.g * 0.52
+                                   + (sbR - 0.5) * 0.30
+                                   + (ironC - 0.775) * 0.34) * lIron;
 /* Fresh spall faces are unweathered rock: no varnish film, no dust, and the
    pigment at full strength. A cliff with no fresh faces is a cliff nothing has
    fallen off, which is not a cliff. */
@@ -1142,10 +1201,6 @@ albedo *= 1.0 + sbTone;
    metres below the lip of the bed that sheds it and decaying downward over five to
    twelve. Nothing is thresholded and nothing has a straight edge. It also costs no
    texture fetch at all, which on this rasteriser pays for itself. */
-float vs = aS * 0.105;
-float vi = floor(vs), vt = vs - vi;
-float vh1 = hash11(vi), vh2 = hash11(vi + 37.0);
-float vh3 = hash11(vi + 71.0), vh4 = hash11(vi + 113.0);
 float vW = 0.055 + 0.20 * vh2;
 float vC = vW + (1.0 - 2.0 * vW) * vh3;
 float vLat = 1.0 - smoothstep(vW * 0.30, vW, abs(vt - vC));
@@ -1226,7 +1281,15 @@ tRough = clamp(lRough * (0.94 + (sbR - 0.5) * 0.10) * mix(1.0, 0.80, varn)
    has a band of deep shade under its lip, and that band is what a stair-stepped
    cliff actually looks like from a distance. */
 float ledgeShade = (1.0 - smoothstep(0.0, 1.6, y - lBot)) * (1.0 - lVert) * 0.55;
-tAO = clamp(rkAO * (0.72 + 0.34 * (1.0 - cav)) - ledgeShade * 0.5, 0.22, 1.0);
+/* And the same thing one order of magnitude down: the shade under a resistant
+   sub-bed's lip. The mesh already cuts that riser, but as tone it also survives
+   past the distance where the riser is smaller than a pixel, and as tone it is
+   filtered — a smooth ramp over the top sixth of a bed has a bounded derivative
+   at every distance, which is the whole reason this is here rather than in the
+   geometry a second time. */
+float sbUp = bedResist(sbI + 1.0, lIdx);
+float sbLip = smoothstep(0.80, 1.0, sbT) * smoothstep(0.54, 0.74, sbUp);
+tAO = clamp(rkAO * (0.72 + 0.34 * (1.0 - cav)) - ledgeShade * 0.5 - sbLip * 0.30, 0.22, 1.0);
 tAO = mix(0.84, tAO, 0.35 + 0.65 * grainF);
 `;
 
