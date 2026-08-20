@@ -48,7 +48,7 @@ const TAU = Math.PI * 2;
    moves. Four degrees of local slope, so the trunk stands rather than leans off
    a bank edge, and it sits a little to the sun side of the frame centre so the
    crown is rim-lit and partly translucent rather than flatly front-lit. */
-export const JUNIPER_XZ = { x: 7.16, z: -68.17 };
+export const JUNIPER_XZ = { x: 6.74, z: -65.65 };
 
 /* Prevailing wind, as a direction the wind blows *toward*. Chosen across the
    wash rather than along it so the tree's lean reads as a lean in the hero
@@ -206,7 +206,7 @@ function limbGeometry(pts, radii, seg, prof, twistRate, s0, flute, deadBase = 0)
          groove four centimetres deep and two wide sees very little of the sky,
          and that is what actually draws the fluting on an overcast or shadow-side
          trunk. */
-      const ao = 0.34 + 0.66 * Math.pow(shape, 0.70);
+      const ao = 0.50 + 0.50 * Math.pow(shape, 0.80);
       vcol[k * 3] = ao; vcol[k * 3 + 1] = ao; vcol[k * 3 + 2] = ao;
     }
   }
@@ -409,7 +409,7 @@ function buildTree(seed) {
     /* Root flare: the base swells hard in the bottom twenty centimetres, which
        is also what buries the trunk into the hummock convincingly. */
     const flare = 1 + 0.72 * Math.exp(-y / 0.22) + 0.18 * Math.exp(-y / 0.70);
-    tr.push(mix(0.300, 0.238, Math.pow(t, 0.8)) * flare);
+    tr.push(mix(0.340, 0.272, Math.pow(t, 0.8)) * flare);
   }
   geoms.push(limbGeometry(tp, tr, SEG_BY_DEPTH[0], trunkProf, twist, 0, FLUTE_BY_DEPTH[0]));
 
@@ -433,7 +433,7 @@ function buildTree(seed) {
     dir.y += dn ? 0.30 : 0.12;
     dir.addScaledVector(wind, 0.14).normalize();
     grow(tp[nT].clone(), dir, (dn ? 2.15 : 1.55) + rand() * 0.45,
-         0.160 - i * 0.011, 0.074, 1, dn, 0,
+         0.178 - i * 0.012, 0.082, 1, dn, 0,
          makeProfile(seed + 700 + i, 5, dn > 0.5 ? 2 : 1), twist * 1.5);
   }
 
@@ -551,7 +551,7 @@ function foliageGeometry(clumps, seed) {
           sh += density(px + S.x * t, py + S.y * t, pz + S.z * t) * (t < 1.2 ? 1 : 0.7);
         }
         const sun = Math.exp(-0.30 * sh);
-        const f = clamp(0.08 + 0.92 * amb * (0.22 + 0.78 * sun), 0.06, 1);
+        const f = clamp(0.14 + 0.86 * amb * (0.26 + 0.74 * sun), 0.13, 1);
         vcol.push(f, f, f);
       }
       idx.push(v, v + 1, v + 2, v, v + 2, v + 3);
@@ -584,8 +584,8 @@ export function makeBarkMaterial(bark) {
      the bark map's fibre contrast almost entirely removed — it has weathered
      smooth — but its long grain kept, which is carried in the map's alpha. */
   const u = {
-    uLiveCol: { value: new THREE.Color(0.74, 0.68, 0.63) },
-    uDeadCol: { value: new THREE.Color(0.255, 0.242, 0.228) },
+    uLiveCol: { value: new THREE.Color(1.00, 0.93, 0.87) },
+    uDeadCol: { value: new THREE.Color(0.300, 0.285, 0.264) },
   };
   mat.userData.uniforms = u;
   mat.onBeforeCompile = (sh) => {
@@ -645,7 +645,7 @@ export function makeFoliageMaterial(map) {
     uSunDir: { value: SUN_DIR.clone() },
     uTrans: { value: new THREE.Color(1.55, 1.22, 0.52) },
     uTransAmt: { value: 1.55 },
-    uDirCap: { value: 0.42 },
+    uDirCap: { value: 0.62 },
   };
   mat.userData.uniforms = u;
   mat.onBeforeCompile = (sh) => {
