@@ -60,41 +60,41 @@ export const LAYERS = [
   /* Buried: a vertical skirt that guarantees the curtain reaches below whatever
      the terrain is doing at its foot, so there is never a seam. */
   { y0: -15.0, kind: SKIRT, rec: 0.00, proud: 0.00, bedT: 2.4,
-    col: [0.235, 0.105, 0.072], iron: 0.30, pale: 0.00, rough: 0.94 },
+    col: [0.242, 0.126, 0.102], iron: 0.30, pale: 0.00, rough: 0.94 },
   /* Hermit-like slope-former, mostly under the talus; where the apron is thin it
      emerges as the red debris ramp the cliff stands on. */
   { y0:  -6.0, kind: SLOPE, rec: 1.55, proud: 0.00, bedT: 2.0,
-    col: [0.255, 0.112, 0.076], iron: 0.45, pale: 0.00, rough: 0.95 },
+    col: [0.266, 0.139, 0.112], iron: 0.45, pale: 0.00, rough: 0.95 },
   /* Schnebly Hill, lower cliff. */
   { y0:   3.0, kind: CLIFF, rec: 0.07, proud: -1.15, bedT: 1.75,
-    col: [0.395, 0.163, 0.096], iron: 1.00, pale: 0.00, rough: 0.88 },
+    col: [0.386, 0.196, 0.156], iron: 1.00, pale: 0.00, rough: 0.88 },
   { y0:  12.2, kind: BENCH, rec: 1.62, proud:  0.75, bedT: 1.30,
-    col: [0.290, 0.132, 0.090], iron: 0.55, pale: 0.00, rough: 0.94 },
+    col: [0.298, 0.160, 0.132], iron: 0.55, pale: 0.00, rough: 0.94 },
   /* Schnebly Hill, middle cliff — the thickest single face in the corridor. */
   { y0:  16.4, kind: CLIFF, rec: 0.05, proud: -1.45, bedT: 2.15,
-    col: [0.368, 0.140, 0.081], iron: 1.00, pale: 0.00, rough: 0.87 },
+    col: [0.360, 0.180, 0.143], iron: 1.00, pale: 0.00, rough: 0.87 },
   { y0:  25.8, kind: BENCH, rec: 1.45, proud:  0.62, bedT: 1.15,
-    col: [0.305, 0.143, 0.097], iron: 0.55, pale: 0.00, rough: 0.94 },
+    col: [0.310, 0.170, 0.140], iron: 0.55, pale: 0.00, rough: 0.94 },
   /* Schnebly Hill, upper cliff — the vivid one: iron-cemented and freshly spalled. */
   { y0:  29.6, kind: CLIFF, rec: 0.04, proud: -1.65, bedT: 1.55,
-    col: [0.455, 0.183, 0.103], iron: 1.35, pale: 0.00, rough: 0.86 },
+    col: [0.436, 0.212, 0.164], iron: 1.35, pale: 0.00, rough: 0.86 },
   /* Fort Apache Member: grey limestone, hard, standing proud as a ledge with an
      undercut beneath it. The one achromatic band in the red, and after the
      Coconino cap the most recognisable thing in a Sedona section. */
   { y0:  38.2, kind: LEDGE, rec: 0.00, proud: -2.55, bedT: 0.85,
     col: [0.302, 0.278, 0.246], iron: 0.10, pale: 0.85, rough: 0.78 },
   { y0:  41.0, kind: BENCH, rec: 0.95, proud:  1.00, bedT: 1.05,
-    col: [0.288, 0.134, 0.094], iron: 0.60, pale: 0.00, rough: 0.94 },
+    col: [0.296, 0.158, 0.130], iron: 0.60, pale: 0.00, rough: 0.94 },
   { y0:  46.0, kind: CLIFF, rec: 0.06, proud: -0.70, bedT: 1.60,
-    col: [0.382, 0.155, 0.092], iron: 1.10, pale: 0.00, rough: 0.88 },
+    col: [0.378, 0.190, 0.150], iron: 1.10, pale: 0.00, rough: 0.88 },
   { y0:  51.2, kind: BENCH, rec: 1.25, proud:  1.30, bedT: 1.20,
-    col: [0.330, 0.170, 0.120], iron: 0.50, pale: 0.10, rough: 0.94 },
+    col: [0.336, 0.192, 0.158], iron: 0.50, pale: 0.10, rough: 0.94 },
   /* Coconino Sandstone: buff-white cross-bedded aeolian sand, the pale cap. The
      contrast against the red below is Sedona's other signature. */
   { y0:  55.0, kind: CLIFF, rec: 0.03, proud: -1.50, bedT: 3.20,
-    col: [0.548, 0.462, 0.342], iron: 0.06, pale: 1.00, rough: 0.80 },
+    col: [0.478, 0.402, 0.298], iron: 0.06, pale: 1.00, rough: 0.80 },
   { y0:  67.0, kind: CAP,   rec: 1.80, proud:  1.40, bedT: 2.60,
-    col: [0.300, 0.188, 0.128], iron: 0.35, pale: 0.15, rough: 0.96 },
+    col: [0.308, 0.204, 0.158], iron: 0.35, pale: 0.15, rough: 0.96 },
 ];
 const Y_TOP = 75.0;
 const Y_ANCHOR = 3.0;      // foot of the lowest cliff: where the plan is anchored
@@ -404,7 +404,7 @@ function wallGrid(path, terrain, side) {
          smooth. Fifteen centimetres is a hand's width, which is what the risers
          between beds on a Schnebly Hill cliff measure. */
       const sbi = Math.floor(subBed(yc, li));
-      u -= (subResist(sbi, li) - 0.5) * 0.62 * (0.45 + 0.55 * vert);
+      u -= (subResist(sbi, li) - 0.5) * 0.46 * (0.45 + 0.55 * vert);
 
       /* Alcoves and spall scars. An alcove undercuts a soft bed beneath a hard
          one, so it goes on benches and its rim is the cliff above; a spall scar is
@@ -472,7 +472,15 @@ function wallGrid(path, terrain, side) {
          is no section anyway: it is caprock and the debris off it. */
       att[k * 4] = yTop - cDat[i];
       att[k * 4 + 1] = s;
-      att[k * 4 + 2] = 0;
+      /* Flagged, by a value the freshness channel can never legitimately take, so
+         the shader can tell a back slope from a cliff face. Holding the
+         stratigraphic coordinate at the rim stopped the pale bands running
+         diagonally down it, but it left the slope wearing whatever bed happened to
+         cap that summit — and where that was the Coconino, the back of the rim came
+         out as a large flat sheet of cream, the brightest thing in the frame after
+         the sun, reading as a concrete roof. Behind a rim there is no rock face at
+         all: it is soil and shattered debris off the caprock. */
+      att[k * 4 + 2] = -1;
       uu[k] = u;
     }
   }
@@ -650,7 +658,7 @@ export function buildWalls(path, terrain, material) {
 const BUTTES = [
   [-118,  545,  95, 2.05], [ 142,  615, 105, 2.30],
   [-222,  800, 125, 2.45], [ 268,  905, 135, 2.20],
-  [ -78, 1360, 190, 1.50], [ 214, 1500, 210, 1.70],
+  [  40,  845, 155, 0.78], [ 205, 1010, 180, 0.92],
   [-520,  665, 155, 1.85], [ 560,  745, 165, 1.70],
   [ 880,  980, 205, 2.00], [-900, 1105, 215, 1.90],
 ];
@@ -981,7 +989,8 @@ const ROCK_SURFACE = /* glsl */`
 vec3 gN = normalize(vWNrm);
 float y = vRock.x;            // column-space elevation: the stratigraphic coordinate
 float aS = vRock.y;           // along-wall coordinate, for the vertical streaks
-float fresh = vRock.z;        // spall scars: rock exposed since the last frost
+float back = step(vRock.z, -0.5);   // behind the rim: debris and soil, not rock face
+float fresh = max(vRock.z, 0.0);    // spall scars: rock exposed since the last frost
 float cav = vRock.w;          // how far this point sits back from its neighbourhood
 
 float foot = max(length(dFdx(vWPos)), length(dFdy(vWPos)));
@@ -1037,7 +1046,10 @@ float lum = mix(1.0, dot(rkA, vec3(0.299, 0.587, 0.114)) / uRockLum, 0.70)
           * mix(1.0, rkA2 / uRockLum, 0.12 + 0.32 * grainF);
 lum = clamp(lum, 0.55, 1.60);
 
-vec3 albedo = lCol * lum;
+/* Behind the rim, whatever bed capped the summit is buried under its own
+   weathering products, so the colour is the debris colour and not the bed's. */
+vec3 albedo = mix(lCol, vec3(0.268, 0.170, 0.128), back * 0.85) * lum;
+lPale *= 1.0 - back;
 
 /* ---- cross-bedding ----
    Coconino is a fossil dune field, so its laminae are not level: they sweep in
@@ -1056,14 +1068,20 @@ albedo *= 1.0 + xb * 0.085 * lPale * lVert * (1.0 - smoothstep(0.12, 0.45, foot)
    fronts, in lenses metres across that follow bedding. Those lenses are the parts
    of a Sedona cliff that go genuinely vivid in the last light — a mean pushed up
    instead just makes an orange membrane over everything, which is the failure
-   this scene has already had twice. Narrow threshold, strong effect. */
+   this scene has already had twice. Narrow threshold, strong effect.
+   The threshold is the whole control and the first setting had it far too low:
+   the driving sum averages about 0.61, so a smoothstep starting at 0.54 was
+   putting iron on roughly two thirds of the wall. Measured, that came out at 0.77
+   mean saturation against a target band of 0.42 to 0.65 — the vivid *tail* was
+   right and the vivid *mean* was the old orange-membrane failure wearing a new
+   coat. Started well above the mean of the driver instead, so a lens is a lens. */
 vec4 mac = texture2D(uMacro, rot2(vWPos.xz, 0.61) * 0.021 + vec2(y * 0.014, 0.0));
 vec4 vr  = texture2D(uVar, vec2(aS * 0.037, y * 0.055));
-float ironF = smoothstep(0.54, 0.80, mac.r * 0.62 + vr.g * 0.52 + (sbR - 0.5) * 0.30) * lIron;
+float ironF = smoothstep(0.82, 1.02, mac.r * 0.62 + vr.g * 0.52 + (sbR - 0.5) * 0.30) * lIron;
 /* Fresh spall faces are unweathered rock: no varnish film, no dust, and the
    pigment at full strength. A cliff with no fresh faces is a cliff nothing has
    fallen off, which is not a cliff. */
-albedo = mix(albedo, uIron * lum, clamp(ironF * 0.85 + fresh * 0.40 * lIron, 0.0, 0.92));
+albedo = mix(albedo, uIron * lum, clamp(ironF * 0.88 + fresh * 0.26 * lIron, 0.0, 0.92));
 
 /* A resistant bed is better cemented, so it is a little paler and a little
    smoother, and the soft bed under it is recessed and holds shadow. */
@@ -1087,13 +1105,18 @@ albedo *= 1.0 + sbTone;
    broken vertically because the water that plated it did not run evenly. One tap
    carries all of that — the B channel of the variance map is already a
    thresholded sparse mask, which is exactly the right shape for where a plate is,
-   and the other channels vary its width, its taper rate and its break-up. */
-vec4 dr = texture2D(uVar, vec2(aS * 0.085, y * 0.017));
-float vStreak = smoothstep(0.40, 0.80, dr.b * 0.86 + dr.g * 0.28);
+   and the other channels vary its width, its taper rate and its break-up.
+   Sampled anisotropically, at six metres along the wall against eighty up it,
+   because a plate is *tall and narrow*. The intermediate version used twelve
+   metres against sixty and the plates came out nearly round: two- to four-metre
+   blotches, and a blotch of dark neutral on red under a lilac sky fill reads as
+   blue-grey mould rather than as a stain running down a cliff. */
+vec4 dr = texture2D(uVar, vec2(aS * 0.168, y * 0.0125));
+float vStreak = smoothstep(0.44, 0.80, dr.b * 0.86 + dr.g * 0.26);
 float hang = exp2(-(lTop - y) * (0.15 + 0.30 * dr.r));
 float vBreak = 0.55 + 0.45 * smoothstep(0.22, 0.72, dr.g);
 float varn = clamp(vStreak * hang * vBreak * lVert * (1.0 - lPale * 0.70)
-           * smoothstep(0.50, 0.14, abs(gN.y)) * (1.0 - fresh) * 1.9, 0.0, 0.68);
+           * smoothstep(0.50, 0.14, abs(gN.y)) * (1.0 - fresh) * 1.8, 0.0, 0.58);
 albedo = mix(albedo, uVarnish * (0.62 + 0.38 * lum), varn);
 
 /* ---- dust and weathered fines on the up-facing surfaces ----
@@ -1102,7 +1125,7 @@ albedo = mix(albedo, uVarnish * (0.62 + 0.38 * lum), varn);
    cliff read as stepped: the treads are a different material from the risers. */
 float dustW = smoothstep(0.34, 0.86, gN.y)
             * (0.40 + 0.45 * smoothstep(0.35, 0.75, mac.g)) * (1.0 - lVert * 0.35)
-            * (1.0 - fresh * 0.85);
+            * (1.0 - fresh * 0.85) * (1.0 + back * 0.6);
 if (dustW > 0.01) {
   vec3 dust = texture2D(uDirtA, domUV(vWPos, aN) * 0.30).rgb;
   albedo = mix(albedo, dust * 1.05, dustW * 0.62);
@@ -1138,9 +1161,15 @@ vec3 wN = normalize(mix(gN, mix(rkN, rkN2, 0.5), 0.20 + 0.72 * grainF));
    contact, so neither goes anywhere near a bump any more. A raised cosine over
    the bed swells its middle and hollows its contacts, which is how a poorly
    cemented bed weathers, and its gradient never exceeds two pi over the bed
-   thickness. */
+   thickness.
+   The window has to *vanish* at the contacts, not peak there, and getting that
+   wrong is what left the artefact in place after the step itself was removed:
+   cos(2 pi t) is continuous across the bed boundary, but the per-bed amplitude
+   multiplying it is piecewise constant, so their product still jumped by the
+   whole amplitude at every contact and dFdx still saw a cliff. A raised cosine
+   that is zero at t = 0 multiplies that jump by nothing. */
 float soft = 1.0 - smoothstep(0.50, 0.66, sbR);
-wN = bumpFrom(cos(sbT * 6.28318) * soft * 0.42, wN, 0.10 * bedF);
+wN = bumpFrom((1.0 - cos(sbT * 6.28318)) * 0.5 * soft * 0.75, wN, 0.10 * bedF);
 tNrmW = wN;
 
 /* Varnish is a mineral film and genuinely a little glossier than the sand grain
@@ -1195,7 +1224,7 @@ export function makeRockMaterial(tex) {
     /* Desert varnish. Dark, faintly cool, and never black — a real varnish
        measures around eight percent reflectance and still photographs as a colour
        rather than as a hole. */
-    uVarnish: { value: new THREE.Color(0.062, 0.048, 0.044) },
+    uVarnish: { value: new THREE.Color(0.058, 0.042, 0.033) },
     uRockLum: { value: meanLinearLum(tex.rock.albedo) },
   };
 
