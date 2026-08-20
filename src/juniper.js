@@ -225,6 +225,7 @@ function limbGeometry(pts, radii, seg, prof, twistRate, s0, flute, deadBase = 0)
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   g.setAttribute('aDead', new THREE.BufferAttribute(dead, 1));
+  g.setAttribute('color', new THREE.BufferAttribute(vcol, 3));
   g.setIndex(new THREE.BufferAttribute(idx, 1));
   g.computeVertexNormals();
 
@@ -318,6 +319,16 @@ function buildTree(seed) {
         }
       }
       return;
+    }
+
+    /* A little interior mass one level up from the twigs. These sit deep enough
+       that the occlusion bake takes them to near black, so they cost nothing in
+       brightness and buy the crown an opaque core — which is what stops the
+       sunlit far side of the tree showing through the near side as scattered
+       bright specks. */
+    if (depth === 3 && deadness < 0.5 && rand() < 0.55) {
+      clumps.push({ p: pts[Math.max(1, Math.floor(nSeg * 0.7))].clone(),
+                    size: 0.28 + rand() * 0.14 });
     }
 
     /* Children. Side branches part way along, and a fork at the tip. */
@@ -566,13 +577,14 @@ export function makeBarkMaterial(bark) {
     normalScale: new THREE.Vector2(1.15, 1.15),
     roughness: 1.0,
     metalness: 0.0,
+    vertexColors: true,     // flute cavity occlusion, baked
     dithering: true,
   });
   /* Living bark is a warm dusty taupe; deadwood is a cool pale silver-grey with
      the bark map's fibre contrast almost entirely removed — it has weathered
      smooth — but its long grain kept, which is carried in the map's alpha. */
   const u = {
-    uLiveCol: { value: new THREE.Color(1.06, 0.98, 0.92) },
+    uLiveCol: { value: new THREE.Color(0.74, 0.68, 0.63) },
     uDeadCol: { value: new THREE.Color(0.255, 0.242, 0.228) },
   };
   mat.userData.uniforms = u;
