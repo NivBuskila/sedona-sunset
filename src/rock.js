@@ -1276,8 +1276,8 @@ diffuseColor.rgb *= albedo;
    terminator and is nearly gone past it, which is micro-shadowing written as the
    only term this shader has to write it in. The grain is still fully present
    wherever there is enough light for it to matter. */
-float sTerm = smoothstep(-0.05, 0.26, dot(gN, uSunDir));
-float relW = (0.20 + 0.72 * grainF) * (0.07 + 0.93 * sTerm);
+float sTerm = smoothstep(-0.02, 0.30, dot(gN, uSunDir));
+float relW = (0.20 + 0.72 * grainF) * (0.03 + 0.97 * sTerm);
 vec3 wN = normalize(mix(gN, mix(rkN, rkN2, 0.5), relW));
 /* Only the soft contacts, which the mesh deliberately did not step, and only as a
    profile whose derivative is bounded. Everything hard is geometry now: a step
