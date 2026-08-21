@@ -1942,6 +1942,102 @@ the argument that ACES therefore had no shoulder left to separate the disc's pin
 the disc was already most of the way to visible before `butte0` was in front of it. Exposure
 0.95 stands on the four contracted figures above and on nothing about the sun.
 
+## The sky was never cold. It was clipped, and the aureole was a modelling error
+
+The final critique reads the sky as cold, pale and flat — mean 185/197/212, no warm gradient
+in any frame, no aureole, the sun a blemish. Measured against the model rather than the frame,
+it is none of those things where it is made and all of them where it is written out.
+
+`tools/skylut.mjs` reads the LUT in scene-linear, before the curve:
+
+| elevation | linear R G B | sat | hue | cv at exposure 0.95 |
+| --- | --- | --- | --- | --- |
+| 2° | 4.54 4.17 3.18 | 0.300 | 44° | 250 250 248 |
+| 15° | 1.94 1.97 1.90 | 0.036 | 84° | 241 241 240 |
+| 35° | 0.39 0.48 0.66 | 0.411 | 219° | 181 192 207 |
+| 70° | 0.11 0.17 0.29 | 0.623 | 221° | 92 117 155 |
+
+A gold horizon grading to a blue zenith — the gradient golden hour is made of was already
+there. ACES puts **9 to 15 cv per e-fold at linear 2 to 4.5 against 55 at 0.5**, so the whole
+warm half of it was being compressed into nine code values and rendering 231/231/231 at
+saturation 0.032, while the upper sky — dim enough to sit where the curve still has slope —
+already measured encoded saturation 0.29 to 0.41, inside the 0.30–0.45 the critique asks for,
+and needed nothing at all. A whole-sky mean cannot tell those two halves apart. That is why
+the fault presented as "cold" when it was "clipped", and why the lever was never chroma.
+
+**The aureole was a separate defect and a real one.** A single Henyey-Greenstein lobe at
+g 0.76 falls **7% between half a degree from the sun and four degrees** — a tabletop thirty
+degrees across, not a halo, with the disc sitting on it at 4% contrast. That is not a matter of
+choosing a better g: a real aerosol phase function has a diffraction peak within a couple of
+degrees *and* a refractive bulk across tens of them, HG is a one-parameter family, and fitting
+either loses the other. `src/aerial.js` has carried two terms for airlight since it was
+written; the dome was the one place still on a single lobe. Now 0.25 of the weight at g 0.96
+over 0.70 for the remainder. Each term integrates to unity over the sphere, so this
+redistributes the aerosol's scattered light in angle without creating any — which is what
+makes it affordable.
+
+Three things were tried and the order matters, because the first two fight:
+
+1. **The two-term phase alone** buys the falloff but leaves the sky clipped.
+2. **A grad filter on the dome** — a power law on luminance with chroma ratios held exactly,
+   fixed point at LREF 0.20 — buys the gradient. It is pictorial and the comment in `sky.js`
+   says so; the physical alternatives all spend something contracted. Dimming the dome dims the
+   fill and moves the gate; dropping exposure spends rock and floor; lowering the sun costs the
+   wash floor threefold; raising aerosol load reddens the beam and moves rock hue. A graduated
+   neutral filter is standard equipment for a low-sun landscape and exposure blending is the
+   same compression applied later.
+3. But a power law compresses *every* ratio by its exponent, including the halo just built. The
+   first render proved it exactly: a gold horizon at saturation 0.593 and an aureole still flat
+   at 236 cv falling to 234. So **the narrow lobe is added after the filter**, not through it.
+   Within two degrees of the sun that light is solar glare rather than sky — it is what blooms
+   in a lens, and nobody holds it down with the same three stops as the sky.
+
+Measured, `sys4n` (before) against `sys4p` (after), `sun_gap`:
+
+| elevation | before | after |
+| --- | --- | --- |
+| 0–7° | clipped to white | **182/116/75, sat 0.594, hue 22°** |
+| 7–11° | 231/230/228, sat 0.024 | 177/170/163, sat 0.137 |
+| 11–16° | 231/231/231, sat 0.032 | 208/207/205, sat 0.076 |
+| 22–30° | 176/184/196, sat 0.185 | 135/141/155, sat 0.279 |
+| 30–90° | 139/142/154, sat 0.337 | 116/117/130, **sat 0.379** |
+
+Saturation is up at every elevation, and the frame now runs gold at hue 22° through a neutral
+crossover to blue at hue 237°. The aureole, radially from the disc: **255 → 252 → 250 → 246 →
+226 → 175 → 124** across 0.5° to 32°, a fall of 77 cv where a single lobe managed 14.
+
+**Nothing protected moved, and it cannot have.** Rock, floor and shadow take their light from
+`A.sh` and `A.shOpen`, integrated from the LUT in `src/atmos.js`; nothing but sky pixels ever
+samples the dome shader. `tools/_fillchk.mjs` confirms the phase change at the atmosphere level
+too — the fill moves under 0.2% with its chroma moving 0.002 of saturation and 0.2° of hue,
+because both lobes carry the same `mieTint` and only the Mie-to-Rayleigh ratio can shift.
+Between the two sky builds, lit rock is 0.688 → 0.689 saturation at hue 14.3 → 14.3, and the
+gate 0.227 → 0.227.
+
+**Banding was not touched, on purpose.** It is quantisation at the 8-bit write, several passes
+downstream, and `src/post.js` now carries TPDF at 1 LSB from a per-pixel hash applied last. A
+second dither in the dome would be graded, defocused and vignetted before reaching the
+quantiser it exists to break up. It did improve as a side effect, since a steeper cv gradient
+crosses more levels: 90 distinct green levels down a `sun_gap` column against 64. The worst run
+away from the sun is **15 px**, so it is better but not gone, and finishing it is System 7's.
+The 26 px run the tool reports at column 536 is the clipped glare core 14 px from the sun's
+centre, which is flat by design and is not a contour.
+
+## Lit rock drifted 0.063 between the critique and now, and it is not System 4's
+
+Recorded because it is a protected figure sitting outside its band and the next reader needs to
+know where it came from. The critique measured lit rock at saturation 0.625, hue 20.8°; the
+build now measures **0.689, hue 14.3°**. It is not the sky change: `sys4o` and `sys4p` differ
+only in the dome shader and read 0.688/14.3 and 0.689/14.3, and the dome cannot reach rock.
+
+By elimination, from the commit clock: the critique was written at 03:05, and the only changes
+to land between it and the sky commit at 03:35 are `0191bbb` at 03:07 — System 5's depth
+handover and march pricing, which is airlight over rock — and `42209c1` at 03:15, System 7's
+toe, whose slope at the origin went 0.20 to 1.0 with the anchor moved to 0.080. Both plausibly
+move a saturation and hue read over a region with a lot of low mid-tone in it; neither is mine
+to adjust. **The figure to re-read is lit rock saturation and hue, and the two candidates are
+in that order.**
+
 ## The aureole is System 4's, and it is not the stale dial it looked like
 
 Two aureoles exist and only one is the sky. `src/atmos.js` `MIE_G` plus the Mie integral in
