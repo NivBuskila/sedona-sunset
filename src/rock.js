@@ -872,7 +872,12 @@ function creasedMesh(grid, cosT, flip) {
  * steeper, the apron buries itself and contributes nothing, which is correct and
  * costs only the triangles.
  */
-const AP_ROWS = 9;
+/* Fourteen, up from nine. Nine rows over an apron that reaches forty metres is
+   a facet every four and a half, which is coarse enough to read as terracing on
+   its own before the phase warp gets a chance to disguise where the rows are.
+   The cost is about ten thousand triangles across both aprons, which is a
+   quarter of a percent of the frame. */
+const AP_ROWS = 14;
 /* 34 degrees. Dry angular sandstone rubble sits between 32 and 37, and the top
    of that band reads as a scree cone while the bottom reads as a ramp. */
 const AP_TAN = Math.tan(34 * Math.PI / 180);
@@ -964,7 +969,28 @@ function apronGrid(foot, terrain, side) {
     const yAt = (d) => yTop - d * AP_TAN + 0.11 * AP_TAN * d * d / Math.max(L, 1e-3);
 
     for (let r = 0; r < nv; r++) {
-      const t = r / (nv - 1);           // 0 at the outer toe, 1 at the head
+      /* Phase-warped, and that is the whole of the corduroy fix.
+         The rows were at r/(nv-1) in every column, so an apron up to forty
+         metres long presented eight facet bands at a dead-regular four and a
+         half metres, all of them running exactly parallel to the wall — and
+         because the flutes below are evaluated at d = (1-t)L, the noise was
+         being sampled at the same nine depths in every single column, so it
+         reinforced the banding instead of breaking it. This is the bedform
+         corduroy again and it has the same cure: not an amplitude envelope,
+         which leaves the period where it is, but a warp of the phase. The two
+         terms run at eighteen and six metres along the wall and are decorrelated
+         between rows by r, so the bands meander independently and locally pinch
+         out rather than shifting in unison — which would only have made the
+         stripes wavy. Both wavelengths are long against the 1.24 m column
+         spacing, so the per-column skew stays near a twentieth of a row and the
+         surface does not zigzag. Held at zero on the first and last rows: those
+         two are sealed under the ground and the terrain at the head, and a warp
+         there would break the seal rather than the stripe. */
+      const t0 = r / (nv - 1);
+      const w = (r === 0 || r === nv - 1) ? 0
+        : (0.44 * fbm(s * 0.055, r * 0.37, 2, 617)
+         + 0.26 * fbm(s * 0.170, r * 0.61, 2, 619)) / (nv - 1);
+      const t = Math.min(1, Math.max(0, t0 + w));
       const d = (1 - t) * L;
       const u = uH - d;
       /* Chutes and flutes down the slope. Zero at both ends so it can neither
@@ -1736,12 +1762,41 @@ float sbR = bedResist(sbI, lIdx);
 vec3 aN = abs(gN);
 vec3 triW = pow(aN, vec3(4.0));
 triW /= max(triW.x + triW.y + triW.z, 1e-4);
-vec3 pF = vWPos + vec3(37.1, 11.3, 5.7);
+
+/* ---- registration warp ----
+   Both octaves were read at a fixed world position, so the 6.45 m tile landed in
+   the same phase on every facet of both walls and the fine octave sat in a fixed
+   relationship to it. That is the "one tiling noise on every facet" the critique
+   named, and it is what makes a kilometre of cliff read as one manufactured
+   material: the eye does not need to see the seam, it only needs to notice that
+   the same arrangement of blobs recurs on a lattice.
+
+   The cure is to slide the domain, not to add another map. Six sines at
+   wavelengths of 90 to 340 m — long against the tile, incommensurate with each
+   other and with it — displace the sample by a few metres in a way that never
+   repeats over the length of the wash, so no two stretches of wall present the
+   tile in the same phase. Their summed gradient is about 0.23, so the local
+   stretch stays under a quarter and the grain does not smear.
+
+   The fine octave gets the warp transposed and negated rather than the same one.
+   That is the part that answers "more than one noise across all facets"
+   literally: the two octaves now beat against each other differently in
+   different places instead of being locked, so the *combination* varies across
+   the cliff even where each layer alone is repeating. Six sines and no fetch,
+   which is what this frame can afford — it is fill-bound at 1440p. */
+vec2 wrp = vec2(
+  sin(aS * 0.0561 + 1.7) * 1.9 + sin(aS * 0.0233 - 0.6) * 2.6
+    + sin(y * 0.0417 + 2.3) * 1.4,
+  sin(y * 0.0331 + 0.9) * 1.7 + sin(aS * 0.0187 + 2.8) * 2.2
+    + sin(y * 0.0713 - 1.2) * 0.9);
+vec3 pC = vWPos + vec3(wrp.x, wrp.y * 0.55, wrp.y);
+vec3 pF = vWPos + vec3(37.1, 11.3, 5.7) + vec3(-wrp.y * 0.7, wrp.x * 0.4, wrp.x * 0.7);
+
 float sC = 0.155 * uDetail, sF = 0.62 * uDetail;
-vec3 rkA = triSample(uRockA, vWPos, triW, sC);
+vec3 rkA = triSample(uRockA, pC, triW, sC);
 float rkA2 = dot(texture2D(uRockA, domUV(pF, aN) * sF).rgb, vec3(0.299, 0.587, 0.114));
-float rkAO = texture2D(uRockM, domUV(vWPos, aN) * sC).r;
-vec3 rkN = triNormal(uRockN, vWPos, triW, sC, gN);
+float rkAO = texture2D(uRockM, domUV(pC, aN) * sC).r;
+vec3 rkN = triNormal(uRockN, pC, triW, sC, gN);
 vec3 rkN2 = domNormal(uRockN, pF, gN, sF);
 
 /* ---- footprint-locked grit ----
@@ -2074,6 +2129,35 @@ float vLat = 1.0 - smoothstep(vW * 0.30, vW, abs(vt - vC));
 float vSrc = lTop - 0.9 - 2.2 * vh4;
 float vHang = smoothstep(vSrc + 0.7, vSrc - 0.8, y)
             * exp2(-max(0.0, vSrc - y) * (0.085 + 0.115 * vh2));
+
+/* A second, finer set of tongues, and this is the one that makes varnish
+   legible at all.
+   Substituting subsets of the product into the frame (tools/_varn.mjs) put the
+   fault here rather than in either lithological gate: the mix reaches the frame
+   at full strength, but one plate per 9.5 m cell in half the cells is a single
+   tongue every nineteen metres, one to five metres wide. Over the twenty to
+   forty metres of wall a hero framing actually contains that is one or two
+   tongues in the whole frame — which is indistinguishable from none, and is why
+   the critique reports seeing no varnish on a wall that has been growing it all
+   along. Density was the missing quantity, not strength.
+   Its own cells at 3.3 m rather than a shorter period for the existing ones,
+   because vi is shared with the iron lenses and their spacing is load-bearing
+   for a saturation distribution that took four rounds to measure. Two thirds of
+   these carry a plate, so the combined spacing is a tongue about every five
+   metres at widths from 0.8 to 3.2 m — dense enough to read as streaking, and
+   still nothing like a coat. Taken as a maximum with the coarse set rather than
+   a sum: tongues overlap on a real wall, they do not add up to black. */
+float vs2 = aS * 0.30;
+float vi2 = floor(vs2), vt2 = vs2 - vi2;
+float vg1 = hash11(vi2 + 401.0), vg2 = hash11(vi2 + 437.0), vg3 = hash11(vi2 + 479.0);
+float vW2 = 0.12 + 0.34 * vg2;
+float vC2 = vW2 + (1.0 - 2.0 * vW2) * vg3;
+float vLat2 = 1.0 - smoothstep(vW2 * 0.30, vW2, abs(vt2 - vC2));
+float vSrc2 = lTop - 0.6 - 2.6 * vg2;
+float vHang2 = smoothstep(vSrc2 + 0.7, vSrc2 - 0.8, y)
+             * exp2(-max(0.0, vSrc2 - y) * (0.070 + 0.100 * vg3));
+float vPlate = max(step(0.48, vh1) * vLat * vHang,
+                   step(0.32, vg1) * vLat2 * vHang2 * 0.85);
 /* Strengthened, and there are more plates. Varnish is the strongest single
    Colorado-Plateau cue there is and it was measurably almost absent: at a third
    of the cells carrying a plate and a ceiling of 0.60 the tongues were legible
@@ -2084,7 +2168,21 @@ float vHang = smoothstep(vSrc + 0.7, vSrc - 0.8, y)
    striped read the critique complained of.
    Broken along its own length by the grit layer, so a plate has grain in it
    rather than being a flat wash of dark. */
-float varn = clamp(step(0.48, vh1) * vLat * vHang * lVert * (1.0 - lPale * 0.70)
+/* Two of the gates were lithological and varnish is not.
+   The critique reports seeing no varnish at all on the lit wall, and the reason
+   is that both of the terms that scale it were asking what the *rock* is rather
+   than what the face is doing. lVert restricted tongues to the cliff-forming
+   layers, and lPale cut them by seventy percent exactly where the wall is
+   buff — but a manganese tongue is a coating deposited by water running off a
+   shedding lip, and it neither knows nor cares which bed it is running over.
+   On a real Colorado Plateau wall the tongues are *most* conspicuous on the pale
+   rock, because that is where the contrast is; suppressing them there is
+   backwards, and it removed them from precisely the facets the hero framings
+   put in the sun. Recessive layers keep a reduced share rather than none, since
+   a slope does shed a tongue less cleanly than a cliff does. The vertical-face
+   gate stays: that one is about the face, which is the right question. */
+float varn = clamp(vPlate * mix(0.45, 1.0, lVert)
+           * (1.0 - lPale * 0.35)
            * smoothstep(0.50, 0.14, abs(gN.y)) * (1.0 - fresh)
            * (0.60 + 0.60 * vr.g) * (0.72 + 0.56 * gr.r) * 1.55, 0.0, 0.78);
 
