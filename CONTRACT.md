@@ -575,6 +575,91 @@ The one capture this needs should be taken after System 7's black-floor work, si
 metric moves when they change it — and it should be one shot reporting the crush and the ratio
 together, not an iteration loop.
 
+**Verified, and the cost turned out to be a correction.** Measured as a true pair — one tree, the
+lerp reverted in `src/sky.js` and `src/atmos.js` and nothing else, both frames under System 7's
+cubic toe:
+
+| | lerp off | lerp on |
+| --- | --- | --- |
+| shaded wall face, L mean | 0.039 | 0.048 |
+| shaded wall face, pixels pinned at zero | 0.12% | 0.04% |
+| shaded wall face, p1 | 0.93 cv | 1.43 cv |
+| shaded wall face, grad/L | 0.261 | 0.191 |
+| wall_lit midwall, grad/L | 0.213 | 0.167 |
+| floor, grad/L | 0.186 | 0.186 |
+| gate, flat face | 0.361 | 0.362 |
+| lit rock saturation | 0.672 | 0.664 |
+
+The shaded face gains 23% of level and loses two thirds of its clipped pixels, and **the floor is
+identical to every reported digit** — which is the check worth having, because the ramp is meant to
+be zero at the floor and the floor is where the probe was already right.
+
+The gradient figures read as a 27% loss and are not one. Real Sedona cliff faces measure 0.088–0.201
+grad/L, and both wall regions were *above* that band before the lerp and are inside it after: the
+shaded face 0.261 to 0.191, midwall 0.213 to 0.167. The 0.12–0.16 band that made these look like
+regressions is a floor figure, from arroyo ground, and does not apply to a vertical face. A wall
+lit only through a slot reads as too contrasty for rock, and adding back the sky it can actually
+see is what fixes that, so the direction is right twice over.
+
+Absolute gradient falls 12% while level rises 23%, and that is encoding rather than physics: the
+added fill is spatially smooth, so it raises the level into a shallower part of the transfer curve
+and compresses the structure already there. It is the same arithmetic System 7 measured when
+dimming, running backwards.
+
+The gate does not move — 0.361 to 0.362. Brightening a shaded face is exactly the gate's numerator,
+so this was the one number at risk, and it survives because the ramp is near zero over the lower
+part of the face that the gate's population is drawn from.
+
+### Lit rock left its band, and it was the escarpment — the same change that bought the gate
+
+Lit rock saturation was measured at 0.690 in the ungraded control against a 0.615–0.626 contract
+figure, with four candidates named: the escarpment change, the height lerp, System 5's in-scatter
+and extinction work, or the far ridgelines. **It is the escarpment, and it is a single commit.**
+
+Bisected with captures rather than argued, `wall_lit` only, `sat.mjs --lit` so the population
+matches, each one 42 seconds on the GPU:
+
+| commit | time | frame median | lit rock sat |
+| --- | --- | --- | --- |
+| `3eefc49` System 5, extinction at the swept knee | 17:00 | 36 | 0.598 |
+| `30e3a3d` through the far ridgelines and the perf pin | 17:13 | 36 | 0.598 |
+| `8d6ac73` through the juniper NaN fix | 17:28 | 36 | 0.598 |
+| `803ea63` through the saltation sheet | 17:59 | 36 | 0.600 |
+| **`3e19549` the measured escarpment skyline** | **18:37** | **19** | **0.672** |
+| `b1be79f` the escarpment, cleaned up | 20:30 | 19 | 0.675 |
+| `1bae73b` the height lerp | 20:42 | 23 | 0.665 |
+
+Five captures spanning fourteen commits from five systems sit at 0.598–0.600, so System 5 and
+System 2 are cleared with measurements rather than reasoning. The step is entirely at one commit,
+and it is mine.
+
+**Two false trails are worth recording, because both were plausible and both were wrong.** The
+first: the chronology of the tags said the jump was at `sys4e`, and `sys5f` — another system's
+capture from another system's session — showed it eighteen minutes later, which looked like proof
+the cause was shared upstream and not mine. It was not. Every agent works the same working tree,
+so my *uncommitted* escarpment edits were live in their capture too. A tag's timestamp dates the
+capture, not the commit, and the two differ by half an hour here.
+
+The second: the escarpment's fill is redder than what it replaced, so the arithmetic was run on
+whether a fill that small could move saturation at all — probe irradiance 0.0159 against a rock
+pixel of 0.1454, about one percent, apparently far too small. That comparison is meaningless: one
+side is irradiance and the other is a tone-mapped pixel with `SCALE` 19 in between. The measurement
+settles it in the other direction — the crop's median falls 36 to 19 when the escarpment lands, so
+the fill was nearly half of that region's light. **Do not let a units mismatch overrule a
+measurement, and do not run the arithmetic in encoded space.**
+
+**The mechanism is a genuine trade, and it is separable.** Fill *luminance* sets the shadow-to-sunlit
+gate; fill *chroma* sets rock saturation. Modelling the wash as a room took the gate 0.514 → 0.344
+and simultaneously replaced blue-rich open-sky fill with dimmer, redder rock bounce — so red rock in
+a red room measures more saturated. Both numbers moved because both are the same physical change,
+not because one is a defect. The per-band decomposition of `sys5e` against `sys4e` confirms it is a
+uniform veil that left rather than a material that changed: every brightness band from 0–32 to
+144–255 lost 5–17 code values and gained saturation, which no localised albedo edit does.
+
+The height lerp recovers 0.010 of the 0.072 without touching the gate, and that is the only free
+part. The rest is a choice between a gate figure and a colour figure, and it belongs to whoever owns
+the composition rather than to the system that surfaced it. Recorded, not silently traded away.
+
 **A penumbra widening was tried as the explanation for the first cost, and it is not.** The theory
 was that hard shadow edges convert shadow depth straight into local gradient, and the far
 cascade's 3.5-texel kernel is 0.18 m where a half-degree sun behind rock 50 m away throws 0.46 m.
@@ -834,6 +919,42 @@ Not forgiven, only deferred. Revisit these after System 4 and System 7.
 - The pale confetti specks on the wash floor and the lavender sand sheet are System 1
   albedos reacting to the new skylight — recheck both after System 4.
 
+### Past ~30 m the shading normal IS the mesh normal
+
+Measured, not argued. A pixel on the wash floor spans **29 × 615 mm at 30 m**, rising to
+58 × 2456 mm at 60 m — an anisotropy of 21:1 going to 42:1. Against that footprint the dirt
+normal map's RMS tangent slope falls from **0.3233 at mip 0 to 0.0061 as actually sampled at
+30 m**, and to **0.0010** after the shader's own grain fade. Three parts in a thousand. Even
+with perfect anisotropic filtering the ceiling is about 1%.
+
+**So beyond 30 m the shading normal is, to within a fraction of a percent, the interpolated
+geometric normal of the mesh.** A surviving albedo over a vanished normal is exactly
+"correctly coloured, soft shape" — which is what a user independently described as
+"melting". Five rounds of midground texture work were aimed at a quantity that arrives at
+0.3% strength.
+
+The height field's octave spectrum shows where the real gap is. A self-affine natural
+surface holds roughly constant slope per octave; this one rises monotonically into the
+metre band and the fine end carries a fifth of the coarse end:
+
+| octave | RMS slope | share |
+| --- | --- | --- |
+| 0.05–0.10 m | 0.0211 | 3.5% |
+| 0.20–0.40 m | 0.0574 | 9.4% |
+| 0.80–1.60 m | 0.1063 | 17.4% |
+| 1.60–3.20 m | 0.1135 | 18.6% |
+| 6.40–12.8 m | 0.0939 | 15.4% |
+
+**The 0.1–1 m band is where the work belongs.** The mesh can carry it to about 0.4 m
+across-wash and 0.84 m along, given 0.20 × 0.42 m spacing; below that it must be the shading
+normal, and there only across-channel content survives the anisotropic footprint.
+
+A caution recorded with it: the metre-scale mounds that read as wax are **stepped bar
+margins added as a previous fix for this same defect** — hard risers meant to keep the floor
+readable at thirty metres — which were then softened to stop them snapping to the grid and
+reading as concrete pads. The softening that made them safe is what made them wax. Roughen
+their flanks rather than adding more of them.
+
 ### A texture pinned to a world scale goes to wax at distance
 
 Twice now — System 1's wash floor and System 2's cliff face — a surface has been correct up
@@ -874,6 +995,12 @@ bands equally), so it measures the thing we actually care about and cannot be bo
 amplitude.
 
 **Pass condition for rock: `hf/lf` ≥ 0.55**, the bottom of the real range.
+
+**The 0.12–0.16 `grad/L` band is a *floor* figure, not a wall one.** It came from measuring
+real arroyo ground and it is what System 1 is held to. Walls have their own reference: real
+Sedona cliff faces measure **0.088–0.201 `grad/L`**, so a wall at 0.200 is at the top of the
+real range rather than outside it. Two agents have now compared a wall against the floor
+band; do not do it again.
 
 ### How to move `hf/lf`, and how to iterate on it in seconds
 
@@ -951,6 +1078,23 @@ the skyline geometrically per column, which is exposure-invariant. Under the fix
 every view reports a non-zero step count, including the one that previously read zero.
 
 Treat any step-count or edge-share figure quoted before that fix as unreliable.
+
+### Two captures are not a pair
+
+An A/B taken as two `shoot.mjs` runs is not matched, and with six agents committing it is
+routinely not even close. The gap between the halves is not the ninety seconds they render
+for — it is however long the second waits on the capture lock, which has run over an hour.
+One attempt lost its control to a file rewritten **22 seconds** after the first half
+finished; the pixel diff reached the bottom of the frame, where the thing being ablated
+could not possibly reach. Another pair differed by 84–92% of the frame.
+
+**Toggle inside one page load instead.** `tools/_farpair.mjs` screenshots twice around a
+single visibility flip: same modules, same textures, same sun, one bit different. Matched by
+construction. `tools/postpair.mjs` solves the same problem from the other side by freezing
+`src/` to a snapshot and serving both halves from the copy.
+
+If a diff touches pixels the change cannot reach, the pair is contaminated — check that
+before believing the result.
 
 ### Verify the instrument before you trust the measurement
 
@@ -1103,7 +1247,18 @@ the two that were not are both in the failure list above.
    bounce to a red face than the blue it takes away. The comment also overstates what the
    code does: cosine-weighted, the present coverage removes about 3% of the upward
    irradiance, not "a little over half the dome".
-5. Heat haze and atmosphere — including **wind-driven sand at ground level** (saltation):
+5. Heat haze and atmosphere — **heat shimmer is OFF by direct user instruction.** It was
+   built, and a units bug had it delivering a sixth of nominal for three rounds; once
+   corrected to full strength the user immediately identified the mid-distance floor as
+   "melting" and asked for it gone. The physics was right and the look is not wanted. Keep
+   the code behind a flag, default off, and **do not re-enable it to satisfy a metric.**
+
+   The general instruction that came with it, which applies to every system: *"we need
+   clean… visually should be good, like you can see in that jungle one there was no filter
+   or something like that."* Anything a viewer can identify as an *effect* rather than as
+   the scene is wrong here, however physically defensible. That covers visible grain,
+   chromatic aberration, heavy vignetting, obvious depth-of-field, and any screen-space
+   distortion. Subtle enough to be invisible is the bar; if it reads as a filter, it is off. — including **wind-driven sand at ground level** (saltation):
    low ribbons of grains skipping across the wash floor, snaking around cobbles and pouring
    off the lee edge of bank crests. Distinct from the airborne dust in the sunbeams, and
    hugging the surface rather than filling the volume. The wind direction here must agree
