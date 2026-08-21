@@ -23,10 +23,20 @@
  *   aWall   canyon wall against wash bank, which slope alone cannot distinguish
  *   aSheet  slack-water sand sheet, so drifted sand is deposited by a mechanism
  *           rather than painted onto whatever happens to be flat
+ *   aFlow   how deep the last flood ran here, 1 in the thalweg to 0 on the
+ *           terrace. Ripple wavelength scales with flow depth — that is the
+ *           relationship, not a stylistic one — so the bedform in the shader
+ *           needs to know it, and a wash floor combed at one pitch from bank to
+ *           bank is the corduroy this has twice been criticised for.
  */
 import * as THREE from 'three';
 import { fbm, ridged, clamp, smoothstep, mix } from './noise.js';
 import { SUN_DIR, SUN_EL } from './sky.js';
+/* The shared weather. CONTRACT.md makes juniper.js the authority for wind
+   direction so that the tree's lean, the blowing grains, the sound and the sand
+   drifted against a bank are one system; this reads it rather than keeping a
+   private copy. */
+import { WIND } from './juniper.js';
 
 /** Staircase with hard risers. `sharp` is the fraction of each step spent rising. */
 function stair(v, n, sharp) {
@@ -56,6 +66,7 @@ export class Terrain {
     this.oRef = 0;   // pre-bench elevation
     this.oPan = 0;   // ponded silt coverage
     this.oSheet = 0; // slack-water sand sheet coverage
+    this.oFlow = 0;  // flow depth of the last flood, 1 in the thalweg
   }
 
   /**
@@ -232,6 +243,7 @@ export class Terrain {
     this.oPan = 0;
     this.oWall = 0;
     this.oSheet = 0;
+    this.oFlow = 0;
 
     /* ── far field ──
        Distant mesa country, so the sky has a horizon to sit against and the
@@ -325,6 +337,14 @@ export class Terrain {
     h -= pan * 0.16;
     this.oPan = pan;
     this.oSheet = this.sheetField(x, z, f);
+    /* Flow depth of the last flood. The channel carried it deepest and the
+       terrace only saw the top of the flood, so this falls from the thalweg
+       outward and is scaled by the incision depth, which is the depth of water
+       that cut it. It is a *depth*, not a facies: the ripple wavelength a flow
+       leaves behind scales with it, and letting the shader read it is what
+       stops the ripple train running at one pitch from bank to bank. */
+    this.oFlow = (1 - smoothstep(f.wc * 0.4, f.wt + 1.2, av))
+               * clamp(0.30 + 0.55 * f.dc, 0, 1);
 
     /* ── talus apron and canyon wall ──
        The apron sits at the angle of repose; the wall above is steeper. The
@@ -611,6 +631,7 @@ export function buildTerrainMesh(terrain, material) {
   const pan = new Float32Array(count);
   const wall = new Float32Array(count);
   const sheet = new Float32Array(count);
+  const flow = new Float32Array(count);
   const q = {};
 
   for (let j = 0; j < nz; j++) {
@@ -628,6 +649,7 @@ export function buildTerrainMesh(terrain, material) {
       pan[k] = terrain.oPan;
       wall[k] = terrain.oWall;
       sheet[k] = terrain.oSheet;
+      flow[k] = terrain.oFlow;
     }
   }
 
@@ -647,6 +669,7 @@ export function buildTerrainMesh(terrain, material) {
   g.setAttribute('aPan', new THREE.BufferAttribute(pan, 1));
   g.setAttribute('aWall', new THREE.BufferAttribute(wall, 1));
   g.setAttribute('aSheet', new THREE.BufferAttribute(sheet, 1));
+  g.setAttribute('aFlow', new THREE.BufferAttribute(flow, 1));
   g.setIndex(new THREE.BufferAttribute(idx, 1));
   g.computeVertexNormals();
   g.computeBoundingSphere();
@@ -666,12 +689,14 @@ uniform sampler2D uDirtA; uniform sampler2D uDirtN; uniform sampler2D uDirtM;
 uniform sampler2D uSandA; uniform sampler2D uSandN; uniform sampler2D uSandM;
 uniform sampler2D uRockA; uniform sampler2D uRockN; uniform sampler2D uRockM;
 uniform sampler2D uMacro; uniform sampler2D uVar; uniform sampler2D uCrack;
+uniform sampler2D uGrit;
 uniform vec3  uDamp;
 uniform vec3  uCool;
 uniform vec3  uSilt;
 uniform vec3  uStone;
 uniform vec2  uSunStep;   // dirt-tile UV travelled per metre along the sun azimuth
 uniform float uSunRise;   // grain-height units gained per metre along it
+uniform vec2  uWind;      // the shared WIND, the direction the wind blows toward
 uniform float uBedT;
 varying vec3 vWPos;
 varying vec3 vWNrm;
@@ -679,6 +704,7 @@ varying float vRef;
 varying float vPan;
 varying float vWall;
 varying float vSheet;
+varying float vFlow;
 
 float tRough;
 /* Pixel-footprint confidence, 1 near and 0 once a pixel covers many grains, and
@@ -831,6 +857,45 @@ float rockF  = 1.0 - smoothstep(0.045, 0.260, foot);   // rock grain, 3-25 cm
    much beyond that. */
 gFoot = 1.0 - smoothstep(0.020, 0.075, foot);
 
+/* ---- footprint-locked grit, the floor's copy of System 2's fix ────────────
+ * CONTRACT.md's account of why the cliff went to wax applies verbatim to the
+ * floor: a texture pinned to a world scale has no content at all past the range
+ * where its texels fall under a pixel, because the mip chain hands back its
+ * mean. The offline probe says the dirt map's *shape* survives — grad 0.0250 at
+ * mip 0 against 0.0251 at the midground footprint — but its amplitude does not:
+ * luminance sd 0.077 down to 0.046, and a nine-pixel high-pass RMS of 0.038
+ * where a real arroyo photograph holds 0.115-0.137. Sharper sampling cannot
+ * return amplitude that averaging removed; only a layer with no size of its own
+ * can.
+ *
+ * So the same grit map rock.js reads is read here, at whatever scale the pixel
+ * asks for, snapped to octaves with the bracketing pair crossfaded so nothing
+ * pops as the camera walks. It has no content below a fourteenth of its own
+ * tile, which is the property that makes reading it at an arbitrary scale
+ * honest rather than a cheat.
+ *
+ * The one difference from the wall is anisotropy, and it decides the lock. A
+ * midground floor pixel is about 12 mm across the view and 76 mm along it, a
+ * ratio of six. Locking to the long axis, as the wall does, would smear the
+ * layer across five pixels horizontally and put nothing in the band; locking to
+ * the short axis would alias badly along the view. The geometric mean of the two
+ * splits it — a couple of pixels of blur across, a little under a texel per
+ * pixel along — and both of those land inside the nine-pixel window the
+ * midground is judged with.
+ *
+ * Faded *in* with the footprint rather than out, which is the opposite of every
+ * other detail term here and is deliberate. Near, the dirt map's own grain
+ * carries this band and the near field already measures a shade crisper than the
+ * reference; far, that grain is gone and this stands in for it. The two are
+ * complementary halves of one surface, not a term and its distance fade. */
+float footG = sqrt(max(foot, 1e-5) * max(footMin, 1e-5));
+float gLod = log2(max(footG, 2e-4) * 256.0 * 0.9);
+float gFl = floor(gLod), gTw = gLod - gFl;
+float gSc = exp2(-gFl);
+vec2 gUV = wxz + vec2(3.7, 12.9);
+vec4 gr = mix(texture2D(uGrit, gUV * gSc), texture2D(uGrit, gUV * gSc * 0.5), gTw);
+float gritK = smoothstep(0.007, 0.030, footG);
+
 /* Three scales of variation. The 61 m and 18 m maps break up the detail tiles;
    the 7 m map exists to fill the mid distance, where a two-scale scheme leaves
    a hole and the ground collapses into flat colour. */
@@ -904,6 +969,34 @@ float sandW = smoothstep(0.62, 0.68, sandF) * smoothstep(0.10, 0.42, vSheet)
             * (1.0 - rockW) * (1.0 - wallM)
             * smoothstep(0.135, 0.045, slope) * (1.0 - panRaw * 0.9);
 
+/* ---- and the aeolian half, which was noted as simply absent ----
+   The note left with the slope gate above said the honest thing: fluvial sand is
+   deposited by water, water does not climb, and confining sand to flat ground
+   models that mechanism correctly and leaves the other one out entirely. The
+   other one can now be put in, because the wind has a shared direction —
+   WIND from juniper.js, the direction it blows *toward* — so drifted sand,
+   the tree's lean, the blowing grains and the sound are one weather system
+   rather than four private guesses.
+   A drift is a *lee* deposit. Grains saltate up the windward face, separate at
+   the crest and fall out in the still air behind it, so sand banks against the
+   downwind side of a bank and the windward side is swept to lag. The downhill
+   direction of the surface is -gN.xz, so a face is in the lee when its downhill
+   points along the wind.
+   And it rests at the angle of repose with a toe, which is the other half of the
+   icing complaint: the upper gate at slope 0.265 is about thirty-nine degrees,
+   past which nothing stays, and the lower gate keeps it off ground flat enough
+   for the fluvial term to own. So it cannot glaze a crest and run over the lip —
+   it stops dead at the crest line, which is where the windward face begins. */
+vec2 down = gN.xz;
+float dl = length(down);
+float lee = dl < 1e-4 ? 0.0 : dot(down / dl, uWind);
+float aeolW = smoothstep(0.16, 0.52, lee)
+            * smoothstep(0.030, 0.085, slope) * (1.0 - smoothstep(0.175, 0.265, slope))
+            * smoothstep(0.44, 0.66, mac2.r * 0.70 + vr.b * 0.46)
+            * (1.0 - rockW) * (1.0 - wallM) * (1.0 - panRaw * 0.9);
+float aeoF = aeolW * 0.88;
+sandW = max(sandW, aeoF);
+
 /* Three fetches that only matter inside a sand lobe, and a sand lobe is slack
    water on the inside of a bend — a few percent of the floor by area and none
    of the wall. Everywhere else mix(dirt, sand, 0.0) was being paid for in
@@ -954,6 +1047,116 @@ if (sandW > 0.0015) {
  * result would actually differ. rakeRes keeps its declaration outside so the
  * mean-occlusion fallback on the next line is unchanged in both regimes.
  */
+/* ---- bedform, and the micro-shadow fraction it controls ─────────────────
+ *
+ * This block exists because four previous attempts to move the midground
+ * measurement failed, and the offline test CONTRACT.md asked for before a fifth
+ * says why. Generating the dirt map in node and averaging it over the
+ * anisotropic box a midground pixel actually covers — 5 texels across the view
+ * by 30 along it, worked from the capture geometry — the map keeps its shape
+ * completely: grad 0.0250 at mip 0 against 0.0251 at the midground footprint,
+ * hf/lf 0.65 against 0.65. So the standing hypothesis is **wrong**: the albedo
+ * has not gone to wax and there is nothing there for sharper sampling to
+ * recover. What it loses is *amplitude* — luminance sd 0.077 to 0.046, and a
+ * 9-pixel high-pass RMS of 0.038 where a real arroyo photograph holds
+ * 0.115-0.137.
+ *
+ * A 0.038 ceiling from pigment says pigment cannot be the answer. Arithmetic:
+ * to lift a band from 0.058 to 0.115 needs another 0.099 RMS added in
+ * quadrature, and at the midground's mean luminance of 0.335 that is a third of
+ * the mean — a contrast no albedo mottle on dirt has. Only one thing on a wash
+ * floor is that contrasty, and it is the same thing that makes a gravel bed
+ * legible at all under an eleven-degree sun: shadow.
+ *
+ * So what is authored here is the *shadowed area fraction* of the bed, as a
+ * smooth tone. It is the quantity the raking march already computes per grain
+ * and then throws away past the range where individual grains resolve, where it
+ * collapses to a single constant 0.26 over the whole floor — a flat tone
+ * carrying exactly zero energy in any band. That constant is a real physical
+ * quantity and it is emphatically not constant: a coarse armoured lag under a
+ * grazing sun hides forty per cent of its own area, a planed sand bed hides ten,
+ * and a ripple trough is in shadow while its crest is not.
+ *
+ * Three properties make this the right carrier rather than another mottle.
+ * It multiplies the *direct* term only, so the shaded fraction keeps the violet
+ * sky fill and the contrast is coloured rather than grey. It is a tone, so it
+ * survives the mip chain, the terminator and the footprint filter intact — the
+ * thing CONTRACT.md warns pigment does, except here the feature genuinely is a
+ * tone and not a hole. And it is gated by grainF, so it is *only* active where
+ * individual grains have stopped resolving: the near field, which already
+ * measures slightly crisper than the reference band, is untouched by
+ * construction.
+ */
+float floorB = (1.0 - rockW) * (1.0 - wallM) * smoothstep(0.34, 0.12, slope);
+
+/* Armoured lag. Where a flood swept the fines out from between the coarse
+   fraction it leaves a close-packed pavement one clast thick, and that surface
+   is both greyer and far more self-shadowing than the sand beside it. The
+   patches have hard edges because the flow that cut them did. */
+float armour = smoothstep(0.44, 0.61, mac2.b * 0.66 + vr.g * 0.52) * floorB;
+
+/* ---- the ripple train ----
+   Wavelength scales with flow depth, which is the relationship and not a taste
+   knob: a ripple is a bedform in equilibrium with the flow that built it, so the
+   thalweg carries a long train and the bar margin a short one. Frequency cannot
+   be varied continuously without the phase drifting, so three fixed trains are
+   crossfaded by vFlow, which the mesh carries from the same cross-section the
+   channel was cut from.
+   Then a fourth train at a wavelength close to the third and tilted a few
+   degrees across it. Two nearby wavelengths beat, and the beat is what makes a
+   crest run for a couple of metres, split, and die out — bifurcation, which is
+   the thing a single train cannot do and the reason an unbroken train reads as
+   corduroy however hard its phase is warped. */
+/* ---- and the phase has to wander by whole wavelengths ----
+   The first version of this warped the phase with the macro maps alone, which
+   tile at 61 m and 7 m: over the two or three metres a crest actually occupies
+   the warp is constant, so the train came out perfectly regular locally and
+   rendered as woven fabric — the corduroy read, arrived at from the opposite
+   direction. A ripple crest is a metre long, curves, and hands over to its
+   neighbour. The warp therefore has to be worth more than one wavelength over
+   about a metre, which is what the last term here supplies.
+   It costs nothing in band limiting: a warp of three wavelengths over a metre
+   adds about 0.4 to the phase gradient against a base of eleven, so bsin's own
+   Nyquist roll-off is unaffected. */
+float rpW = (mac2.g - 0.5) * 0.42 + (vr.r - 0.5) * 0.13
+          + 0.34 * (texture2D(uMacro, rot2(wxz, 0.61) * 0.34).g - 0.5);
+float rpPh = vWPos.z + rpW;
+float dSel = clamp(vFlow * 1.30 + (mac.g - 0.5) * 0.55, 0.0, 1.0);
+float rip = mix(mix(bsin(rpPh / 0.093), bsin(rpPh / 0.152), smoothstep(0.0, 0.52, dSel)),
+                bsin(rpPh / 0.246), smoothstep(0.48, 1.0, dSel));
+rip = rip * 0.66 + 0.44 * bsin(rpPh / 0.171 + dot(wxz, vec2(0.21, 0.0)));
+/* Plane-bed patches, where the flow ran fast enough to wash the train out
+   entirely. A bed rippled edge to edge only ever saw one flow regime. */
+float rpBed = smoothstep(0.26, 0.50, mac2.a * 0.7 + vr.g * 0.5);
+/* Coverage widened. The previous gates multiplied down to about fifteen per cent
+   of the floor, which is why the term measured as nothing: a feature present on a
+   sixth of the pixels at a tenth of the contrast is not a bedform, it is a
+   rounding error. A wash floor a week after a flood is rippled over most of its
+   area — the plane-bed patches above are the exception and they are still here. */
+float rpF = floorB * rpBed * smoothstep(0.22, 0.48, mac.r * 0.62 + vr.g * 0.5)
+          * (0.72 + 0.48 * sandW);
+
+/* ---- current lineation, and why it is this fine ----
+   The metric is an RMS over a nine-pixel box high-pass, and at the midground a
+   pixel spans about 12 mm across the view against 76 mm along it. So a feature
+   only lands inside that kernel if it is under roughly 11 cm *across* the line
+   of sight, and every across-channel term this shader had was between 19 and 72
+   cm — visible, geologically defensible, and outside the window being measured.
+   These three are 5.5, 8.5 and 13 cm, which is 4 to 11 pixels there.
+   They are flow-parallel on purpose, and that is both what survives a grazing
+   view and what is actually on a gravel bed: parting lineation and pebble
+   stringers are drawn out along the current, so their variation is across it.
+   bsin differentiates the phase rather than the position, so each one fades on
+   its own Nyquist limit in its own direction instead of being filtered away by
+   whichever screen axis is worse.
+   Warped by a metre-scale field for the same reason the ripple train is: three
+   parallel trains at fixed spacings and fixed directions is a grating, and a
+   grating is the thing being avoided. */
+float linW = 0.28 * (texture2D(uVar, rot2(wxz, 1.94) * 0.62).r - 0.5);
+float lin = 0.44 * bsin(dot(wxz, vec2(0.9990, 0.0447)) / 0.055 + linW * 5.0)
+          + 0.36 * bsin(dot(wxz, vec2(0.9961, -0.0880)) / 0.085 + linW * 3.4)
+          + 0.30 * bsin(dot(wxz, vec2(0.9981, 0.0616)) / 0.131 + linW * 2.2);
+
 float rakeW = 0.88 * smoothstep(0.35, 0.10, slope);
 float rake = 0.0;
 if (rakeW * grainF > 0.002) {
@@ -980,7 +1183,67 @@ if (rakeW * grainF > 0.002) {
    cools as well as darkens for free, because this multiplies the warm key only and
    what is left is the violet sky fill. */
 float rakeRes = clamp(rake * 3.4, 0.0, 1.0);
-gRake = 1.0 - mix(0.26, rakeRes, grainF) * rakeW;
+/* The mean shadowed fraction, in place of the flat 0.26 this used to collapse
+   to. Centred so the floor's mean luminance does not move — armour runs a little
+   under half the floor, so 0.13 + 0.29 * armour averages near the old constant —
+   and the bedform terms swing about it. lin and rip are signed, so they cost
+   nothing at the mean and everything at the pixel. */
+float msh = clamp(0.13 + 0.29 * armour - sandW * 0.045, 0.015, 0.60);
+gRake = 1.0 - mix(msh, rakeRes, grainF) * rakeW;
+
+/* ---- the cast shadow of the bedform itself, at every distance ----
+ * Separate from the block above and deliberately *not* gated by grainF, because
+ * this is not a sub-pixel statistic — it is a shadow a hand's breadth long, and
+ * the reason it has to be here rather than in relief is that the ripple is
+ * fifteen centimetres and the mesh row spacing is forty-two.
+ *
+ * A shadow is one-sided, so this is not the sinusoid: the lee flank goes dark
+ * and the crest and the stoss face do not. Under an eleven-degree sun a two-
+ * centimetre ripple on a fifteen-centimetre pitch throws a shadow that covers
+ * most of its own lee, which is why the amplitude is this large — a real
+ * rippled bed at this sun angle is genuinely a third in shadow, and that
+ * contrast is the entire reason a bedform is legible in a golden-hour
+ * photograph and invisible at noon.
+ *
+ * The important property, and the reason this lands where four rounds of
+ * sampling work did not: the *same world feature* is low frequency near and
+ * high frequency far. A 15 cm ripple at three metres is forty pixels, so it
+ * sits in the denominator; at twelve metres it is five, which is inside the
+ * nine-pixel kernel the midground is judged with; past twenty-five bsin fades
+ * it on its own Nyquist limit rather than aliasing. So it lifts the mid band
+ * without touching the near field, which already measures a little crisper than
+ * the reference — and that is a property of the geometry, not of a distance
+ * fade someone chose. */
+/* Mean-removed, and that is not cosmetic bookkeeping. A one-sided shadow has a
+   positive mean by construction, so the first version of this took eight per cent
+   off the floor's direct light — the floor measured 0.354 down to 0.316 — which
+   is a brightness change dressed up as a texture change, and System 4 has just
+   spent a round getting that floor lit. The constants are the measured means of
+   the two smoothsteps over a uniform argument, so what is left is contrast at
+   zero cost in exposure. */
+float ripSh = (smoothstep(-0.18, -0.92, rip) - 0.24) * rpF * 0.34;
+/* And the same for the lineation, at the finer end. Current lineation on a
+   gravel bed is a train of low ridges of clustered pebbles a few centimetres
+   apart drawn out along the flow, and at this sun elevation each one shades the
+   trough beside it. Across the line of sight, so it survives the grazing view. */
+/* Mutually exclusive with the ripple train, which is not a hack to avoid a
+   pattern — it is the bedform phase diagram. Current lineation is an
+   upper-flow-regime plane-bed structure and ripples are a lower-flow one, so a
+   patch of bed carries one or the other and never both. Overlapping them put a
+   train varying along the channel across a train varying across it, and the
+   product of two gratings is a grid: magnified, the floor came out as
+   brickwork. */
+float linSh = (smoothstep(-0.14, -0.84, lin) - 0.22) * floorB * 0.19
+            * (1.0 - clamp(rpF * 1.35, 0.0, 0.92));
+/* The grit's crevice occlusion, as a shadow on the direct term rather than as a
+   pigment — a socket between grains is a hole, and CONTRACT.md is explicit that
+   a hole given pigment survives to distance as a flat spot facing nowhere.
+   Mean-removed against the map's measured mean of 0.934 so this costs nothing in
+   average luminance and everything at the pixel; unlike the sinusoids above it
+   is a *packing*, so at strength it reads as a stony bed rather than as fabric,
+   which is what the ripple term could not do. */
+float gSock = clamp((0.934 - gr.a) * 2.4, -0.5, 0.5) * gritK * floorB;
+gRake *= (1.0 - ripSh) * (1.0 - linSh) * clamp(1.0 - gSock, 0.32, 1.34);
 
 vec3 gA  = mix(dirtA, sandA, sandW);
 vec3 gM  = mix(dirtM, sandM, sandW);
@@ -1068,14 +1331,47 @@ vec3 ck = texture2D(uCrack, rot2(wxz, 2.10) * 0.3846).rgb;
    the other side, and the plate top is smoother than the sand around it. It is the
    raised rim that carries the read, not a dark line: a deep black groove between
    pale plates is a decal, which is what this had become. */
+/* ---- and why the plate relief is allowed further out now ----
+   This faded the curl out between footprints of 4 and 16 mm, which is inside two
+   metres of the camera: past a stride the pan was a flat painted net, which is
+   how "no mud-crack plate relief" survived a round in which mud cracks were
+   built. The reason the gate was that tight was real — a two-and-a-half unit
+   height step across a one-pixel crack drives the shading normal through the
+   terminator and produces a cream-and-black hash — but that argument is about
+   the *crack*, which is one to three centimetres wide, and the thing that
+   carries a dried pan at distance is not the crack. It is the plate: a
+   hand's-width polygon curled up at its rim, which at an eleven-degree sun
+   catches a highlight along one edge and lays a hard shadow across its
+   neighbour. A ten-centimetre plate is still four pixels at eight metres.
+   ---- and the first attempt at that was wrong in an instructive way ----
+   Widening the curl's fade to a nine-centimetre footprint did lift the
+   midground measurement by a quarter, and it did it by producing a net of
+   glowing worms across every pan — the "net of glowing filaments over dark
+   cores" this file already warns about, arrived at from the other end. The
+   mechanism is specific and worth recording: the curl is applied through
+   bumpFrom, which builds a normal from dFdx of a *sampled value*. Once the
+   footprint exceeds the feature, that derivative is not the slope of the plate,
+   it is the difference between two independent mip samples — noise, amplified
+   by the bump scale and then lit by a raking sun. A derivative bump cannot be
+   extended past its own feature size at all, however good the reason.
+   So the relief keeps its original tight gate and the *tone* carries the
+   distance, which is what CONTRACT.md says about this whole class of feature:
+   pigment survives what geometry does not. */
 float crkF = 1.0 - smoothstep(0.004, 0.016, foot);
-float crackH = (ck.b * 0.95 - ck.r * 0.85) * panW;
+float curlF = 1.0 - smoothstep(0.022, 0.090, foot);
+float crackH = (ck.b * 0.95 - ck.r * 0.85) * panW * crkF;
 /* Weak on purpose. The curl rim is a couple of millimetres of lift on a plate a
    hand's width across, and a rim strong enough to be unmissable is a bright wire —
    the pan came out as a net of glowing filaments over dark cores, which is the
    decal read from the other direction. It should be a highlight you notice on the
    sun-facing side of each plate, no more. */
 gWN = bumpFrom(crackH, gWN, 0.048 * crkF);
+/* The curl as a tone, which is what reaches the mid distance. A plate rim that
+   has lifted off the bed is a couple of millimetres of relief and no shadow to
+   speak of at eight metres, but it is genuinely paler — it dried first, it is
+   dustier, and it is the part a passing flood polishes last. Small, and in
+   pigment, so it neither aliases nor needs a derivative. */
+gA *= 1.0 + (ck.b - 0.30) * 0.16 * panW * curlF;
 gA = mix(gA, gA * uSilt * (0.88 + ck.g * 0.30), panW * 0.95);
 gA *= 1.0 - ck.r * panW * 0.34 * (0.30 + 0.70 * crkF);
 /* Clay dries smoother than the sand it sits in — a separate cue from the relief,
@@ -1268,17 +1564,23 @@ albedo *= 1.0 + (band - 0.5) * 0.13 * bandW;
    and it is honest about when it stops being resolvable rather than being cut off
    at an arbitrary distance. Two wavelengths beating against each other so the
    train bifurcates and dies out along its length rather than combing the whole
-   floor at one pitch, which is the corduroy this was criticised for. */
-float rpA = 0.185, rpB = 0.127;
-float rpPh = vWPos.z + (mac2.g - 0.5) * 0.42 + (vr.r - 0.5) * 0.13;
-float rpMix = smoothstep(0.35, 0.65, mac.g);
-float rip = mix(bsin(rpPh / rpA), bsin(rpPh / rpB), rpMix);
-/* Plane-bed patches, where the flow ran fast enough to wash the ripples out
-   entirely. Without them a ripple field is unbroken across the whole floor,
-   which no real bed is. */
-float rpBed = smoothstep(0.30, 0.52, mac2.a * 0.7 + vr.g * 0.5);
-float rpF = bandW * rpBed * (0.45 + 0.55 * sandW);
-albedo *= 1.0 + rip * 0.115 * rpF;
+   floor at one pitch, which is the corduroy this was criticised for.
+
+   rip, lin, rpF and armour are now built once, up beside the raking
+   march, because the same bedform has to drive both the pigment here and the
+   shadowed-area fraction there — and it is the shadow that carries the band.
+   Authoring them twice is how a ripple crest ends up lit by one field and
+   shadowed by another. The pigment share is small on purpose: a ripple crest is
+   not a different colour from its trough, it is the same sand catching a
+   grazing sun, so putting the contrast into pigment is what would make it a
+   painted stripe. */
+albedo *= 1.0 + rip * 0.075 * rpF
+              + lin * 0.045 * floorB * (1.0 - clamp(rpF * 1.35, 0.0, 0.92));
+/* And the grit's tone, at the same footprint-locked scale. Mean-removed against
+   the map's measured 0.427. Small beside the occlusion above, because most of
+   what distinguishes one patch of a gravel bed from the next at this range is
+   how much of it is in its own shadow, not what colour it is. */
+albedo *= 1.0 + (gr.r - 0.427) * 1.45 * gritK * floorM;
 
 /* Cobble-scale chroma mottle. A gravel bar at thirty metres has stopped being a
    collection of readable stones and become a *tone* — greyer and flatter than the
@@ -1381,6 +1683,7 @@ export function makeTerrainMaterial(tex) {
     uSandA: { value: tex.sand.albedo }, uSandN: { value: tex.sand.normal }, uSandM: { value: tex.sand.arm },
     uRockA: { value: tex.rock.albedo }, uRockN: { value: tex.rock.normal }, uRockM: { value: tex.rock.arm },
     uMacro: { value: tex.macro }, uVar: { value: tex.variance }, uCrack: { value: tex.crack },
+    uGrit: { value: tex.grit },
     uDamp: { value: new THREE.Color(0.54, 0.37, 0.44) },
     uCool: { value: new THREE.Color(1.02, 0.94, 1.10) },
     uSilt: { value: new THREE.Color(1.14, 1.06, 0.94) },
@@ -1392,6 +1695,7 @@ export function makeTerrainMaterial(tex) {
        correct if the sun or the tile changes. */
     uSunStep: { value: new THREE.Vector2(SUN_DIR.x, SUN_DIR.z).normalize().multiplyScalar(0.3846) },
     uSunRise: { value: Math.tan(SUN_EL) / 0.025 },
+    uWind: { value: new THREE.Vector2(WIND.x, WIND.y) },
     uBedT: { value: BED_T },
   };
 
@@ -1400,14 +1704,15 @@ export function makeTerrainMaterial(tex) {
 
     shader.vertexShader =
       'attribute float aRef;\nattribute float aPan;\nattribute float aWall;\n' +
-      'attribute float aSheet;\n' +
+      'attribute float aSheet;\nattribute float aFlow;\n' +
       'varying vec3 vWPos;\nvarying vec3 vWNrm;\nvarying float vRef;\nvarying float vPan;\n' +
-      'varying float vWall;\nvarying float vSheet;\n' +
+      'varying float vWall;\nvarying float vSheet;\nvarying float vFlow;\n' +
       shader.vertexShader;
     shader.vertexShader = shader.vertexShader
       .replace('#include <begin_vertex>',
         '#include <begin_vertex>\n  vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\n' +
-        '  vRef = aRef;\n  vPan = aPan;\n  vWall = aWall;\n  vSheet = aSheet;')
+        '  vRef = aRef;\n  vPan = aPan;\n  vWall = aWall;\n  vSheet = aSheet;\n' +
+        '  vFlow = aFlow;')
       .replace('#include <beginnormal_vertex>',
         '#include <beginnormal_vertex>\n  vWNrm = normalize(mat3(modelMatrix) * objectNormal);');
 

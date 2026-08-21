@@ -353,31 +353,141 @@ how it lies. Whoever owns the clast scatter should check the normals on the flat
 population. Do not fix it by cooling the fill; the fill is the one term here that measures
 correct.
 
+### The blue chips: resolved, and it was not the normals
+
+Recorded because the diagnosis in the section above was wrong in a way worth
+keeping. The chips were an additive Rayleigh-spectrum constant in `scatter.js` —
+`vec3(0.012, 0.024, 0.090) * 0.85`, applied at full strength to every clast facet
+turned away from the sun. `terrain.js` carried the identical term and deleted it
+a round earlier for the identical reason; the copy on the clasts outlived it.
+
+Measured rather than argued. Inverting the tone curve on the chip population in
+`sys4d_wash_mid` — mean rgb(67,62,98) at exposure 1.15 — recovers linear
+(0.063, 0.056, 0.109). The term alone supplies (0.010, 0.020, 0.077): **70% of
+the blue channel**. What is left is (0.052, 0.036, 0.033) at B/G 0.92, which is
+what a shaded red clast under a violet sky should be. Magnified crops show
+ordinary tabular clasts, correctly seated, with a correctly lit warm sliver on
+the sunward facet — no billboard and no pinned normal anywhere in it.
+
+Deleting it takes the affected fraction of the lower frame from **1.18% to
+0.05%**, and the survivors read B/G 1.20 rather than 1.56, which is shadow and
+foliage rather than chips. The lavender sand-sheet patches went with it; they
+were the same term on the same surfaces.
+
+The general lesson: the term was justified against a light rig that had no sky
+in it. When System 4's SH probe arrived, every compensating hack written for the
+old rig became a defect, and they do not announce themselves — one was found and
+removed, its twin was not. **Grep for the constant, not for the file.**
+
 ### Deferred terrain defects, carried forward from System 1
 
 Not forgiven, only deferred. Revisit these after System 4 and System 7.
 
-- **Midground detail collapse.** High-frequency energy in the 20–40 m band measures
-  ~0.052 against 0.115–0.137 in real arroyo photographs — a 3–5× shortfall exactly where a
-  real photograph is *busiest*, since more objects fall into each pixel when looking across
-  a surface rather than down at it. Four attempts failed to move it. The standing hypothesis
-  is that the dirt albedo has no energy at gravel scale to begin with, in which case no
-  amount of sharper sampling can recover detail that was never authored — test that offline
-  before touching the sampling again. What must carry this band is albedo and lithology
-  mottle, micro-shadow fraction as a smooth tone, correlated ripple-crest banding, patch
-  boundaries, and a handful of individual cobble silhouettes — **not** relief detail.
-- **No clast burial or scour geometry.** Named by three consecutive critics as the strongest
-  surviving "objects dropped onto a surface" tell. Needs an upstream sand fillet, a
-  downstream scour tail, imbrication (consistent upstream dip), and partial burial.
-- Uniform clast density — no flow-sorted bars, stringers or armoured lag surfaces.
-- Small clasts still ellipsoids sharing aspect ratio and long-axis orientation.
-- Sand draping over every bank crest like icing; fluvial and aeolian sand are not
-  distinguished.
-- Corduroy ripples at constant amplitude — no wavelength scaling with flow depth, no crest
-  bifurcation, no plane-bed patches.
-- Polka-dot cut banks: high-contrast pale ellipsoids on a dark matrix at uniform density.
-- Residual 1–2 px hash on *shaded* cut banks.
-- No talus cone; no mud-crack plate relief.
+- **Midground detail collapse — the standing hypothesis is disproved, and the
+  gap is amplitude rather than spectrum.** `tools/_dirtprobe.mjs` generates the
+  dirt map in node and averages it over the anisotropic box a midground pixel
+  actually covers (5 texels across the view by 30 along it, worked from the
+  capture geometry). The map's *shape* survives completely — grad 0.0250 at mip 0
+  against 0.0251 at the midground footprint, hf/lf 0.65 against 0.65 — so it does
+  not go to wax and there is nothing there for sharper sampling to recover. What
+  it loses is amplitude: luminance sd 0.077 → 0.046, and a nine-pixel high-pass
+  RMS of **0.038** against 0.115–0.137 in real photographs.
+
+  That 0.038 is a ceiling on what pigment can do, and the arithmetic says so:
+  lifting a band from 0.059 to 0.115 needs another 0.099 RMS in quadrature, and
+  at the midground's mean luminance of 0.335 that is a third of the mean. No
+  albedo mottle on dirt is that contrasty. **Only shadow is**, which is why the
+  fifth attempt authored the shadowed *area fraction* of the bed rather than more
+  colour.
+
+  Fifth attempt, measured against a matched control (both `--hash nopost`, so
+  System 7's chain is out of the comparison): `wash_mid` mid 0.0590 → 0.0623,
+  `bend` mid 0.0355 → 0.0378, near field unchanged at 0.1120 → 0.1125. A real
+  move and a small one. What is in it: a spatially varying micro-shadow fraction
+  in place of the flat 0.26 constant the raking march collapsed to; a ripple
+  train whose lee flank casts a one-sided shadow, wavelength scaled by the new
+  `aFlow` attribute; flow-parallel current lineation at 5.5, 8.5 and 13 cm,
+  chosen because a midground pixel is 12 mm across the view and 76 mm along it,
+  so nothing coarser than about 11 cm *across* the line of sight can land inside
+  a nine-pixel kernel — every across-channel term the shader had was 19 to 72 cm,
+  visible and outside the window; and the grit map read footprint-locked, at the
+  geometric mean of the two footprints.
+
+  **The remaining gap is structural and it is not the sampling.** A gravel bed
+  has hundreds of stones per square metre; the scatter has 1.7, because a real
+  density is millions of instances. So the bed is a texture, a texture converges
+  on its mean under a footprint, and the honest lever is contrast between lit and
+  shadowed bed. That makes the shadow-to-sunlit ratio — 0.312 against a 0.15–0.25
+  target — the largest remaining term in this measurement, and it is System 4's.
+
+  Two traps paid for here. Extending the mud-crack curl's fade to a 9 cm
+  footprint lifted the mid band by a quarter and did it by producing a net of
+  glowing worms across every pan: `bumpFrom` builds a normal from `dFdx` of a
+  sampled value, and past the feature size that derivative is the difference
+  between two independent mip samples, not a slope. **A derivative bump cannot be
+  extended past its own feature size, however good the reason.** And overlapping
+  the ripple train with the lineation multiplied a train varying along the
+  channel by one varying across it: the product of two gratings is a grid, and
+  the floor came out as brickwork. They are now mutually exclusive, which is also
+  the bedform phase diagram — lineation is upper-flow-regime plane bed, ripples
+  are lower.
+- **Clast burial and scour geometry** — worked in `sys1n`. The upstream wedge and
+  downstream tail already existed and three critics still called it the strongest
+  tell; a magnified crop says why. A wedge on one side and a tail on the other
+  leave the stone's *waterline* — where it meets the bed all the way round — a
+  clean intersection between a hull and a smooth plane, and a real one is not
+  clean. There is now a broad flat fillet lens centred on each scoured clast,
+  mostly below the surface, a shade darker and damper because the fines at a
+  stone's foot sit in its shadow and hold moisture. Median burial is up from 0.64
+  to 0.74 of the clast's half-thickness. Still open: none of this is *excavated*
+  geometry, only added, so there is no true scour hollow anywhere.
+- **Flow sorting** — density contrast raised hard in `sys1n`; the terms were
+  already right and were mixed with too much constant. A lag band with a stringer
+  through it now carries several times the density of the swept ground a metre
+  away. Armoured lag surfaces are expressed as a *tone* (self-shadowing) rather
+  than as real pavement, because real pavement density is unreachable by
+  instancing.
+- **Clast shape** — per-class plan aspect in `sys1n`, 0.72–1.55 on gravel against
+  one global 0.88–1.18 band. The long axis is taken out of the short one rather
+  than added to the long, which keeps the minimum dimension fixed so a bladed
+  clast does not become the knife-edged splinter the narrow band was protecting
+  against. Imbrication holds at 0.72–0.84 but scatters ±32° rather than ±20°.
+- **Aeolian sand** — put in, in `sys1n`, now that WIND is shared. Sand banks on
+  the *lee* face only, between slopes of about 0.03 and 0.175, so it stops dead
+  at the crest line where the windward face begins and cannot ice a bank. Note
+  the wind is **not** actually shared yet: `src/atmosphere.js` and `src/audio.js`
+  both use a private `WIND_HEADING = 0.12`, which is almost along the wash, while
+  `WIND` in `src/juniper.js` is (0.94, 0.34), almost across it. The drifted sand
+  now agrees with the tree; it does not agree with the blowing sand or the sound.
+- **Ripples** — wavelength now scales with flow depth through a new `aFlow` vertex
+  attribute (three fixed trains crossfaded, since frequency cannot vary
+  continuously without the phase drifting), with a beat partner for crest
+  bifurcation and the existing plane-bed patches. The phase is warped by a
+  metre-scale field: warping it with the macro maps alone leaves it constant over
+  the two metres a crest occupies, which is a second route to corduroy.
+- **Polka-dot cut banks** — bank clasts blend 0.74 toward the matrix rather than
+  0.55, and their per-instance value jitter is squeezed on bank faces, where it
+  was doing more of the work than the lithology.
+- **Residual 1–2 px hash** — largely identified. The clast surface map's bedding
+  lamination is authored at 3 mm and the UVs hold that physical size, so on a
+  large clast in the near field 3 mm is about one pixel; a one-pixel periodic
+  ridge crossed by the per-lamina hardness hash is a moiré that reads as woven
+  cloth. The lamination is cut hard and the clast normal now relaxes toward the
+  geometric normal as the footprint passes the map's feature size, the same fade
+  the terrain has had for a round.
+- **Mud-crack plate relief** — the *relief* is still near-field only, on purpose;
+  see the derivative-bump trap above. The curl reaches the mid distance as a tone.
+- No talus cone as a discrete landform.
+- **The pale-boulder problem is not solved.** A large pale clast reads as poured
+  concrete, and four separate attacks moved a near-field one from rgb(162,132,102)
+  to (152,119,89) against a bed near (120,85,62): a size-scaled pull toward a dark
+  dusty local tone, a dust factor of 0.80, a boulder-only lithology mix with the
+  pale end deleted, and a bevel push that makes almost every requested point a
+  hull facet. It is better and it is still the loudest object in the `ground`
+  framing. The remaining cause is probably not colour at all but that a 40 cm
+  solid presents facets the size of a table top with no micro-shadow, no cavity
+  variation and none of the terrain's grain, while the bed beside it has all
+  three — the clast material is simply a poorer surface than the ground material.
 - Shadow ambient is warm grey and red-dominant — needs a hemispherical skylight term so
   shadows go cool/violet. **System 4 owns this.**
 - **Ground `hf/lf` regressed when the new lighting landed** and needs re-checking once
@@ -493,6 +603,17 @@ with luminance across real photographs (0.048 on a bright macro to 0.201 on a da
 the same rock type). Tested honestly at matched luminance — render L 0.141 scoring 0.087
 against real rock at L 0.137 scoring 0.201 — it does not rescue an underexposed frame; it
 only shrinks the apparent failure from 3× to 2.3×.
+
+### `layers.mjs` numbers from before 21 Aug are partly wrong
+
+Its sky test cut on absolute brightness, so it was exposure-dependent. When System 4's floor
+luminance restoration and System 7's grade landed, sky bands that had been under the
+threshold crossed it — and on at least one view the top five bands held 4,000 pixels at
+saturation 0.16 and B/G 1.08, which is sky being credited as a ridgeline step. It now finds
+the skyline geometrically per column, which is exposure-invariant. Under the fixed metric
+every view reports a non-zero step count, including the one that previously read zero.
+
+Treat any step-count or edge-share figure quoted before that fix as unreliable.
 
 ### Verify the instrument before you trust the measurement
 

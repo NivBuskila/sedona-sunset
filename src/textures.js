@@ -972,10 +972,23 @@ export function makeClastSurface(size = 512) {
          enough to read as corrugation, and that margin is narrow. */
       const lamHard = 0.5 + 0.5 * Math.sin(Math.floor(v * 22 + lamW) * 2.399);
 
-      h[i] = mot * 0.5 + grit * 0.22 + vein * 0.12 + lam * lamHard * 0.05;
+      /* ---- and why the lamination came down again ----
+         Twenty-two periods across a six-centimetre tile is a three-millimetre
+         lamina, which is the real scale and was the right call — but the tile is
+         scaled per instance to hold texel density constant, so on a half-metre
+         boulder eighteen tiles land across the object and three millimetres of
+         lamina lands on one or two pixels at close range. A one-pixel periodic
+         ridge crossed by the per-lamina hardness hash is a moiré, and magnified
+         it read as woven cloth over every large flat facet — which is most of
+         what the residual "1 to 2 px hash" on the clasts actually is. It is not
+         aliasing in the sampler: the feature is genuinely at the Nyquist limit of
+         the screen, so the only honest fix is less relief on it. Roughly halved
+         in the height field and cut by a third in the albedo; the lamination is
+         still there as a fine ribbing where it can be resolved. */
+      h[i] = mot * 0.5 + grit * 0.22 + vein * 0.12 + lam * lamHard * 0.010;
 
       let g = 152 + mot * 52 + grit * 16;
-      g += (lam - 0.5) * 7 * (0.35 + 0.65 * lamHard);
+      g += (lam - 0.5) * 3.0 * (0.35 + 0.65 * lamHard);
       g = mix(g, 214, Math.pow(clamp(vein - 0.62, 0, 1) * 2.6, 1.5) * 0.6);  // quartz vein
       const sp = (hash2(x, y, 4409) - 0.5) * 18;
       const val = clamp(g + sp, 0, 255);
