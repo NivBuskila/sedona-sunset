@@ -929,6 +929,30 @@ function butteGrid(cx, cz, rad, hs, terrain, seed) {
          reduced to under half, just enough for a bench to read as a bench. The
          two together are within a few centimetres of flush at every cliff foot,
          which is what removes the overhangs without flattening the staircase. */
+      /* The rim is cut down per azimuth, and this is the wedding cake fix.
+         Every vertex in row j took its height straight from COL.Y[j], which is
+         one number for the whole ring — so however much the *radius* varied with
+         azimuth, each bench top and each cliff brow came out as a perfectly level
+         circle, and a stack of level circles seen from the side is the "dead
+         straight horizontal caprock edges stacked like a wedding cake" the
+         critique reported in `bend`.
+         Strictly subtractive, for two reasons. Erosion removes rock: a rim
+         degrades by having notches cut into it, not by growing. And the buttes
+         are part of the skyline System 4 is still working to clear the sun disc
+         through — a perturbation that can only lower a crest cannot cost them
+         anything, whereas a symmetric one would need re-verifying every time an
+         amplitude moved. The broad term sags the bench between its buttresses;
+         the cubed ridged term cuts the sparse deep slots that leave fins standing
+         between them, which is the same construction the far ridgelines use.
+         `li` is in both noise arguments so successive benches are notched at
+         different azimuths — stacking the *same* notch pattern would trade a
+         wedding cake for a fluted column. */
+      const rimSag = 0.55 * (0.5 + 0.5 * fbm(ct * 2.7 + li * 0.31, st * 2.7, 2, seed + 67));
+      const rimCut = 2.60 * Math.pow(ridged(ct * 5.5 + li * 0.9, st * 5.5, 2, seed + 113), 3);
+      /* Held off the foot, where the butte has to meet the terrain it stands on
+         and a notch would open a gap under it. */
+      const dy = -(rimSag + rimCut) * smoothstep(-6.0, 8.0, yq);
+      const yv = yq + dy;
       let r = r0 - (SETBACK[li] + R * ret * 0.45 + Math.max(P, -0.40) * 1.5) * hs;
       r -= jointOffset(a1, seed + li * 13, 9.0);
       r -= jointOffset(a2, seed + li * 7 + 5, 14.0);
@@ -942,23 +966,33 @@ function butteGrid(cx, cz, rad, hs, terrain, seed) {
       r = Math.max(r, rad * 0.12);
       const k = jj * nu + i;
       pos[k * 3] = cx + ct * r;
-      pos[k * 3 + 1] = base + yq * hs - 7;
+      pos[k * 3 + 1] = base + yv * hs - 7;
       pos[k * 3 + 2] = cz + st * r;
-      att[k * 4] = yq;
+      /* The stratigraphic coordinate follows the cut rather than the row, because
+         cutting into the stack exposes an older bed — that is what makes a notch
+         read as erosion into strata instead of as a dent in a painted surface. */
+      att[k * 4] = yv;
       att[k * 4 + 1] = th * 90;
       att[k * 4 + 2] = 0;
       att[k * 4 + 3] = 0.5;
       rTop = r;
     }
-    /* Close the top with a low dome rather than a flat lid. */
+    /* Close the top with a low dome rather than a flat lid. It carries the same
+       per-azimuth cut as the rows below it, or the summit would come back level
+       and hand the silhouette its straight edge back at the one height where it
+       is most visible. */
+    const capLi = layerAt(cap + 1e-5);
+    const capDy = -(0.55 * (0.5 + 0.5 * fbm(ct * 2.7 + capLi * 0.31, st * 2.7, 2, seed + 67))
+                  + 2.60 * Math.pow(ridged(ct * 5.5 + capLi * 0.9, st * 5.5, 2, seed + 113), 3))
+                  * smoothstep(-6.0, 8.0, cap);
     for (let b = 0; b < 3; b++) {
       const t = (b + 1) / 3;
       const r = rTop * (1 - t * t) * 0.99;
       const k = (ny + b) * nu + i;
       pos[k * 3] = cx + ct * r;
-      pos[k * 3 + 1] = base + cap * hs - 7 + t * 2.5 * hs;
+      pos[k * 3 + 1] = base + (cap + capDy) * hs - 7 + t * 2.5 * hs;
       pos[k * 3 + 2] = cz + st * r;
-      att[k * 4] = cap;
+      att[k * 4] = cap + capDy;
       att[k * 4 + 1] = th * 90;
       att[k * 4 + 2] = 0;
       att[k * 4 + 3] = 0.5;
@@ -1183,6 +1217,12 @@ uniform vec3 uIron;
 uniform vec3 uVarnish;
 uniform float uRockLum;
 uniform vec3 uSunDir;
+/* Scales the joint traces, for tools/_rockdiag.mjs. The whole-scene critique
+   reported "a regular rectangular grid of thin dark lines ruling the entire far
+   wall", and the candidates — mesh seams, shadow acne, joints — need opposite
+   fixes, so the term has to be switchable from a probe rather than argued
+   about. Left at 1.0 by everything except the probe. */
+uniform float uJointK;
 varying vec3 vWPos;
 varying vec3 vWNrm;
 varying vec4 vRock;
@@ -1313,6 +1353,26 @@ vec2 jointTrace(vec2 p, vec2 dir, float sp, float seed, float w, float thr){
   float bevel = smoothstep(r0, mix(r0, r1, 0.45), dd) * (1.0 - smoothstep(mix(r0, r1, 0.55), r1, dd));
   return vec2(groove, bevel) * open;
 }
+
+/* A joint set that the pixel grid can no longer resolve has to fade to its mean
+   rather than keep drawing lines.
+ *
+ * jw holds every trace at about a pixel and a half of *screen* width, which is
+ * the right filter for a line that is still separated from its neighbours. It is
+ * the wrong one once the spacing itself approaches the footprint: the 0.52 m set
+ * is under two pixels apart on a wall a hundred metres out, so instead of four
+ * fracture sets the far wall gets a comb of hairlines at a fixed screen pitch,
+ * crossed by a second comb at another azimuth. That is the "regular rectangular
+ * grid of thin dark lines ruling the entire far wall" the whole-scene critique
+ * reported, and it is systemic exactly because it is a function of distance
+ * rather than of any one wall.
+ *
+ * Fading between two and five and a half samples per cell is the usual band: at
+ * five the cells are still separately visible, at two they are Nyquist and
+ * everything below is aliasing that no width clamp can rescue. The mean the set
+ * fades to is already carried by the base albedo, so nothing goes missing —
+ * a wall at distance loses its hairlines and keeps its tone. */
+float jointRes(float sp, float foot){ return smoothstep(2.0, 5.5, sp / max(foot, 1e-5)); }
 
 vec3 bumpFrom(float hgt, vec3 N, float scale){
   vec3 pdx = dFdx(vWPos), pdy = dFdy(vWPos);
@@ -1623,12 +1683,29 @@ albedo *= 1.0 + sbTone;
    Joints do not run the full height of a section: they terminate at bedding
    contacts, which is what makes them look like fracture rather than like wire. */
 float jw = max(foot * 1.6, 0.022);
-vec2 jp = vWPos.xz;
-float jVert = 0.55 + 0.45 * sin(y * 1.9 + aS * 0.07);
-vec2 jt2 = jointTrace(jp, vec2(0.9397, 0.3420), 4.10, 3.0, jw * 2.4, 0.55) * 1.00
-         + jointTrace(jp, vec2(0.9397, 0.3420), 1.35, 7.0, jw * 1.2, 0.60) * 0.80
-         + jointTrace(jp, vec2(-0.2588, 0.9659), 2.35, 17.0, jw, 0.66) * 0.75
-         + jointTrace(jp, vec2(0.6428, -0.7660), 0.52, 41.0, jw * 0.8, 0.76) * 0.50;
+/* Every joint plane in this system is vertical and every trace is driven off
+   plan coordinates alone, so on a vertical wall the sample point does not change
+   with height and each trace paints a dead-straight line the full height of the
+   section. Four of those at fixed spacings is a ruled sheet, which is the other
+   half of why the far wall read as a lattice rather than as fracture. Displacing
+   the sample laterally by a low-frequency function of elevation costs two trig
+   calls and makes a trace wander half a metre over twenty of height — a joint
+   face is not a plane, it steps and curves as it climbs — and because the
+   displacement is shared, all four sets wander together as one rock mass rather
+   than sliding against each other. */
+vec2 jp = vWPos.xz + vec2(sin(y * 0.37 + 1.3), cos(y * 0.29 + 2.1)) * 0.55;
+/* Joints terminate at bedding contacts; the previous form ranged 0.10 to 1.0 and
+   so never terminated at all, it only got fainter. Two incommensurate periods
+   through a smoothstep with a real zero gives runs of wall with no joint in them,
+   which is what makes the remainder read as fracture rather than as ruling. */
+float jvA = 0.5 + 0.5 * sin(y * 1.9 + aS * 0.07);
+float jvB = 0.5 + 0.5 * sin(y * 0.53 + aS * 0.031 + 2.2);
+float jVert = smoothstep(0.22, 0.68, jvA * 0.65 + jvB * 0.35);
+vec2 jt2 = jointTrace(jp, vec2(0.9397, 0.3420), 4.10, 3.0, jw * 2.4, 0.55) * (1.00 * jointRes(4.10, foot))
+         + jointTrace(jp, vec2(0.9397, 0.3420), 1.35, 7.0, jw * 1.2, 0.60) * (0.80 * jointRes(1.35, foot))
+         + jointTrace(jp, vec2(-0.2588, 0.9659), 2.35, 17.0, jw, 0.66) * (0.75 * jointRes(2.35, foot))
+         + jointTrace(jp, vec2(0.6428, -0.7660), 0.52, 41.0, jw * 0.8, 0.76) * (0.50 * jointRes(0.52, foot));
+jt2 *= uJointK;
 float jt = jt2.x;
 /* Only on faces steep enough to be a face. A bench top is a rubble tread, and a
    crack drawn across one reads as a scratch on a floor. */
@@ -1944,6 +2021,7 @@ export function makeRockMaterial(tex, detail = 1.0) {
     /* Only ever read to find the terminator, never to light anything — the
        lighting is three's and System 4's. */
     uSunDir: { value: SUN_DIR.clone() },
+    uJointK: { value: 1.0 },
   };
 
   mat.onBeforeCompile = (shader) => {
