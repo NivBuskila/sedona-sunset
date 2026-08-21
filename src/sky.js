@@ -38,26 +38,28 @@ const A = computeAtmosphere();
 /* ── scene radiance scale ──────────────────────────────────────────────────
  *
  * The atmosphere solve is normalised so that the sun above the air has unit
- * luminance, which puts the direct beam at the ground at 0.33 and the whole
- * scene at inconvenient fractions. SCALE just moves the decimal point: it is
- * cancelled exactly by EXPOSURE below, so its value is arbitrary and only two
- * things depend on it. One is readability — with SCALE at 9.05 the direct beam
- * lands on a luminance of 3.0 and the numbers in the report are legible. The
- * other is that terrain.js and rock.js each add a small Rayleigh airlight term
- * in absolute scene units, so the frame's overall radiance cannot be changed
- * without those two constants moving with it.
+ * luminance, which puts the direct beam at the ground at 0.33 and everything
+ * else at inconvenient fractions. SCALE moves the decimal point, and it is
+ * chosen so that EXPOSURE comes out at exactly 1.0 — that is, so that the
+ * physical model *is* the exposure and System 7 grades from a scene that is
+ * already correct rather than from one that needs a correction factor first.
+ *
+ * One thing does depend on the absolute value and it is easy to miss: terrain.js
+ * and rock.js each add a Rayleigh airlight term to shadowed surfaces as a
+ * constant in absolute scene units, outside the albedo product, because a red
+ * rock cannot reflect a blue it has no blue albedo to reflect. Those constants
+ * were authored against the provisional rig's radiance and have been rescaled
+ * by hand to match this one. If SCALE moves again, they move with it.
+ *
+ * Derivation of the number. ACES puts its input 0.456 at display 0.342, which is
+ * HSV value 0.62 — mid-range for the 0.59-0.73 that reference photographs of
+ * sunlit Sedona rock sit at. A wall face at this azimuth takes a cosine of 0.223
+ * on the beam plus the probe's 0.034, so it reflects 0.335 * 0.136 / pi of the
+ * scene scale in red. Setting that product to 0.456 * 0.6 gives 19.
  */
-const SCALE = 9.05;
+const SCALE = 19.0;
 
-/* Derived, not dialled. ACES maps its input through a curve whose midpoint sits
- * near 0.5, and a sunlit Sedona face should land at HSV value 0.59-0.73 — call
- * it 0.66, which is 0.376 of full output and needs about 0.5 going in. A sunlit
- * vertical face here receives SCALE * 0.374 of irradiance and reflects roughly a
- * third of it in the red channel, so the exposure that puts the red channel at
- * 0.5 after three's internal /0.6 is the figure below. It is checked against a
- * measured render rather than trusted; see the report.
- */
-export const EXPOSURE = 0.62;
+export const EXPOSURE = 1.0;
 
 /* ── the fog colour ────────────────────────────────────────────────────────
  * Aerial perspective is System 5's, but scene.fog needs a colour now and the
@@ -251,16 +253,22 @@ export function buildSky() {
  */
 export const SHADOW_HALF = 34;      // kept for compatibility; no longer used
 
-/* Light-space extents. x is horizontal and perpendicular to the sun's azimuth;
-   y is vertical tilted back by the solar elevation, so +y is up and a little
-   down-wash and -y runs up the wash toward the sun.
-   FAR: +62 admits a 62 m wall top standing at the player, and -78 reaches
-   560 m of wash floor up-canyon, which is past where the haze closes in.
-   NEAR: sized for the gravel. 34 m of x on a 4096 map is 8.3 mm a texel, half
-   the 17 mm the provisional single map managed, so pebble contact shadows come
-   out better than before rather than being traded away for the wall shadows. */
-const FAR_BOX = { x: 95, yLo: -78, yHi: 62 };
-const NEAR_BOX = { x: 17, yLo: -11, yHi: 25 };
+/* Light-space extents, and both are asymmetric because the region that needs
+   shadowing is not centred on the player in either axis.
+   y is vertical tilted back by the solar elevation: +y is up, and -y runs away
+   from the camera up the wash, at 0.137 of a metre per metre of wash. So +58
+   admits a 58 m wall top standing beside the player and -66 reaches 480 m of
+   floor up-canyon, which is past where the haze closes in.
+   x is horizontal and perpendicular to the sun's azimuth — and since the sun is
+   thirteen degrees off the corridor, a point 300 m up the wash is displaced 67 m
+   along x as well. That is why the x range is offset rather than centred: the
+   corridor leans across it.
+   NEAR is sized for the gravel. 36 m across a 2048 map is 17.6 mm a texel, which
+   is the figure System 1 established as the point where a 50 mm pebble casts a
+   shadow at all. It is a quarter of the fill cost of a 4096 map, and measurably
+   nothing is gained above it. */
+const FAR_BOX = { xLo: -118, xHi: 72, yLo: -66, yHi: 58 };
+const NEAR_BOX = { xLo: -20, xHi: 16, yLo: -9, yHi: 22 };
 /* The light sits far enough up-sun that a wall top 500 m up the corridor is
    still in front of the near plane. Depth is cheap: an orthographic camera is
    linear in z, so 1,860 m across a 24-bit buffer is a tenth of a millimetre. */
@@ -271,7 +279,7 @@ function configureCascade(l, box, mapSize, biasMetres, normalBias, radius) {
   l.castShadow = true;
   l.shadow.mapSize.set(mapSize, mapSize);
   const c = l.shadow.camera;
-  c.left = -box.x; c.right = box.x;
+  c.left = box.xLo; c.right = box.xHi;
   c.bottom = box.yLo; c.top = box.yHi;
   c.near = NEAR_Z; c.far = FAR_Z;
   c.updateProjectionMatrix();
@@ -296,8 +304,9 @@ function configureCascade(l, box, mapSize, biasMetres, normalBias, radius) {
  * shadow texels.
  */
 export function makeShadowRig(sun, sunNear) {
-  const qFar = (FAR_BOX.x * 2) / sun.shadow.mapSize.x * 4;
-  const qNear = (NEAR_BOX.x * 2) / sunNear.shadow.mapSize.x * 4;
+  const step = (l, box) => (box.xHi - box.xLo) / l.shadow.mapSize.x * 4;
+  const qFar = step(sun, FAR_BOX), qNear = step(sunNear, NEAR_BOX);
+  let last = '';
   const place = (l, q, x, y, z) => {
     const s = (v) => Math.round(v / q) * q;
     const qx = s(x), qy = s(y), qz = s(z);
@@ -306,10 +315,14 @@ export function makeShadowRig(sun, sunNear) {
       qz + SUN_DIR.z * LIGHT_DIST);
     l.target.updateMatrixWorld();
     l.updateMatrixWorld();
+    return `${qx},${qy},${qz}`;
   };
+  /** @returns true when a cascade actually moved, so the maps need redrawing. */
   return (x, y, z) => {
-    place(sun, qFar, x, y, z);
-    place(sunNear, qNear, x, y, z);
+    const key = place(sun, qFar, x, y, z) + '|' + place(sunNear, qNear, x, y, z);
+    if (key === last) return false;
+    last = key;
+    return true;
   };
 }
 
@@ -383,11 +396,11 @@ export function buildLights() {
      is the loudest "this is a renderer" tell in a long raking shot. three's PCF
      kernel at 3.5 texels is 0.16 m here — short of the truth, but an order of
      magnitude closer than one texel. */
-  configureCascade(sun, FAR_BOX, 4096, 0.30, 0.030, 3.5);
+  configureCascade(sun, FAR_BOX, 4096, 0.28, 0.028, 3.5);
   sun.name = 'sun';
 
   const sunNear = new THREE.DirectionalLight(0xffffff, 0);
-  configureCascade(sunNear, NEAR_BOX, 4096, 0.05, 0.007, 1.6);
+  configureCascade(sunNear, NEAR_BOX, 2048, 0.06, 0.011, 1.7);
   sunNear.name = 'sunNear';
 
   /* The fill: the SH9 irradiance of sky, wash floor and opposite wall. This is

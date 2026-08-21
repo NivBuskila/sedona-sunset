@@ -35,9 +35,26 @@ import * as THREE from 'three';
    height of what casts it, which is what the low sun was for. Kept from the
    provisional rig on that evidence. */
 export const SUN_EL_DEG = 8.0;
-/* A shade off the corridor axis so the disc sits inside the gap up the wash
-   without being pinned dead centre. */
-export const SUN_AZ_DEG = 3.15;
+/* Off the corridor axis, and the sign is the whole point.
+   The provisional rig had this at +3.15 degrees, which put the sun a shade to
+   the *right* of the axis. Measured, that is backwards twice over. First, at
+   three degrees off a corridor axis neither wall receives anything: a wall face
+   points across the wash, so its cosine to the sun is sin(3 deg) = 0.05, and both
+   curtains come out lit entirely by the sky. The render agrees — under the
+   physical rig at +3.15 the standard `wall_lit` view measured HSV value 0.088
+   against a reference range of 0.59 to 0.73, and no exposure fixes that, because
+   there is no light on the surface to expose. Second, the sign meant that what
+   little raking light there was fell on the *left* wall, so the viewpoint named
+   `wall_lit` was the dark one and `wall_shade` the bright one — which is
+   measurable in every capture back to sys1 and had been read as a shader
+   problem for four rounds.
+   Thirteen degrees to the left puts a cosine of 0.22 on the right-hand wall, so
+   the face that view looks at is genuinely lit while the opposite wall goes into
+   real shade and the warm/cool split has something to be a split between. It is
+   as far as the sun can go and stay in the gap: at sixteen degrees the disc
+   disappears behind the left crest in the `sun_gap` framing, and the disc
+   sitting in the gap up the wash is the composition. */
+export const SUN_AZ_DEG = -13.0;
 
 const DEG = Math.PI / 180;
 export const SUN_EL = SUN_EL_DEG * DEG;

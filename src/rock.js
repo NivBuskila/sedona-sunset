@@ -1958,8 +1958,13 @@ export function makeRockMaterial(tex, detail = 1.0) {
          at arm's length there is none of it, and the floor is gone. */
       float airM = 1.0 - gShadow;
       float airD = smoothstep(4.0, 200.0, length(vWPos - cameraPosition));
+      /* Rescaled by System 4 along with terrain.js's twin: this is a radiance in
+         absolute scene units added outside the albedo product, so it is the one
+         term in the shader that does not follow the lights, and the physical rig
+         moved the frame's radiance by 2.0. The ratio between the channels — the
+         part System 2 measured — is untouched. */
       reflectedLight.indirectDiffuse +=
-        vec3(0.013, 0.024, 0.072) * airM * (0.10 + 0.90 * airD) * tAO;`);
+        vec3(0.026, 0.048, 0.144) * airM * (0.10 + 0.90 * airD) * tAO;`);
   };
   return mat;
 }

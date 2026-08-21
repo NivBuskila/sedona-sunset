@@ -1398,8 +1398,16 @@ export function makeTerrainMaterial(tex) {
          against the 15-25% a shaded face should read, so there is no room to add
          energy, only to redistribute it. Roughly the same total, most of it in
          blue, which is what takes the shadow past neutral into violet. */
+      /* Rescaled by System 4. This is a radiance in absolute scene units added
+         outside the albedo product, so unlike everything else in the shader it
+         does not follow the lights: when the rig went from five hand-tinted
+         lights to a physically scaled one the frame's radiance moved by 2.0 and
+         this constant had to move with it or the wash floor went lavender —
+         which is exactly what the first capture of the new rig showed, an
+         additive blue ten times the surface's own. The number is otherwise
+         unchanged from the value System 1 measured. */
       reflectedLight.indirectDiffuse +=
-        vec3(0.012, 0.024, 0.090) * airM * (0.30 + 0.70 * airD) * tAO;`);
+        vec3(0.024, 0.048, 0.180) * airM * (0.30 + 0.70 * airD) * tAO;`);
   };
   mat.customProgramCacheKey = () => 'sedona-terrain-v3';
   return mat;

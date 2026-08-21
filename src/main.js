@@ -51,7 +51,16 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = EXPOSURE;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.shadowMap.autoUpdate = true;
+/* Off, and driven by syncShadow instead. The cascade cameras are snapped to a
+   texel grid, so their maps are a function of the *quantised* player position
+   and are bit-identical between two frames that quantise the same — which is
+   most frames while walking and all frames while standing. Redrawing them anyway
+   costs two full passes over every caster in the scene, and the frame probe in
+   particular used to pay for three sets of them per capture: one for the frame,
+   one for the readback render and one for the sky mask, which does not even
+   sample a shadow. */
+renderer.shadowMap.autoUpdate = false;
+renderer.shadowMap.needsUpdate = true;
 setAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
 
 const scene = new THREE.Scene();
@@ -117,8 +126,8 @@ scene.add(sky);
 
 /* Order matters: the cascade patch in sky.js reads shadow index 1, and the
    index is assigned in the order the scene is traversed. sunNear second. */
-const { sun, sunNear, probe } = buildLights();
-scene.add(sun, sun.target, sunNear, sunNear.target, probe);
+const { sun, sunNear, probe: skyProbe } = buildLights();
+scene.add(sun, sun.target, sunNear, sunNear.target, skyProbe);
 
 /* System 6. Silent until a gesture resumes the context, and inert if the
    browser has no audio at all — it must never be able to stop the scene. */
@@ -164,7 +173,7 @@ function syncCamera() {
    texels. sky.js owns the arithmetic. */
 const shadowRig = makeShadowRig(sun, sunNear);
 function syncShadow() {
-  shadowRig(player.x, player.y, player.z);
+  if (shadowRig(player.x, player.y, player.z)) renderer.shadowMap.needsUpdate = true;
 }
 
 placeAt(0);
