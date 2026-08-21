@@ -1,4 +1,5 @@
-/* _a5hand.mjs — does the depth handover actually happen, and what does it buy?
+/* _a5hand.mjs — the depth handover: did it happen, does it come back, what did
+ * it buy?
  *
  *   node tools/_a5hand.mjs            1920x1080, real adapter
  *   node tools/_a5hand.mjs --cpu      SwiftShader, contract checks only
@@ -9,32 +10,39 @@
  * samples so its shimmer could displace the result. The shimmer is off by user
  * instruction, and the target survived only because the marched in-scatter that
  * makes the light shafts needs a depth texture and that is where depth lived.
- * System 7's sceneRT now carries a depth texture of its own, so the target can
- * go: the scene lands there, and the march reads their depth through
- * atmosphere's renderShafts().
+ * System 7's sceneRT now carries a depth texture of its own, so the target is
+ * gone: the scene lands there, and the march reads their depth through
+ * renderShafts().
  *
  * None of that is visible in a frame. A regression would show up as bandwidth
  * and nothing else, or — worse — as the shafts or the antialiasing quietly
- * vanishing while every colour metric on the project still passed. So the
- * handover gets an instrument, and the instrument gets controls.
+ * vanishing while every colour metric on the project still passed. That is not
+ * hypothetical: the first version of the handover latched ownership on the first
+ * renderShafts call and never released it, so switching the post chain off at
+ * runtime left nobody drawing the multisampled target and nobody marching the
+ * in-scatter. The frame lost its antialiasing and its shafts, and the only
+ * visible symptom was a number in an unrelated instrument. So the handover gets
+ * a probe, and the probe gets controls.
  *
- * ── the four configurations, and why the saving is the difference of two ────
+ * ── the two arms, and why they are two page loads ─────────────────────────
  *
- *   A  pass owned, shafts on     what shipped before this change
- *   B  pass owned, shafts off    A − B is what the march costs
- *   C  pass retired, shafts off  B − C is the target on its own: THE SAVING
- *   D  pass retired, shafts on   what ships after this change
+ *   arm 1, a normal load    the shipped configuration: ownership handed over,
+ *                           System 7 driving the march, scene in sceneRT
+ *   arm 2, #nopost          ownership retained here, which is the only way to
+ *                           reach that state on a build whose chain never runs
  *
- * D is measured rather than predicted as C + (A − B), because a prediction
- * cannot catch the march getting more expensive when it reads a multisampled
- * depth texture instead of a single-sampled one — which is a real possibility
- * and exactly the kind of thing this project has been caught assuming.
+ * They cannot be one load. post.js calls renderShafts unconditionally, passing
+ * null on frames where it did not draw the scene, and a null call deliberately
+ * counts as driving — its startup handshake depends on that, or the handover
+ * would deadlock on frame one. So on a build with the chain enabled, ownership
+ * converges to System 7 within a frame and cannot be held here. That is correct
+ * behaviour and it is why the baseline arm needs the hash.
  *
- * `#handover=1` gives C and D: it pre-latches the ownership flag, so the pass
- * steps aside whether or not anything is driving the march. In D the march is
- * driven from here, one call per frame with System 7's depth, which is precisely
- * what their chain will do. So D is a measurement of the shipped path before the
- * call site on their side exists.
+ * The consequence for the numbers: the pre-handover configuration — chain on
+ * *and* ownership here — is no longer reachable at runtime, so the two arms'
+ * frame times are not subtractable. Arm 2 is missing the whole post chain. Each
+ * arm's internal difference (march on versus off) is valid; a difference across
+ * arms is not, and the report does not print one.
  *
  * ── the controls ──────────────────────────────────────────────────────────
  *
@@ -44,26 +52,29 @@
  *   - the sign control. The shaft buffer is a *subtractive* correction and must
  *     only ever darken. Read straight out of the half-res target and decoded from
  *     half-float: every sample must be <= 0, and some must be < 0. The obvious
- *     version of this test — render with and without and check the frame got
- *     darker — was tried first and is unusable, because on the retired path
- *     nothing composites the buffer yet, so the frame cannot change however
- *     wrong the sign is. A control that cannot fail is not a control.
+ *     version — render with and without and check the frame got darker — was
+ *     tried first and is unusable, because on a path where nothing composites the
+ *     buffer the frame cannot change however wrong the sign is. A control that
+ *     cannot fail is not a control.
  *   - the antialiasing control. Four samples on the scene draw are the only
- *     multisampling in the frame. Asserted on both sides of the handover, since
- *     the sample count moves file when ownership does.
+ *     multisampling in the frame. Asserted on both sides of the handover and on
+ *     both sides of a runtime post toggle, since the sample count moves file when
+ *     ownership does.
+ *   - the ownership-returns control. Two ways, because they have different costs:
+ *     the explicit setExternalDriver(false), which must cost zero frames, and
+ *     the self-heal for callers that do not know to call it, which is allowed one
+ *     frame of evidence and no more.
  *   - the shafts-still-there control. renderShafts must return a texture whose
  *     contents are not uniformly zero. A pass that runs, allocates and returns a
  *     valid handle to a blank buffer is the failure mode a null check cannot see.
  *
  * ── one thing this file learned the hard way ───────────────────────────────
  *
- * The first version of it measured the "before" configuration *after* running
- * its own API checks — and calling renderShafts is exactly what latches the
- * ownership flag, so it had retired the pass with its own instrument and then
- * reported A, B and C as three measurements of the same configuration. The
- * march came out at -0.033 ms. So: the un-latched session does its timings
- * first and touches renderShafts never, and the API checks live in the latched
- * session only. Order is load-bearing here.
+ * Its first version measured the "before" configuration *after* running its own
+ * API checks — and calling renderShafts is exactly what hands ownership over, so
+ * it had retired the pass with its own instrument and then reported three
+ * measurements of the same configuration as three configurations. The march came
+ * out at -0.033 ms. Order is load-bearing here.
  */
 import { chromium } from 'playwright';
 import fs from 'node:fs';
@@ -101,7 +112,7 @@ const ok = (cond, msg) => { if (!cond) fails.push(msg); return !!cond; };
    cost does not depend on what is in front of the camera. */
 const VIEW = { d: 120, yaw: 0, pitch: 6 };
 
-async function session(hash, label) {
+async function session(hash, label, driven) {
   const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1 });
   const errs = [];
   page.on('pageerror', e => errs.push(String(e.message || e)));
@@ -113,7 +124,7 @@ async function session(hash, label) {
   await page.evaluate(() => window.__game.begin());
   await page.waitForTimeout(4000);
 
-  const res = await page.evaluate(async ([v, reps, blocks, latched]) => {
+  const res = await page.evaluate(async ([v, reps, blocks, driven]) => {
     const g = window.__game;
     const r = g.renderer;
     const gl = r.getContext();
@@ -137,64 +148,51 @@ async function session(hash, label) {
       return (performance.now() - t0) / n;
     };
     const med = (a) => +a.slice().sort((x, y) => x - y)[a.length >> 1].toFixed(3);
+    const plain = () => g.renderOnce();
+    const settle = (n) => { for (let i = 0; i < n; i++) plain(); };
     const run = (fn) => {
       const a = [];
       for (let i = 0; i < blocks; i++) a.push(time(fn, reps));
       return med(a);
     };
+    const state = () => ({ pass: atmo.passInfo(), postSamples: post ? post.samples : null });
 
-    const depth = () => (post && post._sceneDepth ? post._sceneDepth() : null);
-    const plain = () => g.renderOnce();
-    const driven = () => { g.renderOnce(); atmo.renderShafts(depth(), cam); };
-
-    const out = { api: {}, timings: {}, controls: {} };
+    const out = { api: {}, timings: {}, controls: {}, toggle: {} };
     const shaftsWere = atmo.shaftInfo ? atmo.shaftInfo().enabled : true;
 
-    /* ---- ownership, read before anything can perturb it ------------------- */
-    out.pass = atmo.passInfo();
-    out.postSamples = post ? post.samples : null;
+    out.state = state();
 
-    /* ---- timings ---------------------------------------------------------- *
-       On the un-latched session this must not call renderShafts, directly or
-       indirectly, or it retires the very pass it is trying to price. */
-    atmo.setShaftQuality(2);
+    /* ---- timings, within this arm only ----------------------------------- */
+    atmo.setShaftQuality(2); settle(2);
     out.timings.shaftsOn = run(plain);
-    atmo.setShaftQuality(0);
+    atmo.setShaftQuality(0); settle(2);
     out.timings.shaftsOff = run(plain);
-    atmo.setShaftQuality(2);
-    /* Ownership again, after the shaft quality has been round-tripped. Rung 0
+    atmo.setShaftQuality(2); settle(2);
+    /* Ownership again after the shaft quality has been round-tripped. Rung 0
        makes this system stop needing a full-frame pass at all, so the target is
-       released; coming back up must re-acquire it. A frame first, because the
-       target is allocated lazily inside the composite and reading the flag
-       between the setter and the next render reports the gap, not the state. */
-    plain();
-    out.passMid = atmo.passInfo();
+       released; coming back up must re-acquire it. */
+    out.stateMid = state();
 
-    if (latched) {
-      /* ---- API contract. Latching is a one-way door, so it happens here and
-         only here, and only in the session that is already latched. --------- */
+    if (driven) {
+      /* ---- API contract ------------------------------------------------- */
       out.api.hasRenderShafts = typeof atmo.renderShafts === 'function';
       out.api.hasPassInfo = typeof atmo.passInfo === 'function';
-      out.api.sceneDepthOffered = !!depth();
+      out.api.hasSetter = typeof atmo.setExternalDriver === 'function';
+      out.api.sceneDepthOffered = !!(post && post._sceneDepth && post._sceneDepth());
 
-      /* It is called in the middle of System 7's frame, so it must not leave the
-         renderer pointed at its own target. */
+      const depth = post._sceneDepth();
       const before = r.getRenderTarget();
-      const tex = atmo.renderShafts(depth(), cam);
-      out.api.returnsTexture = !!tex;
+      out.api.returnsTexture = !!atmo.renderShafts(depth, cam);
       out.api.restoresTarget = r.getRenderTarget() === before;
       try {
         atmo.renderShafts(null, cam);
-        atmo.renderShafts(depth(), null);
+        atmo.renderShafts(depth, null);
         out.api.nullSafe = true;
       } catch (e) { out.api.nullSafe = false; }
 
-      out.timings.shaftsOnDriven = run(driven);
-
-      /* ---- the sign control ---------------------------------------------- *
-         Straight out of the half-res buffer. Half-float, so the bits come back
-         in a Uint16Array and are decoded here rather than trusted. */
-      driven();
+      /* ---- the sign control --------------------------------------------- */
+      settle(2);
+      atmo.renderShafts(post._sceneDepth(), cam);
       const rt = atmo._shaftRT ? atmo._shaftRT() : null;
       if (rt) {
         const half = (h) => {
@@ -225,136 +223,219 @@ async function session(hash, label) {
         out.controls.shaftNonFinite = bad;
         out.controls.readSize = `${cw}x${ch} of ${rt.width}x${rt.height}`;
       }
+
+      /* ---- does ownership come back? ------------------------------------ *
+         The case that was broken: the chain stops driving the march at runtime.
+         Tested twice, because the two mechanisms have different costs. */
+      settle(3);
+      if (post && post.setEnabled) {
+        /* Explicit. Must cost zero unowned frames, so ownership is read after a
+           single render rather than after a settle. */
+        post.setEnabled(false);
+        atmo.setExternalDriver(false);
+        plain();
+        out.toggle.explicit = state();
+        post.setEnabled(true); atmo.setExternalDriver(true); settle(4);
+        out.toggle.restoredAfterExplicit = state();
+
+        /* Self-heal, for a caller that does not know about the setter — which is
+           every caller that existed when this broke. Allowed one frame of
+           evidence, so it is read after three. */
+        post.setEnabled(false);
+        plain();
+        out.toggle.selfHealFrame1 = state();
+        settle(3);
+        out.toggle.selfHealed = state();
+        post.setEnabled(true); settle(4);
+        out.toggle.restoredAfterSelfHeal = state();
+      }
+    } else {
+      /* On this arm, handing the pass away cannot stick, and that is the
+         mechanism working rather than failing: nothing here drives the march, so
+         the first composite after the setter sees a whole frame with no
+         renderShafts call and correctly takes ownership back. The release is not
+         even observable — the target is allocated and released lazily inside the
+         composite, so reading the flag before the next render reports the state
+         before the setter, not after it. Both rows are recorded so a reader can
+         tell "the setter did nothing" from "the self-heal undid it", which look
+         identical in a single sample. The setter's true direction is covered on
+         arm 1, where a driver exists to make it stick. */
+      out.api.hasSetter = typeof atmo.setExternalDriver === 'function';
+      atmo.setExternalDriver(true);
+      out.toggle.handAwayNoFrameYet = state();
+      settle(3);
+      out.toggle.reclaimedBySelfHeal = state();
     }
 
     atmo.setShaftQuality(shaftsWere ? 2 : 0);
-    /* A few frames so post can re-allocate sceneRT once ownership settled: the
-       sample count is applied on the branch that draws the scene, which only
-       becomes this one after composite has returned false at least once. */
-    for (let i = 0; i < 4; i++) plain();
-    out.passAfter = atmo.passInfo();
-    out.samplesAfter = post ? post.samples : null;
+    settle(4);
+    out.stateAfter = state();
     return out;
-  }, [VIEW, REPS, BLOCKS, /handover/.test(hash)]);
+  }, [VIEW, REPS, BLOCKS, driven]);
 
   res.pageErrors = errs;
+  res.label = label;
+  res.hash = hash;
   await page.close();
-  return { label, hash, ...res };
+  return res;
 }
 
-const owned = await session('', 'A/B  pass owned (before)');
-const retired = await session(',handover=1', 'C/D  pass retired (after)');
+const shipped = await session('', 'arm 1  shipped: handed over, System 7 driving', true);
+/* `&nopost`, not `,nopost`. post.js matches its flag only after a `#` or a `&`,
+   while the numeric dials in atmosphere.js accept commas too, so a comma-joined
+   hash silently sets some flags and not others. This arm spent a run reporting
+   that a #nopost build had handed its pass away, when what had actually happened
+   is that it was never a #nopost build. */
+const owned = await session('&nopost', 'arm 2  #nopost: ownership retained here', false);
 
 /* ---- report ------------------------------------------------------------- */
 const fmt = (n) => (n == null ? '  —  ' : String(n).padStart(6));
+const passLine = (s) => {
+  const p = s.pass;
+  return `owned=${String(p.owned).padEnd(5)}` +
+    (p.owned ? ` ${p.width}x${p.height} x${p.samples} ${p.megabytesPerFrame} MiB/f` : '                        ') +
+    `  post.samples=${s.postSamples}`;
+};
+
 console.log(`\n  ${W}x${H}   backend=${CPU ? 'swiftshader' : 'gpu'}\n`);
 
-for (const s of [owned, retired]) {
-  console.log(`  ── ${s.label}  (#noadapt${s.hash})`);
-  const p = s.pass;
-  console.log(`     full-frame pass owned here : ${p.owned}` +
-    (p.owned ? `  ${p.width}x${p.height} RGBA16F x${p.samples}  ${p.megabytesPerFrame} MB/frame` : ''));
-  console.log(`     externalDriver latched     : ${p.externalDriver}`);
-  console.log(`     post.samples (scene draw)  : ${s.postSamples}`);
-  console.log(`     post.samples after settle  : ${s.samplesAfter}`);
+for (const s of [shipped, owned]) {
+  console.log(`  ── ${s.label}   (#noadapt${s.hash})`);
+  console.log(`     at rest              ${passLine(s.state)}`);
+  console.log(`     after quality cycle  ${passLine(s.stateMid)}`);
   if (s.api.hasRenderShafts != null) {
-    console.log(`     renderShafts -> texture    : ${s.api.returnsTexture}` +
-      `   restores target: ${s.api.restoresTarget}   null-safe: ${s.api.nullSafe}`);
+    console.log(`     renderShafts -> texture ${s.api.returnsTexture}` +
+      `   restores target ${s.api.restoresTarget}   null-safe ${s.api.nullSafe}`);
   }
-  console.log(`     frame ms  shafts on  ${fmt(s.timings.shaftsOn)}` +
-    `   off ${fmt(s.timings.shaftsOff)}` +
-    (s.timings.shaftsOnDriven != null ? `   on+driven ${fmt(s.timings.shaftsOnDriven)}` : ''));
+  console.log(`     frame ms   march on ${fmt(s.timings.shaftsOn)}   off ${fmt(s.timings.shaftsOff)}` +
+    `   -> march ${(s.timings.shaftsOn - s.timings.shaftsOff).toFixed(3)} ms`);
   if (s.controls.shaftMin != null) {
     console.log(`     shaft buffer  min ${s.controls.shaftMin}   max ${s.controls.shaftMax}` +
       `   non-zero ${(100 * s.controls.shaftNonZeroFrac).toFixed(1)}%` +
       `   (${s.controls.readSize}, non-finite ${s.controls.shaftNonFinite})`);
   }
+  for (const [k, st] of Object.entries(s.toggle)) {
+    console.log(`     ${k.padEnd(22)} ${passLine(st)}`);
+  }
   if (s.pageErrors.length) console.log(`     ⚠ page errors: ${s.pageErrors.slice(0, 3).join(' | ')}`);
   console.log('');
 }
 
-const A = owned.timings.shaftsOn;
-const B = owned.timings.shaftsOff;
-const C = retired.timings.shaftsOff;
-const D = retired.timings.shaftsOnDriven;
-
-console.log('  ── the saving');
-console.log(`     A  owned,   shafts on   ${fmt(A)} ms    what shipped before`);
-console.log(`     B  owned,   shafts off  ${fmt(B)} ms    A-B = march      ${(A - B).toFixed(3)} ms`);
-console.log(`     C  retired, shafts off  ${fmt(C)} ms    B-C = the target ${(B - C).toFixed(3)} ms`);
-console.log(`     D  retired, shafts on   ${fmt(D)} ms    what ships after`);
-console.log(`     net  A-D = ${(A - D).toFixed(3)} ms  (${(100 * (A - D) / A).toFixed(1)}% of frame)`);
-
-/* ---- what the bandwidth actually does, which is not what it looks like ----
- *
- * The tempting headline is the retired target's own figure — a full-frame
- * RGBA16F at four samples, ~71 MiB a frame at 1080p. That number is wrong as a
- * saving, and the column that gives it away is post.samples: 0 before, 4 after.
- *
- * Four samples on the scene draw are the only antialiasing in the frame and had
- * to be preserved, so they did not go away when this target did — they moved to
- * sceneRT, which used to be a single-sampled blit destination and is now the
- * multisampled scene target. The multisample resolve is paid either way. What is
- * genuinely gone is the *duplicate*: the second full-frame float target that the
- * blit existed to write into, and the blit itself.
- *
- * So the arithmetic below is per-pixel bytes of full-frame target traffic on
- * each side, rather than the size of the thing that was deleted. 8 bytes a
- * sample for RGBA16F colour, plus 4 for the depth texture. */
+/* Bandwidth. The "before" row is stated rather than measured, because the
+   configuration it describes — the post chain running while this system still
+   owns the pass — is no longer reachable at runtime now that ownership converges
+   to System 7 within a frame. Its two terms are the ones both arms confirm
+   individually: a full-frame RGBA16F at four samples plus a depth texture here
+   (arm 2), and a single-sampled one as a blit destination there. 8 bytes per
+   sample of colour, 4 for depth. */
 const bpp = (s) => 8 * Math.max(1, s | 0) + 4;
-const pxCount = W * H;
-const beforeB = bpp(owned.pass.samples) + bpp(owned.samplesAfter);   // mine + sceneRT
-const afterB = bpp(retired.samplesAfter);                            // sceneRT alone
-const mib = (b) => +((b * pxCount) / 1048576).toFixed(1);
-console.log('\n  ── bandwidth, counted on both sides rather than on the deleted target');
+const mib = (b) => +((b * W * H) / 1048576).toFixed(1);
+const beforeB = bpp(owned.state.pass.samples) + bpp(0);
+const afterB = bpp(shipped.state.postSamples);
+console.log('  ── bandwidth, counted on both sides rather than on the deleted target');
 console.log(`     before  ${String(beforeB).padStart(3)} B/px  ${fmt(mib(beforeB))} MiB/frame` +
-  `   (this system x${owned.pass.samples} + sceneRT x${owned.samplesAfter || 0})`);
+  `   (this system x${owned.state.pass.samples} + sceneRT x0)   [stated]`);
 console.log(`     after   ${String(afterB).padStart(3)} B/px  ${fmt(mib(afterB))} MiB/frame` +
-  `   (sceneRT x${retired.samplesAfter} only)`);
+  `   (sceneRT x${shipped.state.postSamples} only)   [measured]`);
 console.log(`     freed   ${String(beforeB - afterB).padStart(3)} B/px  ` +
   `${fmt(mib(beforeB - afterB))} MiB/frame   plus one full-frame blit pass`);
-console.log('     the multisampling relocated rather than went away, so the retired');
-console.log(`     target's own ${owned.pass.megabytesPerFrame} MiB is not the saving.\n`);
+console.log('     The four samples relocated rather than went away, so the retired');
+console.log(`     target's own ${owned.state.pass.megabytesPerFrame} MiB is not the saving.`);
+console.log('     Frame times are per-arm; arm 2 has no post chain, so they do not');
+console.log('     subtract across arms. The frame-time effect of the handover was');
+console.log('     measured at -0.04, -0.08 and +0.13 ms before the arms diverged.');
+
+/* ---- what the march costs, and why the two arms disagree by 10x ----------
+ *
+ * The same ablation — shaft quality 2 versus 0 — prices the march at about
+ * 0.26 ms on arm 1 and about 2.8 ms on arm 2. Only one of those is the march.
+ *
+ * On arm 1 the post chain owns the scene draw, so the multisampled target exists
+ * in both halves of the ablation and the only thing that changes is whether the
+ * half-res march runs. That difference is the march.
+ *
+ * On arm 2 this system owns the pass, and the pass exists only to serve the
+ * shimmer or the shafts. Switching the march off therefore switches the whole
+ * full-frame stage off with it: the ablation removes the march, the 4x
+ * multisampled target, its resolve and the blit, and attributes all four to the
+ * march. The residue — a little over 2.5 ms — is the multisample resolve, which
+ * is worth knowing on its own, because it is paid on both sides of the handover
+ * and is most of why retiring the target bought no frame time.
+ *
+ * This is the same conflation that made bench's `-post` column read 3.77 ms
+ * against a chain costing 0.4, and it is why the march has been described as
+ * costing 2.0 ms and being the largest item in the frame after the terrain
+ * shader. Measured where the target is held constant, it is roughly a tenth of
+ * that. Printed here so the two figures cannot be quoted side by side again. */
+const m1 = shipped.timings.shaftsOn - shipped.timings.shaftsOff;
+const m2 = owned.timings.shaftsOn - owned.timings.shaftsOff;
+console.log('\n  ── the march, and a warning about pricing it on the wrong arm');
+console.log(`     arm 1  ${m1.toFixed(3)} ms   target held constant -> this is the march`);
+console.log(`     arm 2  ${m2.toFixed(3)} ms   ablation also deletes the 4x target, resolve and blit`);
+console.log(`     so the 4x resolve and blit are about ${(m2 - m1).toFixed(2)} ms, paid on both`);
+console.log('     sides of the handover, which is most of why retiring the target');
+console.log('     bought no frame time.\n');
 
 /* ---- assertions --------------------------------------------------------- */
-ok(retired.api.hasRenderShafts, 'atmosphere does not expose renderShafts');
-ok(retired.api.hasPassInfo, 'atmosphere does not expose passInfo');
-ok(retired.api.sceneDepthOffered, 'post._sceneDepth() is null on the retired path');
-ok(retired.api.returnsTexture, 'renderShafts returned null with a valid depth texture');
-ok(retired.api.restoresTarget, 'renderShafts left the render target redirected');
-ok(retired.api.nullSafe, 'renderShafts threw on a null argument its contract allows');
+ok(shipped.api.hasRenderShafts, 'atmosphere does not expose renderShafts');
+ok(shipped.api.hasPassInfo, 'atmosphere does not expose passInfo');
+ok(shipped.api.hasSetter, 'atmosphere does not expose setExternalDriver');
+ok(shipped.api.sceneDepthOffered, 'post._sceneDepth() is null on the shipped path');
+ok(shipped.api.returnsTexture, 'renderShafts returned null with a valid depth texture');
+ok(shipped.api.restoresTarget, 'renderShafts left the render target redirected');
+ok(shipped.api.nullSafe, 'renderShafts threw on a null argument its contract allows');
 
-ok(owned.pass.owned === true, 'the pass was expected to be owned here and was not');
-ok(retired.pass.owned === false,
-  'THE HANDOVER DID NOT HAPPEN: the full-frame target is still allocated with #handover=1');
-ok(retired.pass.megabytesPerFrame === 0, 'retired path still reports target bandwidth');
+ok(shipped.state.pass.owned === false,
+  'THE HANDOVER DID NOT HAPPEN: the full-frame target is still allocated on a ' +
+  'normal page load with System 7 driving the march');
+ok(shipped.state.pass.megabytesPerFrame === 0, 'shipped path still reports target bandwidth');
+ok(owned.state.pass.owned === true,
+  'ownership was expected to be retained on a #nopost build and was not, so that ' +
+  'build has no multisampling and no shafts');
 
-/* Antialiasing. The sample count moves file when ownership does, so it is
-   checked on both sides and must be four on whichever side draws the scene. */
-ok(owned.pass.samples >= 4,
-  `antialiasing lost on the owned path: atmosphere target samples=${owned.pass.samples}`);
-ok(retired.samplesAfter >= 4,
-  `ANTIALIASING REGRESSION: post.samples=${retired.samplesAfter} after the handover, ` +
-  'so the scene draw is single-sampled and the only multisampling in the frame is gone');
+/* Antialiasing, on both sides of the handover. */
+ok(owned.state.pass.samples >= 4,
+  `antialiasing lost on the retained path: target samples=${owned.state.pass.samples}`);
+ok(shipped.state.postSamples >= 4,
+  `ANTIALIASING REGRESSION: post.samples=${shipped.state.postSamples} on the shipped ` +
+  'path, so the scene draw is single-sampled and the only multisampling is gone');
+
+/* Ownership must come back when the driver stops, both ways. */
+const t = shipped.toggle;
+ok(t.explicit && t.explicit.pass.owned === true,
+  'setExternalDriver(false) did not return ownership: switching the post chain off ' +
+  'at runtime leaves nobody drawing the target and nobody marching the in-scatter');
+ok(t.explicit && t.explicit.pass.samples >= 4,
+  'ownership returned without multisampling, so a runtime post toggle still costs ' +
+  'the frame its only antialiasing');
+ok(t.selfHealed && t.selfHealed.pass.owned === true,
+  'the self-heal did not fire: a caller that stops driving the march without calling ' +
+  'setExternalDriver(false) loses antialiasing and shafts for every subsequent frame');
+ok(t.restoredAfterExplicit && t.restoredAfterExplicit.pass.owned === false,
+  'the chain coming back on did not re-take ownership after the explicit release');
+ok(t.restoredAfterSelfHeal && t.restoredAfterSelfHeal.pass.owned === false,
+  'the chain coming back on did not re-take ownership after the self-heal');
+ok(owned.toggle.reclaimedBySelfHeal && owned.toggle.reclaimedBySelfHeal.pass.owned === true,
+  'the self-heal did not reclaim the pass on a build where nothing drives the march, ' +
+  'so a #nopost frame has no multisampling and no shafts');
 
 /* The correction is still subtractive, and still says something. */
-ok(retired.controls.shaftMax != null, 'could not read the shaft buffer back');
-ok(retired.controls.shaftMax <= 1e-4,
-  `SIGN CONTROL FAILED: shaft buffer max is ${retired.controls.shaftMax}, above zero. ` +
+ok(shipped.controls.shaftMax != null, 'could not read the shaft buffer back');
+ok(shipped.controls.shaftMax <= 1e-4,
+  `SIGN CONTROL FAILED: shaft buffer max is ${shipped.controls.shaftMax}, above zero. ` +
   'The correction has been made additive. It is a visibility deficit and can only ' +
   'ever remove in-scatter the fog chunk already granted — see the shader comment.');
-ok(retired.controls.shaftMin < -1e-4,
-  `the shaft buffer is empty (min ${retired.controls.shaftMin}): the march ran and ` +
+ok(shipped.controls.shaftMin < -1e-4,
+  `the shaft buffer is empty (min ${shipped.controls.shaftMin}): the march ran and ` +
   'produced nothing, so the shafts are gone even though the API returned a texture');
-ok(retired.controls.shaftNonFinite === 0,
-  `${retired.controls.shaftNonFinite} non-finite samples in the shaft buffer`);
+ok(shipped.controls.shaftNonFinite === 0,
+  `${shipped.controls.shaftNonFinite} non-finite samples in the shaft buffer`);
 
-/* Rung 0 disposes the half-res target; coming back up must not have taken the
-   full-frame one with it, in either direction. */
-ok(owned.passMid.owned === true, 'shaft quality round-trip lost the owned pass');
-ok(retired.passMid.owned === false, 'shaft quality round-trip re-allocated the retired target');
+/* Rung 0 releases the pass; coming back up must restore whatever this arm had. */
+ok(shipped.stateMid.pass.owned === false, 'quality cycle re-allocated the retired target');
+ok(owned.stateMid.pass.owned === true, 'quality cycle lost the retained pass');
 
-for (const s of [owned, retired]) {
+for (const s of [shipped, owned]) {
   ok(s.pageErrors.length === 0, `page errors on ${s.label}: ${s.pageErrors.slice(0, 2).join(' | ')}`);
 }
 
@@ -366,4 +447,4 @@ if (fails.length) {
   for (const f of fails) console.log(`   ✗ ${f}`);
   process.exit(1);
 }
-console.log('  PASS  handover complete, shafts subtractive, antialiasing intact\n');
+console.log('  PASS  handover holds, ownership returns both ways, shafts subtractive, AA intact\n');

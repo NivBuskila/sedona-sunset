@@ -1729,12 +1729,33 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
    * ever been called, this owns the pass and the march runs twice. One frame at
    * startup, against carrying the target forever.
    *
+   * It must also be releasable, which the first version of it was not, and that
+   * was a real defect rather than an untidiness. Latching on the *first* call
+   * means it stays latched after the last one, so a chain that stops driving the
+   * march at runtime — a human pressing a post toggle — left nobody drawing the
+   * multisampled target and nobody marching the in-scatter, and the frame
+   * silently lost both its antialiasing and its shafts. Page loads with the
+   * chain disabled at construction were never affected, because the latch never
+   * set; it is specifically runtime toggling that broke. setExternalDriver(false)
+   * hands ownership back, and since renderShafts re-latches, a chain that comes
+   * back on repairs itself without having to say so.
+   *
    * `#handover=1` pre-latches it. That exists because the saving had to be
    * measured before the call site existed on the other side, and it is worth
    * keeping as a switch for measuring it again: with it set, this pass is gone
    * whether or not anything is driving the march, which is the only way to price
    * the target on its own rather than the target plus the march. */
   let externalDriver = hashNum('handover', 0) > 0.5;
+  /* Pinned by the hash, which must not be undone by the self-heal below: the
+     whole point of `#handover=1` is to hold the retired state with nothing
+     driving the march, which is exactly the condition the self-heal exists to
+     treat as a fault. */
+  const HANDOVER_PINNED = externalDriver;
+  /* Has the driver called renderShafts since the last composite? The self-heal
+     turns on this rather than on the latch, because the latch says "somebody
+     took ownership once" and what matters each frame is "somebody is still
+     driving". */
+  let drivenSinceComposite = false;
 
   function releaseTarget() {
     if (!shimmer.rt) return;
@@ -1870,6 +1891,32 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
        * march through renderShafts, that is exactly what happens on the shipped
        * path — see the externalDriver note above for why it is a latch and not
        * simply `return false`. */
+      /* ---- has the driver gone away? -------------------------------------
+       *
+       * Ownership is handed over on the first renderShafts call, and the first
+       * version of that was a one-way door: it stayed handed over after the
+       * *last* call too. So a chain that stopped driving the march at runtime —
+       * a human pressing a post toggle, or bench.mjs switching the chain out for
+       * its ablation column — left nobody drawing the multisampled target and
+       * nobody marching the in-scatter, and the frame lost its antialiasing and
+       * its shafts with nothing to indicate it. bench's `-post` column read
+       * 3.77 ms against a chain that costs 0.4, because what it was actually
+       * measuring was the chain plus this system's march plus the 4x resolve,
+       * all three of which its ablation had silently deleted.
+       *
+       * setExternalDriver(false) is the explicit fix and costs no frames. This
+       * is the safety net under it, for callers that do not know to call it:
+       * if a whole frame has gone by with no renderShafts call, the driver is
+       * gone and ownership comes back. It cannot be immediate, because within a
+       * frame the composite runs before the march, so one frame of evidence is
+       * the minimum — a driver in steady state has always called it since the
+       * previous composite, and one that has stopped has not. Worst case is
+       * therefore a single unowned frame rather than every frame from now on. */
+      if (externalDriver && !drivenSinceComposite && !HANDOVER_PINNED) {
+        externalDriver = false;
+      }
+      drivenSinceComposite = false;
+
       if (!shimmer.enabled && (externalDriver || !shafts.enabled)) {
         ranPass = false;
         releaseTarget();
@@ -1947,8 +1994,31 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
      * nothing", not "something failed". The previous render target is restored
      * before returning, because this is called in the middle of somebody else's
      * frame and silently redirecting their output would be unforgivable. */
+    /* Hand ownership of the full-frame pass back, or take it away again.
+     *
+     * Call with false when a chain that has been driving renderShafts stops —
+     * a runtime post toggle, a tier that switches the chain out, a teardown.
+     * Otherwise the pass stays handed over to a driver that is no longer there,
+     * and nothing draws the multisampled target or marches the in-scatter.
+     *
+     * Two things worth knowing about the sequencing. It takes effect on the next
+     * composite() rather than immediately, because the target is allocated and
+     * released lazily inside it, so call this *before* the composite on the frame
+     * the toggle happens or that one frame goes unowned. And it does not need to
+     * be paired with a `true` on the way back: renderShafts re-latches, so a
+     * chain resuming its normal calls resumes ownership by doing so. The `true`
+     * case is offered for a driver that would rather be explicit than implicit. */
+    setExternalDriver(b) { externalDriver = !!b; },
     renderShafts(depthTexture, cam) {
       externalDriver = true;
+      /* Set on every call including the ones that supply no depth, because a
+         driver saying "nothing to add this frame" is still a driver. post.js's
+         startup handshake depends on it: on its first frame this system owns the
+         pass, so its sceneRT depth holds whatever was last cleared, and it
+         correctly passes null rather than marching against nonsense. If a null
+         call did not count as driving, that handshake would never complete and
+         the handover would deadlock on frame one. */
+      drivenSinceComposite = true;
       if (!shafts.enabled || !depthTexture || !cam) return null;
       const w = renderer.domElement.width, h = renderer.domElement.height;
       if (!w || !h) return null;
