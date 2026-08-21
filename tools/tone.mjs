@@ -51,23 +51,47 @@ export function forward(lin, exposure) {
   return c.map(x => x <= 0.0031308 ? x * 12.92 : 1.055 * Math.pow(x, 1 / 2.4) - 0.055);
 }
 
-/** sRGB back to linear scene radiance, by bisection per channel on the full chain. */
+const inv3 = (M) => {
+  const [[a, b, c], [d, e, f], [g, h, i]] = M;
+  const A = e * i - f * h, B = f * g - d * i, C = d * h - e * g;
+  const det = a * A + b * B + c * C;
+  return [[A, c * h - b * i, b * f - c * e],
+    [B, a * i - c * g, c * d - a * f],
+    [C, b * g - a * h, a * e - b * d]].map(r => r.map(x => x / det));
+};
+const IN_I = inv3(IN_M), OUT_I = inv3(OUT_M);
+
+/* The shoulder fit is a ratio of quadratics, so inverting it is one root, not a
+   search. y(0.983729x^2 + 0.432951x + 0.238081) = x^2 + 0.0245786x - 0.000090537
+   rearranges to (1 - 0.983729y)x^2 + (0.0245786 - 0.432951y)x - (0.000090537 +
+   0.238081y) = 0, and the positive root is the branch the forward curve uses. */
+const fitInv = (v) => v.map(y => {
+  const a = 1 - 0.983729 * y;
+  const b = 0.0245786 - 0.432951 * y;
+  const c = -0.000090537 - 0.238081 * y;
+  if (Math.abs(a) < 1e-9) return -c / b;
+  return (-b + Math.sqrt(Math.max(0, b * b - 4 * a * c))) / (2 * a);
+});
+
+/**
+ * sRGB back to linear scene radiance, exactly.
+ *
+ * The earlier version of this bisected on a fixed hue ray, normalising by the
+ * peak channel and solving only for the peak's magnitude. That is not an
+ * inverse: it does not round-trip. Measured on the lit rock of `sys2h` it
+ * returned a radiance whose forward image had saturation 0.770 against the
+ * 0.689 it was given, an error of 0.081 — larger than the drift it was being
+ * used to investigate, and in the same direction, because throwing away the
+ * off-peak channels discards exactly the channel coupling the shoulder applies.
+ * Every stage is invertible in closed form, so do that instead; this now
+ * round-trips a measured population to 0.000 saturation and 0.1 degrees of hue.
+ *
+ * Only clipping is unrecoverable. A channel at 255 has lost its radiance and no
+ * inverse can return it, so treat any population with clipped pixels as a floor.
+ */
 export function inverse(srgb, exposure) {
-  /* Not analytic: the ACES matrices couple the channels, so a channel's display
-     value depends on all three inputs. Bisecting the whole vector jointly on a
-     fixed hue ray is stable and accurate enough — the ray is what a scaling of
-     exposure preserves anyway, which is exactly the question being asked. */
-  const dir = srgb.map(x => x <= 0.04045 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4));
-  const peak = Math.max(...dir, 1e-6);
-  const unit = dir.map(x => x / peak);
-  let lo = 0, hi = 64;
-  for (let i = 0; i < 90; i++) {
-    const m = (lo + hi) / 2;
-    const got = forward(unit.map(x => x * m), exposure);
-    if (Math.max(...got) < Math.max(...srgb)) lo = m; else hi = m;
-  }
-  const k = (lo + hi) / 2;
-  return unit.map(x => x * k);
+  const lin = srgb.map(x => x <= 0.04045 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4));
+  return mul(IN_I, fitInv(mul(OUT_I, lin))).map(x => x * 0.6 / exposure);
 }
 
 export const hsv = (c) => {

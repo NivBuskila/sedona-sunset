@@ -21,6 +21,67 @@ a real sunset photograph of Sedona. Not stylized, not low-poly, not "good for a 
   user games on the same machine, so the running app must not saturate CPU or GPU. Keep
   draw calls under ~150 and triangles under ~3M. Use instancing for anything repeated.
 
+## Performance budget, measured on the target machine
+
+Reference numbers from a comparable Three.js scene on this exact RTX 4060, at 1600×900:
+**6.6 M triangles across ~1050 draw calls cost 6–9 ms**, and a ten-pass post chain
+(half-res volumetric raymarching, SSAO, bloom, defocus, grade) came to **under 1 ms total**.
+
+Two conclusions, both load-bearing:
+
+- **Geometry is not this project's problem.** At 2.19 M triangles and ~50 draw calls we are
+  an order of magnitude inside a budget that scene met comfortably. Do not spend effort on
+  LOD or draw-call reduction without a measurement saying otherwise.
+- **The cost is fragment shading and bandwidth.** Terrain was doing 23 unconditional
+  texture fetches per ground pixel; the shimmer pass draws the whole scene into RGBA16F at
+  4× multisampling, which is ~66 MB of colour plus ~33 MB of depth written and resolved
+  every frame at 1080p.
+
+Three measurement traps, each paid for once already:
+
+- Watching framerate cannot work against a capped loop.
+- `glFinish()` in the page returns when Chromium hands over the command buffer, not when
+  the hardware drains it. The symptom was "adding post-processing made the frame faster".
+- Sequential A-then-B comparison charges the driver's clock ramp to whichever ran first.
+
+`tools/shadercost.mjs` counts texture fetches statically, charging helpers transitively to
+their call sites. `tools/bench.mjs` runs a real-GPU ablation table and the tier ladder.
+`src/perf.js` is the quality-tier governor: its top tier is byte-identical to the scene as
+built, and under a software rasteriser it pins that tier and disables adaptation so
+captures are unaffected. Adaptation descends multiple steps at once (one notch at a time
+left a struggling machine half a minute from playable), lifts only after a long clean run
+so it settles rather than hunts, and queues tier changes rather than applying them at once
+— a re-mesh stall lands on a machine already struggling, and a long enough stall trips the
+display driver's watchdog.
+
+## One weather system
+
+Three systems reference the wind and they must agree. Ownership is split so nobody has to
+guess:
+
+- **Direction** is `WIND`, exported from `src/juniper.js` — (0.94, 0.34) normalised, the
+  direction the wind blows *toward*. It runs across the wash rather than along it, chosen
+  so the hero juniper's lean reads in its framing.
+- **Timing and strength** belong to the audio system: `window.__game.audio.wind` for
+  current state, `windAt(t)` analytic for any time, `gusts(from, to)` for the schedule.
+
+So the sand you see moving, the sand drifted against the upstream face of clasts, the lean
+of the tree, and the wind you hear are one system. Anything that needs a different wind
+should move the shared constant, not keep a private one.
+
+## Page boot cost is a real user-facing problem
+
+`tools/boot.mjs` measures it: **370 seconds on four cores**, because every texture in the
+scene is written texel by texel in JavaScript before the first frame. That is why the
+harness's two-minute readiness window started failing every capture, and `tools/shoot.mjs`
+now waits a budget sized to the real boot.
+
+Faster hardware hides it but does not fix it — a person opening this page still waits.
+Procedural generation is a hard requirement so the work cannot be removed, but it can be
+moved: generate at lower resolution first and refine, defer textures not needed for the
+first frame, move generation into workers, or cache into IndexedDB after the first visit.
+Unowned and unscheduled; worth doing before this is ever shown to anyone.
+
 ## Working alongside other agents
 
 Several systems are built in parallel, so more than one agent may be editing the tree at
@@ -65,6 +126,27 @@ Saturation on rock is **solved** as of `sys2e` — mean 0.62–0.67, p95 0.87–
 on lit rock, inside the real-photograph range and if anything conservative. Do not push it
 up and do not let a later round pull it down. The remaining colour work is a hue rotation,
 not a saturation change.
+
+**Measure the target's own population, and check the provenance of a target before
+declaring a regression against it.** The rock figures above were reported as a
+pre-lighting measurement and used to call System 4 a regression. They are not
+pre-lighting. They come from `sys2h`, captured 08:58, and System 4's sun, spectral sky,
+SH probe and exposure 1.15 were all committed by 07:45 — so the frame that defines
+"colour is correct" already had the new light in it. The genuinely pre-lighting frames
+are `sys2f`, `sys2g` and `sys3a`, and on the lit rock of `wall_lit` they measure hue
+**−2.4°** at B/G **1.04**: the magenta cast this document spends a section on. The
++16.5° was never reachable under the provisional light, and no lighting change can be a
+regression away from a number that lighting produced.
+
+The second half of the same error is population. These are targets "on lit rock", but
+`sat.mjs`'s `wall_lit` window is a fixed rectangle holding both sunlit and self-shadowed
+faces, and under a directional key those two are different materials to the metric. On
+the brightest 40% — the lit population the target describes — `sys4c` reads sat **0.626**
+against a target of 0.627, hue **+19.4°** between the stated +16.5° and the real cluster
+of +22–31°, V **0.600** which is the first frame in the project inside the 0.59–0.73
+reference band, and B/G **0.644** inside the real 0.32–0.90. On the whole rectangle the
+same frame reads 0.538, because the shadowed half is now a luminous violet rather than a
+dark magenta. Quote the window with the number, or the two are not comparable.
 
 **Surface structure has a measured target too, and it is the one that decides photorealism.**
 `tools/grad.mjs` reports the mean absolute one-pixel luminance gradient over a region — the
@@ -119,6 +201,36 @@ So the wash floor moves on at roughly 6/10 and **terrain is revisited once real 
 and grading exist**, when the remaining defects can be judged against a scene that is
 actually lit.
 
+### The near-field aerial term is the largest colour lever in the scene, and it is not lighting
+
+Whoever owns System 5 should read this; it was found while diagnosing a colour drift blamed
+on System 4, and it is measured rather than argued.
+
+`installAerial` replaces three's fog chunks, so the airlight applies to *everything*
+fogged at *every* distance, scaled by `scene.fog.density` — 0.0019/m. At the `wall_lit`
+wall, 46 m out, that is roughly **7% of the pixel arriving as inscatter**. The source
+function is near-neutral by construction (`RAY`'s is flat grey, the dust's is `SKY_TINT`
+within 6% of neutral), and `BETA_R` is [0.327, 0.570, 1.000] — so what lands on a red
+rock is grey light weighted toward the channel that red rock has *least* of. HSV
+saturation is (max − min)/max, and this raises min.
+
+That is aerial perspective behaving correctly in kind, and much too strongly in the near
+field. Driving System 5's own CPU mirror, `aerialModel`, with the exactly-recovered linear
+radiance behind `sys2h`'s lit rock predicts, at 40 m, sat 0.627 and B/G 0.660. The frame
+measures **0.626 and 0.644**. Nothing was fitted; the constants are System 5's and the
+radiance is System 2's. It also explains why the effect looked like a lighting bug: the
+lift is a fixed radiance, so its *relative* size grows as the surface darkens, which is
+why shaded rock lost 0.16 of saturation where lit rock lost 0.06, and why the far wall in
+`wash_mid` now measures grad/L 0.020 — flat plastic, well under the 0.026 floor — while
+its `L` reads a bright 0.354.
+
+Two things follow. **The density is System 4's number but the near-field falloff is
+System 5's model**, and cutting the density globally would take the far field with it,
+which `tools/layers.mjs` measured as correct; the fix belongs in the column, not the
+scale. And **the aerial term must be measured on near geometry, not only on the far
+ridge** — it was calibrated on a butte a kilometre out, where it is right, and nobody
+looked at what the same constants did to a wall at forty metres.
+
 ### Deferred terrain defects, carried forward from System 1
 
 Not forgiven, only deferred. Revisit these after System 4 and System 7.
@@ -146,6 +258,12 @@ Not forgiven, only deferred. Revisit these after System 4 and System 7.
 - No talus cone; no mud-crack plate relief.
 - Shadow ambient is warm grey and red-dominant — needs a hemispherical skylight term so
   shadows go cool/violet. **System 4 owns this.**
+- **Ground `hf/lf` regressed when the new lighting landed** and needs re-checking once
+  System 4 settles: `wash_mid` floor 0.58 → 0.50, `bend` sand 0.62 → 0.54, `ground` floor
+  0.47 → 0.45. No ground surface was edited in that window, so the cause is almost certainly
+  the light rather than the material.
+- The pale confetti specks on the wash floor and the lavender sand sheet are System 1
+  albedos reacting to the new skylight — recheck both after System 4.
 
 ### A texture pinned to a world scale goes to wax at distance
 
@@ -271,6 +389,16 @@ sends work confidently in the wrong direction. Three real examples:
 - A "footsteps are quieter than the wind" figure compared step level against a gust peak
   measured over a window that contained the footsteps — a comparison of the footsteps with
   themselves.
+- `tools/tone.mjs`'s `inverse` was not one. It normalised a pixel by its peak channel and
+  bisected for that peak's magnitude alone, so it recovered a radiance on the wrong ray:
+  fed the lit rock of `sys2h` it returned something whose forward image had saturation
+  0.770 against the 0.689 it was given. An 0.081 error, in the same direction as the drift
+  it was being used to investigate, in the one tool whose entire purpose is to separate
+  exposure from pigment. The channel coupling it discarded *is* the effect being modelled.
+  Every stage of ACES is invertible in closed form — the shoulder is a ratio of quadratics,
+  so it is one root, not a search — and it now round-trips a measured population to 0.000
+  saturation. **Round-trip an instrument on real data before using it.** A one-line
+  assertion would have caught this.
 
 Two habits follow. Have a measurement report its own noise floor so a reader can see
 whether a result clears it. And when a statistic is aggregated over a whole take, ask what
@@ -287,9 +415,39 @@ wrong* and unreliable about *why*. Always re-diagnose from magnified crops befor
 a stated cause — including one stated by the coordinator.
 
 1. Terrain and wash path
-2. Red rock buttes
+2. Red rock buttes — **COMPLETE on its metric**, pending a post-lighting review. Three
+   build rounds, two independent critiques (3.5 → 5.5 photorealism, 5.0 → 6.5
+   reads-as-Sedona). The `hf/lf` gate of 0.55 is met on every rock region: `wall_shade`
+   0.38 → 0.59, `wall_lit` midwall 0.48 → 0.55, all others 0.55–0.61. Colour is measured
+   correct and **must not be touched** — hue +16.5° against real Cathedral Rock at +15.6°,
+   saturation 0.627/0.667 against a real range of 0.441–0.659. Those two figures are
+   `sys2h`'s `wall_lit` and `wall_shade` windows, captured 08:58 and therefore *under*
+   System 4's light, not before it; see the provenance note in the colour section before
+   using them to judge a lighting change.
+
+   Still short, for the post-lighting pass: fine horizontal lamination still runs further
+   edge-to-edge than a real face; varnish plates read as soft dark smudges rather than
+   mineral tongues; `wall_lit` midwall sits exactly on the gate at 0.55 rather than
+   comfortably inside it. The last of these should improve on exposure alone.
 3. The juniper
-4. Lighting and sun
+4. Lighting and sun — spectral sky, SH skylight probe and two-cascade shadows are in and
+   the rock is in band (see the provenance note above). **The open defect is the wash
+   floor, and it is System 4's.** Between `sys2f` and the first frame under the new light,
+   every ground region lost a factor of 3.5–3.9 in `L`: `wash_mid` floor 0.395 → 0.122,
+   `bend` sand 0.432 → 0.136, `ground` floor 0.224 → 0.118. That is far larger than the
+   `hf/lf` drop it was reported as, and it is not a fill washing out microshadow — in the
+   same frames the `wash_mid` *wall* went the other way, 0.193 → 0.354. Wall bright, floor
+   dark, at a floor/wall ratio of 0.34: the floor is in the bank's shadow, which at 8°
+   elevation is 140 m long from a 20 m bank.
+
+   Two consequences worth separating. The shadow *level* is fine — 0.34 of the lit
+   neighbour, against a brief asking for 0.15–0.25 — so the fill is not the problem. And
+   `hf/lf` falling from 0.58 to 0.52 on a floor that moved into shade is the **correct**
+   response, not a regression: a hemispherical source fills one-pixel relief that a raking
+   beam would carve, so shaded granular ground genuinely measures flatter. Chasing that
+   ratio by weakening the skylight would be chasing physics. The thing to fix is that the
+   floor the metric samples is shaded at all, which is a question of where the sun is
+   relative to the wash axis, not of how the ground is lit once it is there.
 5. Heat haze and atmosphere — including **wind-driven sand at ground level** (saltation):
    low ribbons of grains skipping across the wash floor, snaking around cobbles and pouring
    off the lee edge of bank crests. Distinct from the airborne dust in the sunbeams, and
@@ -299,7 +457,18 @@ a stated cause — including one stated by the coordinator.
    all one weather system. Keep it sparse and intermittent; gusts, not a sandstorm. The
    desert stillness is the feature, and the sand should mostly be still with occasional
    movement that makes the stillness noticeable.
-6. Sound design
+6. Sound design — **COMPLETE.** Three build rounds, two independent critiques (6.5 → 7.5
+   realism, 8.5 on "the quiet is the feature"). Final state: quiet bed with a real HF floor
+   (8 kHz at −90.5 dBFS, 6.6% of 6–12 kHz bins at the analysis floor, down from 45.8%),
+   88% of windows below −45 dBFS, band-decoupled gusts with 13.4 dB of spectral diversity,
+   geometry-derived wall reflections out to 220 ms, a coyote with a 19.3% glissando and
+   5.3 Hz vibrato, canyon wren, raven, and flow-proportional aeolian edge tones.
+   **Nobody in this pipeline can hear it** — every judgement is from measurement and
+   spectrograms, so the aesthetic result is unverified until a human listens.
+   The wind is the weather authority: `window.__game.audio.wind` is a read-only view,
+   `windAt(t)` is analytic, and `gusts(from, to)` returns the burst schedule. **System 5
+   must drive its visible blowing sand from these**, so the sand you see and the wind you
+   hear are one system.
 7. Post-processing and polish
 
 ## The `window.__game` capture API
