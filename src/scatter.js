@@ -524,22 +524,7 @@ export function buildScatter(terrain, tex) {
       `);
 
     shader.fragmentShader = ('varying float vFar;\nvarying float vFarN;\n' +
-      'varying vec3 vSeat;\nuniform vec3 uSunDir;\n' +
-      'float gShadow = 1.0;\n' + shader.fragmentShader)
-      /* Same trick as the terrain: catch the shadow term as the lighting chunk
-         looks it up, because getShadowMask() lives in a chunk meshphysical does
-         not include. The macro is defined after the wrapper body so the call
-         inside it still resolves to the real function. */
-      .replace('#include <shadowmap_pars_fragment>', /* glsl */`
-        #include <shadowmap_pars_fragment>
-        #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
-          float capShadow(sampler2D sm, vec2 sz, float si, float sb, float sr, vec4 sc) {
-            float s = getShadow(sm, sz, si, sb, sr, sc);
-            gShadow = min(gShadow, s);
-            return s;
-          }
-          #define getShadow(a, b, c, d, e, f) capShadow(a, b, c, d, e, f)
-        #endif`)
+      'varying vec3 vSeat;\nuniform vec3 uSunDir;\n' + shader.fragmentShader)
       .replace('#include <normal_fragment_maps>', /* glsl */`
         #include <normal_fragment_maps>
         normal = normalize(mix(normal, vSeat, vFarN * 0.92));
@@ -554,21 +539,30 @@ export function buildScatter(terrain, tex) {
         material.specularColor *= 0.55;
         material.specularF90 *= 0.16;
       `)
-      /* Matching airlight to the terrain's, and for the same reason: a shaded
-         clast facet reflects the sky through its own low blue albedo and comes
-         back red, so the cool cast has to be added outside the albedo product.
-         Unlike the floor a clast's dark side is mostly turned away from the sun
-         rather than shadow-mapped, so the mask is the lit fraction of the
-         normal and not getShadowMask alone — otherwise every pebble's own
-         shaded half, which is most of what is actually visible of it at this
-         sun angle, would be missed. */
-      .replace('#include <aomap_fragment>', /* glsl */`
-        #include <aomap_fragment>
-        float aFace = 1.0 - smoothstep(0.0, 0.45, dot(normal, normalize(vec3(
-          viewMatrix * vec4(uSunDir, 0.0)))));
-        reflectedLight.indirectDiffuse +=
-          vec3(0.012, 0.024, 0.090) * max(aFace, 1.0 - gShadow) * 0.85;
-      `);
+      /* ---- the blue chips were here ----
+       * This was an additive Rayleigh-spectrum constant, vec3(0.012, 0.024,
+       * 0.090) * 0.85, applied at full strength to every facet turned away from
+       * the sun. terrain.js carried the identical term and removed it for the
+       * identical reason; the copy on the clasts outlived it by a round and
+       * became the frame's loudest defect once the floor was lit.
+       *
+       * Measured rather than argued. Inverting the tone curve on the chips in
+       * `sys4d_wash_mid` — mean rgb(67,62,98) at exposure 1.15 — recovers a
+       * linear radiance of (0.063, 0.056, 0.109). The term alone contributes
+       * (0.010, 0.020, 0.077): seventy per cent of the blue channel, and
+       * subtracting it leaves (0.052, 0.036, 0.033), a warm brown at B/G 0.92,
+       * which is what a shaded red clast under a violet sky is supposed to be.
+       * So the chips are not a pinned normal and not a billboard — the geometry
+       * and the seating are correct, and a magnified crop shows ordinary
+       * tabular clasts with a correctly-lit warm sliver on their sunward facet
+       * and this constant flooding everything else.
+       *
+       * Nothing has been lost by deleting it. The reasoning that justified it
+       * was written against a light rig with no sky term at all; System 4's SH
+       * probe now carries the sky's own irradiance, so an away-from-sun facet
+       * receives a blue-dominant fill through its own albedo, which is the
+       * physically correct amount of violet for a rock that throws three
+       * quarters of the blue away. */;
   };
 
   const meshes = [];
