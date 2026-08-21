@@ -2330,6 +2330,47 @@ export function makeTerrainMaterial(tex) {
       '#include <shadowmap_pars_fragment>', /* glsl */`
       #include <shadowmap_pars_fragment>
       #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
+        /* ---- one bilinear coverage sample, for the footprint taps only ----
+         * The four taps below exist to estimate the *mean* shadow coverage over
+         * a pixel's footprint. They were each a full getShadow, and a full
+         * getShadow is sixteen texture2DCompare calls under PCF_SOFT and
+         * seventeen under PCF — so the wrapper was eighty comparisons per light
+         * and, with two directional lights in this scene, a hundred and sixty
+         * per ground fragment. tools/fillcost.mjs prices the whole terrain
+         * fragment shader at 24.2 ms of a 30.7 ms frame at 1440p, and
+         * tools/terrcost.mjs puts 23 of those 24 in these five lookups: the
+         * forty-one texture fetches this file's own comments worry about are
+         * about two milliseconds between them.
+         *
+         * The redundancy is geometric. PCF_SOFT already integrates a 4x4 texel
+         * neighbourhood, and these offsets are 2.6 texels — so five kernels
+         * covering roughly nine texels square were being sampled eighty times.
+         * A bilinear 4-tap at each offset samples the same neighbourhood at a
+         * quarter of the cost, and it is the right kind of estimator for what
+         * this term wants: an *interpolated* coverage, not a binary test, so
+         * the average of the five stays smooth and the salt-and-pepper this
+         * wrapper was built to remove does not come back. A single hard
+         * texture2DCompare per offset would be cheaper again and is exactly the
+         * bimodal sample the wrapper exists to avoid.
+         *
+         * The centre tap is left as the stock getShadow, untouched, so the
+         * penumbra it carries — sized from the sun's angular diameter one
+         * commit ago — is bit-identical. */
+        float footTap(sampler2D sm, vec2 sz, float si, float sb, vec4 sc) {
+          vec3 c = sc.xyz / sc.w;
+          c.z += sb;
+          float sh = 1.0;
+          if (c.x >= 0.0 && c.x <= 1.0 && c.y >= 0.0 && c.y <= 1.0 && c.z <= 1.0) {
+            vec2 tx = vec2(1.0) / sz;
+            vec2 f = fract(c.xy * sz + 0.5);
+            vec2 uv = c.xy - f * tx;
+            sh = mix(mix(texture2DCompare(sm, uv, c.z),
+                         texture2DCompare(sm, uv + vec2(tx.x, 0.0), c.z), f.x),
+                     mix(texture2DCompare(sm, uv + vec2(0.0, tx.y), c.z),
+                         texture2DCompare(sm, uv + tx, c.z), f.x), f.y);
+          }
+          return mix(1.0, sh, si);
+        }
         float footShadow(sampler2D sm, vec2 sz, float si, float sb, float sr, vec4 sc) {
           float s = getShadow(sm, sz, si, sb, sr, sc);
           /* Kept for the airlight term below. getShadowMask() only exists in the
@@ -2364,11 +2405,24 @@ export function makeTerrainMaterial(tex) {
              there — which also keeps it out of non-uniform control flow, since
              these are implicit-LOD fetches. */
           float wide = 1.0 - gFoot;
-          vec2 t = (2.6 * wide / sz) * sc.w;
-          float m = getShadow(sm, sz, si, sb, sr, sc + vec4( t.x,  t.y, 0.0, 0.0))
-                  + getShadow(sm, sz, si, sb, sr, sc + vec4(-t.x,  t.y, 0.0, 0.0))
-                  + getShadow(sm, sz, si, sb, sr, sc + vec4( t.x, -t.y, 0.0, 0.0))
-                  + getShadow(sm, sz, si, sb, sr, sc + vec4(-t.x, -t.y, 0.0, 0.0));
+          /* ---- and the near field does not pay for it at all ----
+             At wide = 0 the offsets are zero and the mix weight is zero, so the
+             four taps return s and are then discarded: the block is an exact
+             identity there, not an approximation of one, and skipping it cannot
+             move a pixel. The branch is safe with implicit-LOD fetches inside it
+             because a shadow map has no mip chain — three builds it with
+             NearestFilter and generateMipmaps off — so there is no derivative
+             for divergent flow to leave undefined. That is the one condition
+             under which this file is allowed a gated fetch without handing the
+             gradients in, and it is worth stating rather than assuming. */
+          float m = 4.0 * s;
+          if (wide > 0.02) {
+            vec2 t = (2.6 * wide / sz) * sc.w;
+            m = footTap(sm, sz, si, sb, sc + vec4( t.x,  t.y, 0.0, 0.0))
+              + footTap(sm, sz, si, sb, sc + vec4(-t.x,  t.y, 0.0, 0.0))
+              + footTap(sm, sz, si, sb, sc + vec4( t.x, -t.y, 0.0, 0.0))
+              + footTap(sm, sz, si, sb, sc + vec4(-t.x, -t.y, 0.0, 0.0));
+          }
           return gRake * mix(s, (s + m) * 0.2, wide * 0.85);
         }
         #define getShadow(a, b, c, d, e, f) footShadow(a, b, c, d, e, f)
