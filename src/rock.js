@@ -1429,7 +1429,7 @@ float lum = mix(1.0, lumC / uRockLum, 0.88)
    sixth. It is also the only term that carries the *lamina* structure at a scale
    where laminae are a few pixels rather than a few tens, which is the band the
    close-up was missing between the grain and the bedding. */
-          * mix(1.0, rkA2 / uRockLum, 0.26 + 0.58 * grainF)
+          * mix(1.0, rkA2 / uRockLum, 0.32 + 0.62 * grainF)
 /* Same reasoning as the cavity weight below: a shaded face has no direct light
    for a normal to modulate, so on those facets the grain has to come through as
    tone and occlusion or it does not come through at all. This is the tone half. */
@@ -1596,7 +1596,13 @@ albedo *= 1.0 + ironTop * 0.13 * sTerm;
 
 /* A resistant bed is better cemented, so it is a little paler and a little
    smoother, and the soft bed under it is recessed and holds shadow. */
-float sbTone = (sbR - 0.5) * 0.16;
+/* 0.16 down to 0.10. A sub-bed's tone step is real but it is the wrong end of the
+   spectrum to spend contrast on: it is a broad horizontal band, so every unit of
+   it lands squarely in the low-frequency term the ratio divides by, and it is also
+   the thing that makes a face read as brushed veneer — dozens of parallel constant
+   tone stripes running edge to edge. What should carry a bed at any distance is the
+   shadow line under its lip, which is geometry and is untouched here. */
+float sbTone = (sbR - 0.5) * 0.10;
 albedo *= 1.0 + sbTone;
 
 /* ---- vertical jointing, below the scale the mesh can cut ----
@@ -1822,7 +1828,7 @@ vec3 wN = normalize(mix(gN, nDet, relW));
    the reason set out below — these are millimetres of relief and at grazing
    incidence they occlude each other completely rather than sparkling. */
 vec3 gNrm = domApply((gr.gb - 0.5) * 1.9, gN);
-wN = normalize(mix(wN, gNrm, 0.88 * (0.06 + 0.94 * sTerm)));
+wN = normalize(mix(wN, gNrm, 0.93 * (0.06 + 0.94 * sTerm)));
 /* Only the soft contacts, which the mesh deliberately did not step, and only as a
    profile whose derivative is bounded. Everything hard is geometry now: a step
    function put through dFdx is a one-pixel black line beside a one-pixel white
