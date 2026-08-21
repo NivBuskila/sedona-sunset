@@ -247,6 +247,25 @@ const keys = Object.create(null);
 addEventListener('keydown', e => { keys[e.code] = true; });
 addEventListener('keyup', e => { keys[e.code] = false; });
 canvas.addEventListener('click', () => canvas.requestPointerLock());
+
+/* Number keys jump to the eight framings the capture harness shoots, which are
+   also simply the best places to stand — they were chosen to cover the long view
+   up the wash, the ground underfoot, a lit wall, a shaded one, the bend and the
+   sun gap. Routed through the same walkTo/lookAt the harness uses, so a jump
+   lands exactly where a capture would and cannot drift from it. */
+const SPOTS = [
+  { key: 'Digit1', d: 8,   yaw: 0,   pitch: -4 },  // low, entering the wash
+  { key: 'Digit2', d: 46,  yaw: 0,   pitch: 0 },   // mid wash, toward the sun
+  { key: 'Digit3', d: 62,  yaw: 34,  pitch: 3 },   // the juniper
+  { key: 'Digit4', d: 92,  yaw: -22, pitch: 2 },   // the bend
+  { key: 'Digit5', d: 120, yaw: 0,   pitch: 6 },   // the sun gap
+];
+addEventListener('keydown', e => {
+  const spot = SPOTS.find(s => s.key === e.code);
+  if (!spot) return;
+  api.walkTo(spot.d);
+  api.lookAt(spot.yaw, spot.pitch);
+});
 addEventListener('mousemove', e => {
   if (document.pointerLockElement !== canvas) return;
   // syncCamera applies yaw negated (rotation.y = -yaw), so mouse-right has to
@@ -262,7 +281,12 @@ addEventListener('resize', () => perf.resize());
 function step(dt) {
   const f = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
   const r = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
-  const speed = (keys.ShiftLeft || keys.ShiftRight) ? 3.4 : 1.55;
+  /* 1.55 m/s is a real walking pace and it is the default because the scene is
+     meant to be walked. Shift is a jog; Shift with Ctrl is a frank cheat for
+     covering the wash quickly when you are looking for something. */
+  const sprint = keys.ShiftLeft || keys.ShiftRight;
+  const turbo = sprint && (keys.ControlLeft || keys.ControlRight);
+  const speed = turbo ? 12 : sprint ? 4.2 : 1.55;
 
   let ax = 0, az = 0;
   if (f || r) {
