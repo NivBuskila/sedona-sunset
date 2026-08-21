@@ -851,8 +851,11 @@ export function makeGrit(size = 256) {
            per octave. A weathered face is as much holes as grains, and the holes
            are the darker half of the stipple — a layer that is only ever brighter
            than the surface under it reads as dust, not as granularity. */
-        const ws = pworley(u * G.f * 1.37 + 11.0, v * G.f * 1.37, G.f * 1.37 | 0,
-                           G.seed + 401, 1.0);
+        /* The frequency has to be an integer and the same integer the period
+           argument gets, or the field does not close across the tile and the
+           whole map picks up a diagonal shear at the seam. */
+        const fs = Math.round(G.f * 1.37);
+        const ws = pworley(u * fs + 11.0, v * fs, fs, G.seed + 401, 1.0);
         let sock = 0;
         if (ws.id < 0.30) {
           const rs = 0.19 + (ws.id / 0.30) * 0.21;
@@ -863,8 +866,8 @@ export function makeGrit(size = 256) {
            modulation has whatever spectrum it is given, unlike slope, which the
            reciprocal of the wavelength already tilts upward. Weight rises with
            octave index. */
-        const wt = 0.30 + 0.35 * L;
-        tFine += ((gnorm - 0.35) * 0.26 - sock * 0.30) * wt;
+        const wt = 0.17 + 0.20 * L;
+        tFine += ((gnorm - 0.35) * 0.24 - sock * 0.26) * wt;
       }
 
       /* The last octave before the texel, as hashes rather than packings, since
@@ -876,7 +879,7 @@ export function makeGrit(size = 256) {
       const fine1 = hash2(x, y, 9143) - 0.5;
       hh += fine2 * 0.115 + fine1 * 0.072;
       h[i] = hh;
-      tone[i] = clamp(0.5 + tFine + fine2 * 0.13 + fine1 * 0.115, 0, 1);
+      tone[i] = clamp(0.5 + tFine + fine2 * 0.070 + fine1 * 0.058, 0, 1);
     }
   }
 
@@ -884,13 +887,19 @@ export function makeGrit(size = 256) {
      spectrum for the same reason everything else here does; a wide-radius
      occlusion is a low-frequency wash and would spend amplitude in the band that
      is already too loud. */
-  const ao = aoFromHeight(h, size, 1, 3, 5.0);
+  /* Strength 2.0, not 5.0. At 5.0 this channel came back very nearly binary —
+     hard black dots on white — and a hard black dot is precisely the failure
+     being fixed one scale up: a flat dark spot with no gradation, which is what
+     the eye reads as dirt on the lens rather than as a crevice. An occlusion term
+     is a gradation by definition; if it saturates it has stopped describing
+     geometry. */
+  const ao = aoFromHeight(h, size, 1, 3, 2.0);
   /* Slope, not relief: this map is read at every scale, so what has to be right
      is the angle. With the spectrum flattened, the finest octaves dominate the
      central difference, so the strength comes down — at 3.0 the summed field
      produced normals lying past fifty degrees over most of the map, which is
      shot blast rather than sandstone. */
-  const nrm = normalFromHeight(h, size, 1.9);
+  const nrm = normalFromHeight(h, size, 1.05);
   const buf = new Uint8Array(N * 4);
   for (let i = 0; i < N; i++) {
     buf[i * 4] = clamp(tone[i], 0, 1) * 255;
