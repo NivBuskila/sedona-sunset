@@ -162,6 +162,9 @@ const v3 = (a) => `vec3(${f(a[0])}, ${f(a[1])}, ${f(a[2])})`;
 
 let installed = false;
 
+/** What the patch actually baked, so a probe can prove it is not all zeros. */
+export const AERIAL_DIAG = { installed: false };
+
 /**
  * Replace three's fog chunks with the airlight model.
  *
@@ -205,6 +208,15 @@ export function installAerial(sun, fogColor) {
      AMB/FWD are readable as "airlight at the anti-sun" and "extra at the sun"
      rather than as arbitrary gains against a per-steradian phase function. */
   const nB = 1 / hg(G_BROAD, 1), nN = 1 / hg(G_NARROW, 1);
+
+  Object.assign(AERIAL_DIAG, {
+    installed: true,
+    sun: [d.x, d.y, d.z],
+    tint, fogL: L, jRay, jSky, jSun,
+    betaR: BETA_R.map((x) => x * R_GAIN),
+    betaM: BETA_M.map((x) => x * M_GAIN),
+    H: H_DUST,
+  });
 
   const PARS = /* glsl */`
 #ifdef USE_FOG

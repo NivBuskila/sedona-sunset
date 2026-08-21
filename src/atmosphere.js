@@ -136,7 +136,7 @@ class Wind {
     const base = Math.min(0.36, Math.max(0.02,
       0.105 + 0.075 * Math.sin(t * 0.0431 + 1.3) + 0.045 * Math.sin(t * 0.0177 + 0.4) +
       0.03 * Math.sin(t * 0.0091 + 2.7)));
-    let gsum = 0, sal = 0;
+    let gsum = 0, sal = 0, cw = 0;
     for (let i = 0; i < this.gusts.length; i++) {
       const gu = this.gusts[i];
       if (t < gu.t0 || t > gu.t0 + gu.dur) continue;
@@ -145,18 +145,24 @@ class Wind {
       const flutter = 0.86 + 0.14 * Math.sin(t * 2.31 + gu.t0);
       const e = gu.peak * s * s * flutter;
       gsum += e;
-      /* Threshold and knee are set against the peak distribution System 6
-         actually draws from — 0.16 + 0.74 r^2.1, so a median gust peaks near
-         0.33 and the strong tail reaches 0.9. A threshold at 0.22 with the
-         knee reaching saturation by 0.67 puts a median gust at a third of full
-         drive and a hard one at everything, which is the shape wanted: most
-         gusts stir a little sand, a few strip the crests. An earlier gate at
-         0.30 with a squared knee put a median gust at 0.03 and produced a
-         capture set with no visible sand in it at all. */
-      const gated = Math.min(1, (e - 0.22) / 0.45);
-      if (gated > 0) sal += Math.pow(gated, 1.6) * (0.25 + 0.75 * gu.char);
+      cw += e * (0.25 + 0.75 * gu.char);
     }
     const g = Math.min(1, base + gsum);
+    /* The threshold is on the *total* wind, not on the gust alone, because the
+       thing with a threshold in it is the shear velocity at the bed and the bed
+       cannot tell which part of the flow over it is bed wind and which is gust.
+       Gating the gust term on its own — the first version here — meant a gust
+       riding on a strong bed did no more than the same gust on a calm one, and
+       it put the mobile fraction of each gust into a narrow spike around its
+       peak: of the eight standard viewpoints, none landed in one.
+       0.26 against a bed that runs 0.02-0.36 and gusts that add up to 0.9 puts
+       the bed below threshold at all times and most of a gust above it. The
+       character weighting rides along, so a rumble through the wash moves less
+       than a rasp off a ledge of the same strength. */
+    if (gsum > 1e-6) {
+      const gated = Math.min(1, (g - 0.26) / 0.34);
+      if (gated > 0) sal = Math.pow(gated, 1.4) * (cw / gsum);
+    }
     const heading = WIND_HEADING + 0.26 * Math.sin(t * 0.021 + 0.8);
     o.gust = g;
     /* A floor under the still state, from the bed wind rather than from any
@@ -241,7 +247,16 @@ float aHG(float g, float c) {
    the Mie lobe that produces it. These are the individual grains you can pick
    out inside it, and the count and tile are set to put a comfortable scatter of
    them across the frame rather than to build a volume. */
-const DUST_TILE = 60;
+/* The tile has to be small, and the first two attempts at it were not.
+ * A 60 m cube around the camera puts 96% of its motes behind, beside or beyond
+ * the viewer: measured, a 13,000-mote field at that size delivered forty motes
+ * into the frustum and changed 0.05% of the pixels — invisible, and no amount
+ * of extra brightness would have fixed it, because the problem was that there
+ * was nothing there. Real backlit dust is a *near-field* phenomenon anyway; a
+ * thirty-micron grain at fifteen metres subtends nothing. So the tile is the
+ * few metres in front of the face where motes are actually resolvable, and the
+ * count is set for a few hundred of them in frame. */
+const DUST_TILE = 24;
 
 function buildDust(count, sunDir, sunTint) {
   const g = new THREE.BufferGeometry();
@@ -329,19 +344,19 @@ void main() {
   vec3 e1 = normalize(cross(uSun, up));
   vec3 e2 = cross(e1, uSun);
   float b1 = dot(p, e1), b2 = dot(p, e2);
-  float shaft = aNoise(vec2(b1 * 0.075, b2 * 0.045));
+  float shaft = aNoise(vec2(b1 * 0.16, b2 * 0.10));
   shaft = 0.12 + 1.90 * smoothstep(0.30, 0.80, shaft);
   /* Air below the bank tops is in the wall's shadow at this solar elevation,
      so the shaft only exists where the light can reach. */
   shaft *= mix(0.22, 1.0, smoothstep(0.6, 5.5, h));
 
   vA = dens * shaft * uDrive;
-  vA *= 1.0 - smoothstep(TILE * 0.32, TILE * 0.48, dist);
+  vA *= 1.0 - smoothstep(TILE * 0.28, TILE * 0.46, dist);
   vPhase = dot(normalize(toEye), -uSun);
 
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;
-  float px = uPix * aux.y * 0.015 / max(0.35, dist);
+  float px = uPix * aux.y * 0.010 / max(0.35, dist);
   /* Below a pixel a point stops shrinking and starts having to lose energy
      instead, or the field gets brighter with distance as more motes crowd into
      each pixel and each one still paints a whole one. */
@@ -466,7 +481,12 @@ function smoothstep(a, b, x) {
  * the arcs are allowed to happen, and a hard threshold on the wind for whether
  * they happen at all. The threshold is what keeps the desert still.
  */
-const SALT_TILE = 84;
+/* Same lesson as the dust tile, in two dimensions instead of three: an 84 m
+   square at 1.6 grains per square metre put 72 changed pixels on the screen in
+   the middle of a measured gust. A saltation sheet is dense — thousands of
+   grains a square metre in a real ribbon — and it is near-field, because a
+   half-millimetre grain past thirty metres is nothing. */
+const SALT_TILE = 60;
 
 function buildSaltation(count, ground, sunTint) {
   const g = new THREE.BufferGeometry();
@@ -568,11 +588,11 @@ void main() {
   float dist = distance(wpos, uCam);
 
   vA = moving * avail * (0.35 + 0.65 * arc) * (1.0 + lee * 0.8);
-  vA *= 1.0 - smoothstep(TILE * 0.26, TILE * 0.46, dist);
+  vA *= 1.0 - smoothstep(TILE * 0.28, TILE * 0.46, dist);
 
   vec4 mv = modelViewMatrix * vec4(wpos, 1.0);
   gl_Position = projectionMatrix * mv;
-  float px = uPix * aux.z * 0.016 / max(0.30, dist);
+  float px = uPix * aux.z * 0.020 / max(0.30, dist);
   gl_PointSize = max(0.9, px);
   vA *= min(1.0, px / 0.9);
 }`,
@@ -585,7 +605,7 @@ void main() {
   float d = length(gl_PointCoord - 0.5);
   float a = vA * smoothstep(0.5, 0.15, d);
   if (a < 0.002) discard;
-  gl_FragColor = vec4(uTint * uLevel, a * 0.75);
+  gl_FragColor = vec4(uTint * uLevel, a * 0.95);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`,
@@ -846,8 +866,8 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
   const ground = bakeGround(terrain, path);
   const bakeMs = performance.now() - t0;
 
-  const dust = buildDust(13000, sunDir, sunTint);
-  const salt = buildSaltation(11000, ground, sunTint);
+  const dust = buildDust(26000, sunDir, sunTint);
+  const salt = buildSaltation(30000, ground, sunTint);
   scene.add(dust, salt);
 
   const shimmer = new Shimmer(renderer, camera);
@@ -860,7 +880,16 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
 
   const W = { gust: 0, sal: 0, dirX: 0, dirZ: 1, speed: 0.5, heading: WIND_HEADING };
   let clock = wind.CAP_LO;          // the atmosphere's own time, in audio-clock seconds
-  let live = false;                 // true once the loop is running freely
+  /* Frozen means "the harness put us here". The contract requires that two
+     walkTo(46) calls give identical pixels, and the harness's own sequence is
+     walkTo, wait 400 ms with the loop running, then render — so a clock that
+     kept ticking through that wait would put the dust somewhere different every
+     time, and the first measurement of this found exactly that: 8.8% of pixels
+     differing between two captures of one viewpoint.
+     Freezing on walkTo costs a human nothing, because a human never calls it —
+     CONTRACT.md is explicit that the first-person controls and walkTo are
+     separate paths — and the first metre they walk clears it anyway. */
+  let frozen = false;
 
   function applyWind() {
     const d = dust.material.uniforms, s = salt.material.uniforms;
@@ -899,9 +928,14 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
   setClock(wind.captureTime(0));
 
   return {
-    /** Advance the live clock. Called from the render loop only. */
-    update(dt) {
-      live = true;
+    /**
+     * Advance the live clock. Called from the render loop only.
+     * @param {number} dt
+     * @param {boolean} moving  is the player actually walking
+     */
+    update(dt, moving) {
+      if (frozen && !moving) return;
+      frozen = false;
       let now = clock + dt;
       try { const t = audio.time; if (typeof t === 'number' && t > 0) now = t; } catch (e) {}
       wind.pump(now);
@@ -913,7 +947,7 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
      * only place determinism is required.
      */
     setWalk(d) {
-      live = false;
+      frozen = true;
       setClock(wind.captureTime(d));
     },
     /**
@@ -953,9 +987,17 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
     setHidden(b) { dust.visible = !b; salt.visible = !b; },
     _diag: {
       bakeMs,
+      sunDir: [sunDir.x, sunDir.y, sunDir.z],
+      capWindow: [wind.CAP_LO, wind.CAP_HI],
+      /* The saltation drive at each of the eight standard capture distances,
+         so "is there sand in the set" is answerable without rendering it. */
+      salAt: (ds) => ds.map((d) => {
+        const t = wind.captureTime(d), w = wind.at(t, {});
+        return { d, t: +t.toFixed(2), gust: +w.gust.toFixed(3), sal: +w.sal.toFixed(3) };
+      }),
       dust: dust.geometry.attributes.position.count,
       salt: salt.geometry.attributes.position.count,
-      get wind() { return { ...W, clock, live }; },
+      get wind() { return { ...W, clock, frozen }; },
       gusts: () => wind.gusts.length,
     },
   };

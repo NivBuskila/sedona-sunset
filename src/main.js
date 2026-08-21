@@ -131,22 +131,9 @@ scene.add(sky);
 const { sun, sunNear, probe: skyProbe } = buildLights();
 scene.add(sun, sun.target, sunNear, sunNear.target, skyProbe);
 
-/* System 5, part one: the flat exponential veil becomes a two-species airlight
-   with a stratified dust layer, so distance and *height* both haze. Patches the
-   fog chunks, so it has to run before the first compile and after the beam
-   exists, which is here. */
-installAerial(sun, scene.fog.color);
-
 /* System 6. Silent until a gesture resumes the context, and inert if the
    browser has no audio at all — it must never be able to stop the scene. */
 const audio = createAudio({ camera, canvas, path });
-
-/* System 5, part two: dust in the light, sand on the floor, and the heat
-   shimmer pass. Built after the audio because the blowing sand is driven by
-   System 6's gust schedule and mirrors it at construction. */
-const atmo = buildAtmosphere({
-  scene, camera, renderer, terrain, path, sun, audio: audio.api,
-});
 
 /* ── player ────────────────────────────────────────────────────────────── */
 
@@ -195,6 +182,21 @@ placeAt(0);
 player.yaw = path.headingAt(0);
 syncCamera();
 syncShadow();
+
+/* ── System 5: the air ─────────────────────────────────────────────────────
+ *
+ * Both of these read the beam's direction off the light rather than off a
+ * constant, so they inherit System 4's sun wherever it ends up — which is why
+ * they are down here and not up beside buildLights(). A DirectionalLight is
+ * born at the origin with its target at the origin; the direction only exists
+ * once the shadow rig has placed it, four lines up. Installed before the first
+ * renderOnce() at the bottom of this file, which is when the fog chunks the
+ * aerial patch rewrites are actually compiled.
+ */
+installAerial(sun, scene.fog.color);
+const atmo = buildAtmosphere({
+  scene, camera, renderer, terrain, path, sun, audio: audio.api,
+});
 
 /* ── first-person controls (human only; never touched by walkTo) ───────── */
 
@@ -354,7 +356,7 @@ function frame(t) {
   last = t;
   step(dt);
   audio.update(dt, player);
-  atmo.update(dt);
+  atmo.update(dt, Math.hypot(player.vx, player.vz) > 0);
   renderOnce();
   const inst = 1 / Math.max(1e-4, dt);
   fpsSmoothed = fpsSmoothed ? fpsSmoothed * 0.9 + inst * 0.1 : inst;
