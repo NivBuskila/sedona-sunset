@@ -299,6 +299,36 @@ const CDF_R = cdf(MIX_BOULDER);
    a sprinkle. */
 const CLASSES = [
   {
+    /* ---- the matrix, which the bed did not have ----
+     * "No fine grit at the smallest scale… there is nothing between the smallest
+     * instanced clast and the substrate texture, so the bed has no matrix." That
+     * is a gap of more than a decade in grain size: gravel started at 24 mm and
+     * the next thing down was the dirt map's grain at a millimetre or two, with
+     * nothing in between, so every pebble sat on what looked like poured mortar
+     * rather than on the coarse sand a real one is bedded in.
+     *
+     * Granules and very coarse sand, 6 to 22 mm. They are sub-pixel past about
+     * ten metres, which is fine — their job is entirely in the near and middle
+     * field, where the eye is close enough to ask what the pebbles are resting
+     * on. Held tight to the channel (uMax 12 rather than 18) because spreading
+     * the same count over the terraces would halve the density in the one place
+     * it is needed, and given no shadow: at this size the shadow they cast is
+     * smaller than a shadow-map texel, so it costs a caster pass and buys
+     * nothing but acne. */
+    name: 'granule', kind: 'angular', variants: 3, count: 26000, uMax: 12,
+    flat: 0.54, bevel: 7, aspect: [0.70, 1.52], sizeP: 1.35,
+    rMin: 0.006, rMax: 0.022, maxSlope: 0.62, shadow: false, orient: 'surface',
+    imbricate: 0.34, sink: [0.50, 0.94], deepSink: 0.30, lith: CDF_T, tint: 1.0,
+    scour: false,
+    /* Follows the bed rather than the bars. Coarse sand is what the flood drops
+       last and it goes everywhere the water slowed, so this is deliberately the
+       flattest weight in the file — the sorting field will still gather it,
+       since granule sits at the fine end of gRank and is pushed into the
+       hollows the cobbles are pulled out of. */
+    weight: (fc) => (fc.chan * 0.85 + fc.bar * 0.95 + fc.terr * 0.45)
+                  * (1 - fc.bare * 0.55) * (1 - fc.pan) * (1 - fc.sheet * 0.6),
+  },
+  {
     /* Angular, like everything above it. Every clast below cobble size used to be a
        smooth ellipsoid, and a bed of ellipsoids under a hull-faceted cobble layer
        reads as two different worlds in one frame. The faceted shape language works
@@ -309,7 +339,16 @@ const CLASSES = [
        from three shapes is a repeat the eye finds even at gravel scale, and this
        is the class that covers the floor. Two more draw calls. */
     name: 'gravel', kind: 'angular', variants: 5, count: 16500, uMax: 18,
-    flat: 0.50, bevel: 8,
+    /* Bevel 8 to 20, and the same move on cobble and pavement. The critique is
+       "perfect spheroids and flat crackers… you have faceted shape language in
+       the boulder classes, extend it down", and it is literally this number: a
+       boulder gets 38 bevel points and a gravel got 8, so the small end of the
+       population was a hull of sixteen points, which at any size reads as a
+       blob. The points straddle the box surface, so each one is a facet with a
+       chipped arête beside it, and that is what angular-to-subrounded looks like.
+       Geometry is not this project's constraint — 2.7 M against a 6.6 M
+       reference — so the cheapest realism available is being bought here. */
+    flat: 0.50, bevel: 20,
     /* Plan aspect spread, per class. Every clast in the scene used to be drawn
        from one narrow band, 0.88 to 1.18 in plan, so the whole population shared
        a shape as well as an orientation — named by a critic as "small clasts are
@@ -341,7 +380,7 @@ const CLASSES = [
        named is that a clast sits on undisturbed ground, and it is a tell at gravel
        scale as much as at cobble scale — this is the size class that covers the
        floor, so it is where the read is won or lost. */
-    scour: true, scourFrom: 0.40, scourTail: false, fillet: 0.34,
+    scour: true, scourFrom: 0.22, scourTail: true, fillet: 0.58,
     /* Density contrast raised hard, which is the other half of the same
        complaint — "uniform clast density, no flow-sorted bars, stringers or
        armoured lag surfaces". The terms were already the right terms; they were
@@ -359,7 +398,7 @@ const CLASSES = [
        faces and chipped rectilinear corners, and it comes to rest broad-face
        down. Ellipsoids read as potatoes however they are textured. */
     name: 'cobble', kind: 'angular', variants: 4, count: 3600, uMax: 18,
-    rMin: 0.070, rMax: 0.190, flat: 0.42, bevel: 16, maxSlope: 0.50, shadow: true,
+    rMin: 0.070, rMax: 0.190, flat: 0.42, bevel: 24, maxSlope: 0.50, shadow: true,
     aspect: [0.74, 1.48],
     imbricate: 0.84, sink: [0.54, 0.98], deepSink: 0.32, lith: CDF_T, tint: 1.0,
     orient: 'surface', scour: true, scourFrom: 0.12, scourTail: true, fillet: 0.62,
@@ -374,7 +413,7 @@ const CLASSES = [
        field that is a paving stone — one of them landed in the ground framing
        and took that region's one-pixel gradient down by a quarter on its own.
        Desert pavement is a mosaic of hand-sized fragments, not flagstones. */
-    rMin: 0.055, rMax: 0.150, flat: 0.50, bevel: 17, maxSlope: 0.52, shadow: true,
+    rMin: 0.055, rMax: 0.150, flat: 0.50, bevel: 26, maxSlope: 0.52, shadow: true,
     imbricate: 0, sink: [0.35, 0.62], lith: CDF_L, tint: 0.82, orient: 'surface',
     /* desert pavement: weathered angular fragments left on the abandoned
        terrace after the fines blew out from between them */
@@ -902,8 +941,24 @@ export function buildScatter(terrain, tex) {
            instead, which costs no extra geometry and cannot misregister. Narrow
            — a third of a radius — because it is a contact, not a shadow. */
         float contact = mix(0.46, 1.0, smoothstep(-0.40, 0.06, vUp));
-        reflectedLight.indirectDiffuse *= mesoAO * contact;
-        reflectedLight.indirectSpecular *= mesoAO * contact;
+        /* ---- floored, because three occlusion terms with no floor made holes ----
+         * cCav, mesoAO and contact all multiply the indirect term and none of
+         * them had a lower bound, so the worst case was 0.34 * 0.224 * 0.46 =
+         * 0.035 of the dome. On a sunlit bed that is invisible. On a shaded bank,
+         * where the incident fill is already at its lowest, it takes the result
+         * below what eight bits can represent: large flat clasts rendered at
+         * literal 0,0,0 and were reported as holes punched through the terrain.
+         * Verified by ablation — removing the product entirely removes the holes
+         * from both bend and far_220, and note that the frame's true-black
+         * *count* barely moves, because most of it is vegetation silhouette. The
+         * defect had to be looked at, not counted.
+         * The floor goes on the product rather than on the terms, which keeps the
+         * bedding cue intact everywhere it was not broken. It is also the right
+         * shape physically: a crown that is exposed at all sees a good part of the
+         * sky, because that is what being exposed means. */
+        float occ = max(mesoAO * contact, 0.34);
+        reflectedLight.indirectDiffuse *= occ;
+        reflectedLight.indirectSpecular *= occ;
       `)
       /* ---- the blue chips were here ----
        * This was an additive Rayleigh-spectrum constant, vec3(0.012, 0.024,
@@ -1285,63 +1340,25 @@ export function buildScatter(terrain, tex) {
 
   /* ── placement of one instance ── */
   function emit(cl, bucket, x, y, z, rad, lith, rand, th, n, bankF = 0, grad = 0) {
-    if (cl.imbricate > 0 && rand() < cl.imbricate) {
-      /* Imbrication: platy clasts stack like roof shingles, their flat faces
-         dipping upstream and their long axes across the flow. It is the single
-         most recognisable signature of water transport, and it is free. */
-      fwd.set(Math.sin(th), 0, -Math.cos(th));            // up-wash = upstream
-      right.set(Math.cos(th), 0, Math.sin(th));
-      const dip = 0.20 + rand() * 0.24;                    // ~11 to 25 degrees
-      by.copy(n).multiplyScalar(Math.cos(dip)).addScaledVector(fwd, Math.sin(dip)).normalize();
-      bx.copy(right).addScaledVector(by, -right.dot(by)).normalize();
-      bz.crossVectors(bx, by);
-      basis.makeBasis(bx, by, bz);
-      quat.setFromRotationMatrix(basis);
-      /* Widened from +-20 to +-32 degrees about the dip axis. Imbrication is a
-         real and strongly preferred orientation and it is staying at three
-         quarters of the bed, but a *perfectly* shared long axis is a fabric
-         measurement, not a photograph: real imbricated gravel scatters by twenty
-         or thirty degrees around the mean, and the scatter is what stops the bed
-         reading as a tiled roof. */
-      spin.setFromAxisAngle(by, (rand() - 0.5) * 1.12);
-      quat.premultiply(spin);
-    } else if (cl.orient === 'random') {
-      /* A block that spalled off a wall and bounced down an apron comes to rest
-         on whichever facet it happened to land on — usually a broad one, hence
-         the bias toward the surface normal, but sometimes propped against its
-         neighbours at a steep angle. Fully uniform rotations look tumbled in a
-         barrel; seating them all flat leaves every broad face pointing at the
-         sky, which is what read as scattered cardboard. This is neither. */
-      quat.setFromUnitVectors(up, n);
-      spin.setFromAxisAngle(up, rand() * Math.PI * 2);
-      quat.multiply(spin);
-      /* Pulled back again, and further for the tabular classes. A plate tilted
-         even thirty degrees presents its thin edge to the camera as a knife-edged
-         sliver wherever the ground falls away under it, and one of those in the
-         near field was described as "a paper-thin knife-edged wing floating over
-         the sand". The thinner the clast, the less tilt it can carry before its
-         silhouette stops being a rock. Blocks in a real apron are wedged against
-         each other at shallow angles in any case, not propped on end. */
-      const tilt = Math.pow(rand(), 1.6) * (cl.squat ? 0.34 : 0.60);
-      const ta = rand() * Math.PI * 2;
-      spin.setFromAxisAngle(bx.set(Math.cos(ta), 0, Math.sin(ta)), tilt);
-      quat.multiply(spin);
-    } else {
-      /* Broad face down, with only a few degrees of wobble. A tabular clast that
-         split along a bedding plane has a stable face and it lands on it. */
-      quat.setFromUnitVectors(up, n);
-      spin.setFromAxisAngle(up, rand() * Math.PI * 2);
-      quat.multiply(spin);
-      spin.setFromAxisAngle(bx.set(1, 0, 0), (rand() - 0.5) * 0.44);
-      quat.multiply(spin);
-      spin.setFromAxisAngle(bz.set(0, 0, 1), (rand() - 0.5) * 0.44);
-      quat.multiply(spin);
-    }
-
+    /* ---- discs and blades, which are what imbricate ----
+     * "Perfect spheroids", said the critic, and the population was near-equant:
+     * yf ran 0.82 to 1.23 against a class flattening of 0.5, so the typical
+     * gravel was two thirds as thick as it was wide. A stone that shape has no
+     * broad face to lie on, which is why three quarters of the bed was nominally
+     * imbricated and the imbrication was reported as absent — a dip of twenty
+     * degrees on a near-sphere is not visible on anything.
+     * Real gravel is a mixture of blades, discs and equant fragments, and it is
+     * the platy fraction that stacks like roof shingles. So flatten that fraction
+     * properly and let it carry the fabric, rather than tilting everything a
+     * little and hoping. Imbrication is gated on it for the same reason: a disc
+     * imbricates, a ball does not, and a ball tilted upstream is just a tilted
+     * ball. */
+    const platy = rand() < 0.52;
     /* Fallen sandstone is bedded, so it breaks squat and tabular rather than
        equant. A block as tall as it is wide, sat on a slope, is a tent — and a
        slope of tents is the exact silhouette of scattered folded card. */
     const yf = cl.squat ? 0.44 + rand() * 0.30
+             : platy ? 0.40 * (1 + rand() * 0.55)
              : (cl.kind === 'angular' ? 0.82 : 0.70) * (1 + rand() * 0.5);
 
     /* ---- burial, measured against thickness rather than radius ----
@@ -1394,10 +1411,119 @@ export function buildScatter(terrain, tex) {
      * and occasionally emits a shard. */
     const flatY = (cl.kind === 'angular' ? cl.flat : cl.flatten) || 1;
     const hTrue = halfH * flatY;
+    /* ---- how far a stone can tilt before an edge lifts clear of the bed ----
+     * The large flat clasts came out standing proud with a black void under one
+     * edge, and the cause is that the wobble applied to a seated clast is a
+     * constant while the thickness that has to absorb it is not. A plate of
+     * radius r tilted by a lifts its rim by r*sin(a); if that exceeds the burial
+     * the far edge hangs in the air, and at plus or minus eighteen degrees on a
+     * 30 cm slab that is nine centimetres of lift against about six of burial.
+     * So the tilt a clast is allowed is a property of its own aspect: roughly
+     * the angle whose tangent is its thickness over its radius. An equant cobble
+     * can sit at any angle it likes and a bedding-split plate essentially cannot,
+     * which is also just true of real ones. */
+    const tiltCap = Math.atan2(hTrue * 1.7, rad);
+    if (cl.imbricate > 0 && rand() < cl.imbricate * (platy ? 1.0 : 0.30)) {
+      /* Imbrication: platy clasts stack like roof shingles, their flat faces
+         dipping upstream and their long axes across the flow. It is the single
+         most recognisable signature of water transport, and it is free. */
+      fwd.set(Math.sin(th), 0, -Math.cos(th));            // up-wash = upstream
+      right.set(Math.cos(th), 0, Math.sin(th));
+      /* Clamped by the same aspect rule: imbrication lifts the downstream edge,
+         and in a real bed that edge rests on the next stone. Nothing here
+         simulates the next stone, so a dip steeper than the clast is thick
+         hangs over open ground and reads as floating rather than as fabric. */
+      const dip = Math.min(0.20 + rand() * 0.24, tiltCap);
+      by.copy(n).multiplyScalar(Math.cos(dip)).addScaledVector(fwd, Math.sin(dip)).normalize();
+      bx.copy(right).addScaledVector(by, -right.dot(by)).normalize();
+      bz.crossVectors(bx, by);
+      basis.makeBasis(bx, by, bz);
+      quat.setFromRotationMatrix(basis);
+      /* Widened from +-20 to +-32 degrees about the dip axis. Imbrication is a
+         real and strongly preferred orientation and it is staying at three
+         quarters of the bed, but a *perfectly* shared long axis is a fabric
+         measurement, not a photograph: real imbricated gravel scatters by twenty
+         or thirty degrees around the mean, and the scatter is what stops the bed
+         reading as a tiled roof. */
+      spin.setFromAxisAngle(by, (rand() - 0.5) * 1.12);   // about the dip axis, so it costs no lift
+      quat.premultiply(spin);
+    } else if (cl.orient === 'random') {
+      /* A block that spalled off a wall and bounced down an apron comes to rest
+         on whichever facet it happened to land on — usually a broad one, hence
+         the bias toward the surface normal, but sometimes propped against its
+         neighbours at a steep angle. Fully uniform rotations look tumbled in a
+         barrel; seating them all flat leaves every broad face pointing at the
+         sky, which is what read as scattered cardboard. This is neither. */
+      quat.setFromUnitVectors(up, n);
+      spin.setFromAxisAngle(up, rand() * Math.PI * 2);
+      quat.multiply(spin);
+      /* Pulled back again, and further for the tabular classes. A plate tilted
+         even thirty degrees presents its thin edge to the camera as a knife-edged
+         sliver wherever the ground falls away under it, and one of those in the
+         near field was described as "a paper-thin knife-edged wing floating over
+         the sand". The thinner the clast, the less tilt it can carry before its
+         silhouette stops being a rock. Blocks in a real apron are wedged against
+         each other at shallow angles in any case, not propped on end. */
+      const tilt = Math.min(Math.pow(rand(), 1.6) * (cl.squat ? 0.34 : 0.60), tiltCap);
+      const ta = rand() * Math.PI * 2;
+      spin.setFromAxisAngle(bx.set(Math.cos(ta), 0, Math.sin(ta)), tilt);
+      quat.multiply(spin);
+    } else {
+      /* Broad face down, with only a few degrees of wobble. A tabular clast that
+         split along a bedding plane has a stable face and it lands on it. */
+      quat.setFromUnitVectors(up, n);
+      spin.setFromAxisAngle(up, rand() * Math.PI * 2);
+      quat.multiply(spin);
+      const wob = Math.min(0.22, tiltCap * 0.75);
+      spin.setFromAxisAngle(bx.set(1, 0, 0), (rand() - 0.5) * 2.0 * wob);
+      quat.multiply(spin);
+      spin.setFromAxisAngle(bz.set(0, 0, 1), (rand() - 0.5) * 2.0 * wob);
+      quat.multiply(spin);
+    }
+
     let sink = hTrue * (cl.sink[0] + rand() * (cl.sink[1] - cl.sink[0]));
     if (cl.deepSink && rand() < cl.deepSink) sink = hTrue * (0.74 + rand() * 0.16);
     sink = Math.min(sink, hTrue * 0.90);
-    sink -= grad * rad * 0.55;
+    /* ---- and the slope correction has to be capped, or it undoes the burial ----
+     * A stone rests on the highest ground beneath it rather than on the ground
+     * under its centre, so seating it on a slope needs raising by roughly its
+     * half-width times the gradient. That is right, and uncapped it was a
+     * catastrophe, because the two quantities are measured against different
+     * lengths: the burial is a fraction of the clast's *thickness* and the
+     * correction is a fraction of its *radius*, and a tabular clast is three or
+     * four times wider than it is thick.
+     *
+     * Measured on the floor over the 0.28 m baseline this actually samples —
+     * median gradient 0.248, p90 0.831, p99 1.771 — against a median gravel whose
+     * whole burial is 1.3 to 2.4 cm:
+     *
+     *   gradient   correction   as a share of the burial
+     *   median      0.68 cm      about a third of it
+     *   p90         2.29 cm      all of it
+     *   p99         4.87 cm      twice the clast's entire height
+     *
+     * So a tenth of the floor had gravel sitting completely proud or floating
+     * clear of the ground, and everywhere else a third of the burial was gone.
+     * That is why "no burial" came back as a critique in the same round the
+     * burial was supposedly fixed, and it got worse when the 0.1-1 m band went
+     * into the height field, because that raised the gradient at this baseline
+     * everywhere. Capped at a third of the thickness, with a floor under the
+     * result so that no clast is ever seated on top of the bed.
+     *
+     * And on reflection the correction had the wrong *sign*, not merely the
+     * wrong magnitude. "A stone rests on the highest ground beneath it" is true
+     * of a stone dropped on a plane it is not aligned with — but every branch
+     * above seats the clast on the local surface normal, so the alignment has
+     * already happened and there is nothing left to raise it for. Subtracting
+     * again was compensating twice for something done once.
+     * What the normal genuinely cannot see is roughness finer than the baseline
+     * it is sampled over, 28 to 49 cm depending on class, and that roughness
+     * leaves gaps *under* the clast rather than beneath one edge. Burying a
+     * little deeper on rough ground closes them, so the residual term is added.
+     * Small, and capped, because the failure mode on this side is the shard.
+     */
+    sink += Math.min(grad * rad * 0.18, hTrue * 0.22);
+    sink = Math.min(Math.max(sink, hTrue * 0.34), hTrue * 0.95);
     /* Per-instance value spread, times a per-class factor: talus is dusty and
        sits in the wall's own shadow half the day, and pale blocks at that scale
        read as builders' rubble unless they are knocked back. */
