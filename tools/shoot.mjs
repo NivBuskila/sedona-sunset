@@ -40,7 +40,21 @@ const VIEWS = [
   { name: 'sun_gap',    d: 120, yaw: 0,    pitch: 6 },
 ];
 
-const views = only ? VIEWS.filter(v => only.split(',').includes(v.name)) : VIEWS;
+/* The wash runs 340 m and every one of the eight framings above sits inside its
+   first third, so roughly two thirds of the walk has never appeared in a capture
+   and has never been critiqued. These four cover the rest of it. They are kept
+   out of VIEWS deliberately: the eight are the comparison set that every measured
+   figure in this project is quoted against, and silently widening it would orphan
+   all of them. Shoot these with `--far`. */
+const FAR_VIEWS = [
+  { name: 'far_170', d: 170, yaw: 0,   pitch: 2 },
+  { name: 'far_220', d: 220, yaw: 0,   pitch: 2 },
+  { name: 'far_270', d: 270, yaw: 14,  pitch: 2 },
+  { name: 'far_320', d: 320, yaw: 0,   pitch: 4 },
+];
+
+const pool = args.includes('--far') ? [...VIEWS, ...FAR_VIEWS] : VIEWS;
+const views = only ? pool.filter(v => only.split(',').includes(v.name)) : pool;
 
 const shotsDir = path.join(DIR, 'shots');
 fs.mkdirSync(shotsDir, { recursive: true });
