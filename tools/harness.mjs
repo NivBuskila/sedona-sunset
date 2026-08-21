@@ -216,7 +216,16 @@ async function acquireLock(timeoutMs = 45 * 60 * 1000) {
 }
 
 export async function run(opts, body) {
-  const releaseLock = await acquireLock();
+  /* The lock serialises *rendering*, because concurrent captures contend for the
+     same four cores and make each other slower without making the machine any
+     safer. A probe that renders no pixels — the audio probe drives an
+     OfflineAudioContext and reads numbers back — is not what the lock protects
+     against, and queueing it behind a queue of eight-view captures blocked it
+     for over two hours. Such a probe may pass `lock: false`.
+
+     It still boots the page, which is not free, so this is not a general escape
+     hatch: use it only when nothing is drawn repeatedly. */
+  const releaseLock = opts?.lock === false ? () => {} : await acquireLock();
   const { width = 1280, height = 720, waitReady = true, extraArgs = [], hash = '',
           /* Which HTML to load. Defaults to the server's own `/` → index.html, so
              nothing changes for an ordinary run. `GAME_FILE` exists so a risky
