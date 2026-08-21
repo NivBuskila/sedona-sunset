@@ -41,9 +41,13 @@
  *
  *   #high #medium #low #potato   pin a tier and stop adaptation
  *   #scale=0.8                   pin the render scale
- *   #fps=120                     cap the loop; 0 or absent means uncapped
+ *   #fps=120                     cap the loop, and adapt toward that rate
+ *   #target=200                  adapt toward a rate without capping the loop
  *   #perf                        live overlay: tier, scale, cpu/gpu ms, calls
  *   #noadapt                     leave the tier alone but keep the readout
+ *
+ * F3 toggles the overlay at any time, which is the only way to read a number
+ * off this scene without running a tool.
  */
 import * as THREE from 'three';
 

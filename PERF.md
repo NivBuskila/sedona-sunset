@@ -503,7 +503,107 @@ by hand. (I have not run this either — it needs a browser window.)
 
 ## 7. Measurements after the change
 
-See the run log at the bottom of this file.
+### The reference, from the last capture before this pass
+
+`shots/sys4b_*`, captured 11:04, which is System 4's lighting work and includes
+everything up to `c7d22c5` and none of this pass:
+
+```
+file                        region      grad     grad@4   hf/lf   L mean  L sd
+sys4b_wall_lit              midwall    0.0110   0.0190    0.58   0.159   0.030
+                            upper      0.0123   0.0216    0.57   0.148   0.040
+sys4b_wall_shade            face       0.0137   0.0228    0.60   0.134   0.037
+sys4b_wash_mid              wall       0.0067   0.0114    0.59   0.366   0.032
+                            floor      0.0134   0.0258    0.52   0.121   0.039
+
+sat   wall_lit rock lit 0.515   wall_shade rock 0.493
+hue   wall_lit 12.6°  midwall 13.3°   wall_shade 11.6°
+```
+
+Every rock region is at or above the 0.55 gate. Two things to flag that are not
+mine and that somebody should look at: **saturation is 0.515/0.493 against the
+0.627/0.667 recorded in `CONTRACT.md`, and hue is 12.6° against +16.5°.** Both
+drifted under the lighting and atmosphere work of the last few passes. The
+contract numbers are stale, not the code; I am recording it here because the
+gate as written now reads as failing and the cause is upstream of this pass.
+
+`shots/sys4b_*` is therefore the right comparison for my change — not the
+contract's absolute figures, which are measuring a different lighting rig.
+
+### What is established
+
+**The shaders compile and the scene renders.** `src/main.js` calls `renderOnce()`
+*before* it assigns `window.__game`, with the comment "compile everything before
+the harness starts timing". So a shader that failed to compile would throw there,
+`__game` would never appear, and the harness would time out waiting for it. Three
+separate runs got past that point and printed `boot`, which means every program
+in the scene — including the rewritten terrain fragment shader with its six
+`texture2DGradEXT` sites — compiled and drew a frame.
+
+The alias is confirmed present in the installed three (0.180.0):
+`#define texture2DGradEXT textureGrad` is unconditional in `prefixFragment` for
+every WebGL2 GLSL1 program, so this needs no extension handling. Macro names
+match whole identifiers, so the `#define texture2D texture` that precedes it in
+the same prefix does not interfere.
+
+**`tools/wallprobe.mjs`, 5.5 seconds, no browser:**
+
+```
+  mpp     grad     grad@4   hf/lf   L mean  note
+ 0.020  0.0073   0.0105    0.70   0.370   close face  (wall_shade)
+ 0.090  0.0057   0.0085    0.67   0.370   mid wall    (wall_lit)
+ 0.350  0.0056   0.0083    0.68   0.370   far plane   (sun_gap)
+```
+
+0.67–0.70 against a gate of 0.55, at every footprint. This is the rock map
+spectrum shaded through a real mip pyramid, and `hf/lf` is a property of those
+maps far more than of anything the scene does — which is exactly why the tool
+exists. `src/rock.js` is untouched by this pass, so this is the expected result
+and it confirms the rock pipeline is intact.
+
+**`tools/shadercost.mjs`, before and after:**
+
+```
+BEFORE  src/terrain.js  SURFACE    37 fetches, 23 unconditional
+AFTER   src/terrain.js  SURFACE    37 fetches, 10 unconditional
+```
+
+Same total work, thirteen fewer fetches on every pixel that is not looking at
+rock, sand, or ground close enough to resolve grain shadows.
+
+### What is not established, and why
+
+**I could not obtain a render.** Three capture attempts were made — 28, 26 and
+30+ minutes — and all three died after boot without producing a PNG or an error
+message. This is not the change: the same signature appeared on the first attempt,
+which predates the governor entirely, and `shots/sys2a.log` shows System 2's own
+capture running for an hour with no output either. Three other agents were
+capturing concurrently for the whole window, on a machine whose harness pins every
+render to four of twelve logical cores at Idle priority by design. Under three-way
+contention that is a little over one core each for a software rasteriser, and
+nothing completes.
+
+`s7c` (`wash_mid`, `wall_lit`) is running detached so that it survives, writing to
+`shots/s7c.log`. `wash_mid` is the right single view: its `wall` window is rock and
+its `floor` window is terrain, so one capture exercises both the untouched path and
+the changed one. When it lands:
+
+```
+node tools/grad.mjs shots/s7c_wash_mid.png shots/s7c_wall_lit.png
+node tools/sat.mjs  shots/s7c_wall_lit.png
+node tools/hue.mjs  shots/s7c_wall_lit.png
+```
+
+The prediction, and it is a strong one rather than a hope: **`wash_mid` floor
+`hf/lf` = 0.52 and `wall` = 0.59, unchanged from `sys4b` to the second decimal.**
+Every gated block reduces to the identity its unbranched form computed at weight
+zero, and each gate opens at a weight — 0.002 for rock, 0.0015 for sand — whose
+contribution is a fifth of one 8-bit level. If the floor figure moves at all, the
+argument in §4 is wrong and the change should come out.
+
+One confound to note: `05cf0a5` (System 5, shimmer cell scale and near-mote cap)
+landed between `sys4b` and `s7c`, and the shimmer is a screen-space warp of the
+whole frame, so a small movement in any window may be theirs rather than mine.
 
 ---
 

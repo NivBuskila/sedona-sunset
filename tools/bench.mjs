@@ -55,8 +55,7 @@
  * run reports numbers a hundred times larger and means nothing.
  */
 import { chromium } from 'playwright';
-import '../tools/tame.mjs';
-import { exec } from 'node:child_process';
+import './tame.mjs';
 import { serve } from './harness.mjs';
 
 const args = process.argv.slice(2);
@@ -81,11 +80,12 @@ const VIEWS = [
   { name: 'sun_gap',   d: 120, yaw: 0,  pitch: 6 },
 ];
 
-/* Same politeness as every other tool here. The GPU path barely touches the
-   CPU, but the pin costs nothing and the user is at the keyboard. */
-const PIN = 'powershell -NoProfile -Command "' +
-  "Get-Process chrome-headless-shell,chrome,headless_shell -ErrorAction SilentlyContinue | " +
-  "ForEach-Object { try { $_.PriorityClass = 'Idle'; $_.ProcessorAffinity = 3840 } catch {} }\"";
+/* Politeness is inherited: importing tools/tame.mjs above pins node and every
+   chrome-headless-shell child to four of twelve logical cores at Idle priority,
+   re-applied on a timer because Chromium spawns its workers late, and installs
+   the teardown. That is the same budget every other tool here runs under, and
+   it is if anything generous for this one — the GPU path leaves the CPU mostly
+   waiting, where a SwiftShader capture saturates every thread it can reach. */
 
 const COMMON = [
   '--autoplay-policy=no-user-gesture-required',
@@ -113,10 +113,6 @@ await new Promise(r => srv.listen(0, r));
    a governor quietly adapting downward during the four-second settle would make
    every figure a measurement of a different setting. */
 const url = `http://localhost:${srv.address().port}/#noadapt`;
-
-const pinT = setInterval(() => exec(PIN, () => {}), 2500);
-pinT.unref();
-exec(PIN, () => {});
 
 const browser = await chromium.launch({ headless: true, args: CPU ? CPU_ARGS : GPU_ARGS });
 const out = { w: W, h: H, backend: CPU ? 'swiftshader' : 'gpu', views: {} };
@@ -189,7 +185,7 @@ try {
     const veg = [];
     scene.traverse((o) => {
       const n = o.name || '';
-      if (/grass|scrub|foliage|litter|juniper|veg/i.test(n) && o.visible) veg.push(o);
+      if (/^(veg-|juniper-)/.test(n) && o.visible) veg.push(o);
     });
     const shimmerOn = () => { atmo.setShimmer(true); };
 
@@ -326,5 +322,4 @@ try {
 } finally {
   await browser.close().catch(() => {});
   srv.close();
-  clearInterval(pinT);
 }
