@@ -24,6 +24,8 @@ import {
   makeCracks, setAnisotropy,
 } from './textures.js';
 import { createAudio } from './audio.js';
+import { installAerial } from './aerial.js';
+import { buildAtmosphere } from './atmosphere.js';
 
 const EYE = 1.65;
 const DEG = Math.PI / 180;
@@ -129,9 +131,22 @@ scene.add(sky);
 const { sun, sunNear, probe: skyProbe } = buildLights();
 scene.add(sun, sun.target, sunNear, sunNear.target, skyProbe);
 
+/* System 5, part one: the flat exponential veil becomes a two-species airlight
+   with a stratified dust layer, so distance and *height* both haze. Patches the
+   fog chunks, so it has to run before the first compile and after the beam
+   exists, which is here. */
+installAerial(sun, scene.fog.color);
+
 /* System 6. Silent until a gesture resumes the context, and inert if the
    browser has no audio at all — it must never be able to stop the scene. */
 const audio = createAudio({ camera, canvas, path });
+
+/* System 5, part two: dust in the light, sand on the floor, and the heat
+   shimmer pass. Built after the audio because the blowing sand is driven by
+   System 6's gust schedule and mirrors it at construction. */
+const atmo = buildAtmosphere({
+  scene, camera, renderer, terrain, path, sun, audio: audio.api,
+});
 
 /* ── player ────────────────────────────────────────────────────────────── */
 
@@ -257,6 +272,9 @@ function skyMask(w, h) {
   scene.background = new THREE.Color(0xffffff);
   scene.fog = null;
   sky.visible = false;
+  /* Points rendered through a mesh override material come out as stray single
+     texels, and at 1/8 scale a stray texel is a whole region of the mask. */
+  atmo.setHidden(true);
   scene.overrideMaterial = maskMat;
   renderer.setRenderTarget(maskRT);
   renderer.render(scene, camera);
@@ -267,6 +285,7 @@ function skyMask(w, h) {
   scene.background = prevBg;
   scene.fog = prevFog;
   sky.visible = prevSky;
+  atmo.setHidden(false);
   lastRenderWasMask = true;
   return { buf, mw, mh };
 }
@@ -317,8 +336,13 @@ function renderOnce() {
   syncCamera();
   syncShadow();
   camera.updateMatrixWorld();
-  renderer.setRenderTarget(null);
-  renderer.render(scene, camera);
+  /* System 5's heat shimmer takes the frame through a render target, so it owns
+     the final blit when it is on. It falls back to a plain render otherwise, so
+     this stays one call either way. */
+  if (!atmo.composite(scene, camera)) {
+    renderer.setRenderTarget(null);
+    renderer.render(scene, camera);
+  }
   lastRenderWasMask = false;
 }
 
@@ -330,6 +354,7 @@ function frame(t) {
   last = t;
   step(dt);
   audio.update(dt, player);
+  atmo.update(dt);
   renderOnce();
   const inst = 1 / Math.max(1e-4, dt);
   fpsSmoothed = fpsSmoothed ? fpsSmoothed * 0.9 + inst * 0.1 : inst;
@@ -353,6 +378,10 @@ const api = {
     player.bob0 = 0;
     syncCamera();
     syncShadow();
+    /* Settles the air too: the particle clock becomes a pure function of the
+       distance, so a capture is a fixed instant of the weather rather than of
+       the wall clock. */
+    atmo.setWalk(+d || 0);
   },
   lookAt(yawDeg, pitchDeg) {
     player.yaw = path.headingAt(currentS()) + (+yawDeg || 0) * DEG;
@@ -362,9 +391,12 @@ const api = {
   info() {
     if (lastRenderWasMask) renderOnce();
     const i = renderer.info;
+    /* renderer.info is reset per render() call, so after a shimmer composite it
+       is describing the fullscreen triangle. The scene pass snapshots itself. */
+    const s = atmo.lastInfo() || { calls: i.render.calls, triangles: i.render.triangles };
     return {
-      calls: i.render.calls,
-      triangles: i.render.triangles,
+      calls: s.calls,
+      triangles: s.triangles,
       textures: i.memory.textures,
       programs: i.programs ? i.programs.length : 0,
     };
@@ -372,7 +404,7 @@ const api = {
   probe,
   audio: audio.api,
   // handy while developing; not part of the contract
-  _scene: scene, _camera: camera, _terrain: terrain, _path: path,
+  _scene: scene, _camera: camera, _terrain: terrain, _path: path, _atmo: atmo,
   _instances: clasts.reduce((n, m) => n + m.count, 0),
 };
 

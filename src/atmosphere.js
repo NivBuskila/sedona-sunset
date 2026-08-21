@@ -1,0 +1,939 @@
+/* Sedona Sunset — System 5: the air.
+ *
+ * Three things live here, and they are one system because they are all driven
+ * by the same weather:
+ *
+ *   dust        fine motes suspended in the corridor, catching the low sun.
+ *               This is what turns "bright" into "shafts".
+ *   saltation   wind-driven sand hugging the wash floor. Sparse and
+ *               intermittent by construction: the stillness is the feature and
+ *               the sand exists to make the stillness noticeable.
+ *   shimmer     heat distortion in the first metres of air above ground, seen
+ *               as a screen-space refraction of whatever is behind it.
+ *
+ * Aerial perspective is the fourth part and lives in src/aerial.js, because it
+ * is a shader-chunk patch rather than an object in the scene.
+ *
+ * ── the weather, and why it is mirrored rather than read ───────────────────
+ *
+ * System 6 owns the wind and publishes it three ways: `wind` (live), `windAt(t)`
+ * (analytic) and `gusts(from, to)` (the schedule). The obvious wiring is to read
+ * `wind` every frame, and for a human walking around that is exactly right and
+ * exactly what happens.
+ *
+ * It cannot be the whole story, because the capture harness requires that two
+ * `walkTo(46)` calls produce identical pixels, and the live wind is a function
+ * of the audio clock. Sampling `windAt` at a virtual time does not fix it
+ * either: the gust schedule is a *stream*, generated forward on demand and
+ * pruned behind, so the same past instant does not answer the same way twice
+ * once thirty-two gusts have been dropped off the front.
+ *
+ * So this file keeps its own append-only mirror of System 6's gust schedule,
+ * forced out to a fixed horizon at construction and extended as the audio
+ * generates more. The envelope arithmetic over that list is a copy of
+ * `Soundscape.windAt` — a dozen lines, duplicated deliberately, because the
+ * alternative is a second wind model that disagrees with the first. The gusts
+ * are System 6's own gusts, at System 6's own times, with System 6's own peaks:
+ * when you hear one, the sand moves, because it is the same event.
+ *
+ * `walkTo(d)` then maps distance into a fixed, fully-mirrored 22-second window
+ * of that timeline, so a capture is a real moment of the real weather and is
+ * the *same* real moment every time it is asked for.
+ *
+ * One approximation is recorded honestly: the audio's per-band gust drive
+ * (`bg[]`, of which band 2 is the hiss that saltation should really follow) is
+ * not on the public interface, only the gust's `char`, which is what decides
+ * whether a gust is a low rumble through the wash or a dry rasp off a ledge.
+ * Saltation is driven by the envelope weighted by `char`, which gets the same
+ * answer to the question that matters — this gust moves sand, that one does not
+ * — without reaching into System 6's internals.
+ */
+import * as THREE from 'three';
+
+/* Straight from audio.js, and it must stay in step with it: the heading the
+   wind blows *toward*, 0 meaning +Z, which is down-wash and away from the sun.
+   So the wind is in your face as you walk up the wash, the sand streams past
+   you toward the mouth, and grains pile on the up-wash faces of clasts — which
+   is the side System 1 already drew them piled on. */
+const WIND_HEADING = 0.12;
+
+const EYE = 1.65;
+
+/* ── the wind mirror ───────────────────────────────────────────────────────*/
+
+class Wind {
+  /**
+   * @param {object} audio  window.__game.audio, or the inert stub
+   */
+  constructor(audio) {
+    this.audio = audio;
+    this.gusts = [];
+    this.seen = new Set();
+    this.t0 = 0;
+    try { this.t0 = audio.time || 0; } catch (e) { this.t0 = 0; }
+
+    /* Force the capture window out now, once.
+     *
+     * Its length is set by the gust statistics rather than picked: System 6
+     * spaces gusts 11 to 43 seconds apart and runs them 5 to 16 seconds, so a
+     * window much under forty seconds can easily contain no gust at all and
+     * every capture in the set would then show a dead calm — which is not
+     * "sparse and intermittent", it is broken. Forty-four seconds reliably
+     * contains one or two, so some viewpoints catch sand moving and some catch
+     * the stillness, which is the intended reading.
+     *
+     * Forcing this far ahead is safe: System 6's own update extends the
+     * schedule to now+30 every frame regardless, and two or three gusts is
+     * nowhere near the sixty-four at which it starts pruning behind itself. */
+    this.CAP_LO = this.t0 + 2;
+    this.CAP_HI = this.t0 + 46;
+    this.pump(this.t0, 48);
+
+    this.state = { gust: 0, sal: 0, dirX: Math.sin(WIND_HEADING), dirZ: Math.cos(WIND_HEADING), speed: 0.5 };
+  }
+
+  /** Copy any newly scheduled gusts into the mirror. Never removes. */
+  pump(now, ahead = 20) {
+    let list;
+    try { list = this.audio.gusts(now - 1, now + ahead); } catch (e) { return; }
+    if (!list || !list.length) return;
+    for (const g of list) {
+      const k = g.t0.toFixed(4);
+      if (this.seen.has(k)) continue;
+      this.seen.add(k);
+      this.gusts.push({ t0: g.t0, dur: g.dur, peak: g.peak, char: g.char === undefined ? 0.5 : g.char });
+    }
+  }
+
+  /**
+   * The wind at an absolute audio-clock time. A copy of Soundscape.windAt's
+   * bulk envelope, over the mirrored schedule.
+   *
+   * `sal` is the saltation drive and is not simply the gust envelope. Grains
+   * do not creep proportionally to wind speed; there is a threshold friction
+   * velocity below which the bed is completely static and above which it
+   * unloads, which is the physical reason blowing sand is a burst phenomenon
+   * and not a level. So the envelope is gated hard and squared, and weighted by
+   * the gust's character: a rumble through the wash moves nothing, a dry rasp
+   * off a ledge is the one that strips a crest.
+   */
+  at(t, out) {
+    const o = out || {};
+    const base = Math.min(0.36, Math.max(0.02,
+      0.105 + 0.075 * Math.sin(t * 0.0431 + 1.3) + 0.045 * Math.sin(t * 0.0177 + 0.4) +
+      0.03 * Math.sin(t * 0.0091 + 2.7)));
+    let gsum = 0, sal = 0;
+    for (let i = 0; i < this.gusts.length; i++) {
+      const gu = this.gusts[i];
+      if (t < gu.t0 || t > gu.t0 + gu.dur) continue;
+      const u = (t - gu.t0) / gu.dur;
+      const s = Math.sin(Math.PI * Math.pow(u, 0.62));
+      const flutter = 0.86 + 0.14 * Math.sin(t * 2.31 + gu.t0);
+      const e = gu.peak * s * s * flutter;
+      gsum += e;
+      /* Threshold and knee are set against the peak distribution System 6
+         actually draws from — 0.16 + 0.74 r^2.1, so a median gust peaks near
+         0.33 and the strong tail reaches 0.9. A threshold at 0.22 with the
+         knee reaching saturation by 0.67 puts a median gust at a third of full
+         drive and a hard one at everything, which is the shape wanted: most
+         gusts stir a little sand, a few strip the crests. An earlier gate at
+         0.30 with a squared knee put a median gust at 0.03 and produced a
+         capture set with no visible sand in it at all. */
+      const gated = Math.min(1, (e - 0.22) / 0.45);
+      if (gated > 0) sal += Math.pow(gated, 1.6) * (0.25 + 0.75 * gu.char);
+    }
+    const g = Math.min(1, base + gsum);
+    const heading = WIND_HEADING + 0.26 * Math.sin(t * 0.021 + 0.8);
+    o.gust = g;
+    o.sal = Math.min(1, sal);
+    o.heading = heading;
+    o.dirX = Math.sin(heading);
+    o.dirZ = Math.cos(heading);
+    o.speed = 0.5 + 8.4 * g;
+    return o;
+  }
+
+  /**
+   * The deterministic capture instant for a walk distance. Any `d` lands
+   * somewhere inside the mirrored window, the mapping is a pure function, and
+   * the window's contents never change after construction — so `walkTo(46)`
+   * twice is the same weather twice, to the last grain.
+   *
+   * The multiplier is irrational-ish against the window length on purpose, so
+   * that the eight standard viewpoints do not all land on the same phase of the
+   * same gust and half the capture set is not accidentally identical weather.
+   */
+  captureTime(d) {
+    const span = this.CAP_HI - this.CAP_LO;
+    let u = ((+d || 0) * 0.6137) % span;
+    if (u < 0) u += span;
+    return this.CAP_LO + u;
+  }
+}
+
+/* ── procedural noise for the shaders ──────────────────────────────────────*/
+
+const NOISE_GLSL = /* glsl */`
+float aHash(vec2 p) {
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
+}
+float aNoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  float a = aHash(i), b = aHash(i + vec2(1.0, 0.0));
+  float c = aHash(i + vec2(0.0, 1.0)), d = aHash(i + vec2(1.0, 1.0));
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+float aHG(float g, float c) {
+  float g2 = g * g;
+  return (1.0 - g2) / (12.56637061 * pow(max(1e-4, 1.0 + g2 - 2.0 * g * c), 1.5));
+}
+`;
+
+/* ── airborne dust ─────────────────────────────────────────────────────────
+ *
+ * A cube of motes that wraps around the camera, so the field is unbounded and
+ * costs one draw call and no CPU. Everything about how a mote looks is one
+ * question — how much light is it scattering toward the eye — and the answer is
+ * the Henyey-Greenstein phase function, which is why the motes are nearly
+ * invisible looking down-wash and light up into a haze looking into the sun.
+ * Additive, at a radiance of a few hundredths: that is what makes them read
+ * against the shadowed wall and vanish against a sunlit face without any
+ * masking, because a fixed small addition *is* invisible on a bright background
+ * and obvious on a dark one. It is the one place in this file where the physics
+ * does the art direction for free.
+ *
+ * The shafts are the other half. Sunbeams through a canyon are the shadow of
+ * the crest silhouette projected along the beam, so the modulation is banding
+ * in the plane perpendicular to the sun direction — static, because the crest
+ * is static, and drifting only as slowly as the motes themselves move through
+ * it. Banding in screen space or in world x/z instead would be the giveaway.
+ */
+/* A pixel's cone out to the fade radius holds a few hundredths of a cubic
+   metre, so at any sane number density the motes are *separated specks*, not a
+   continuous glow — one mote per few hundred pixels. That is what they should
+   be: the continuous glow of a sunbeam is airlight, and aerial.js already has
+   the Mie lobe that produces it. These are the individual grains you can pick
+   out inside it, and the count and tile are set to put a comfortable scatter of
+   them across the frame rather than to build a volume. */
+const DUST_TILE = 52;
+
+function buildDust(count, sunDir, sunTint) {
+  const g = new THREE.BufferGeometry();
+  const pos = new Float32Array(count * 3);
+  const aux = new Float32Array(count * 3);
+  /* A fixed integer stream, not Math.random: the mote field has to be the same
+     field on every page load or two captures of the same build differ. */
+  let s = 0x5ed05;
+  const rnd = () => {
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  for (let i = 0; i < count; i++) {
+    pos[i * 3] = rnd() * DUST_TILE;
+    pos[i * 3 + 1] = rnd() * DUST_TILE;
+    pos[i * 3 + 2] = rnd() * DUST_TILE;
+    aux[i * 3] = rnd();                       // seed
+    aux[i * 3 + 1] = 0.45 + rnd() * rnd() * 2.4;  // size, long-tailed
+    aux[i * 3 + 2] = 0.6 + rnd() * 0.8;       // drift rate
+  }
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('aux', new THREE.BufferAttribute(aux, 3));
+  g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
+
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uT: { value: 0 },
+      uCam: { value: new THREE.Vector3() },
+      uSun: { value: sunDir.clone() },
+      uTint: { value: sunTint.clone() },
+      uPix: { value: 800 },
+      uWind: { value: new THREE.Vector2(0, 1) },
+      uSpeed: { value: 1 },
+      uDrive: { value: 1 },
+      uGroundY: { value: 0 },
+    },
+    vertexShader: /* glsl */`
+uniform float uT;
+uniform vec3 uCam;
+uniform vec3 uSun;
+uniform float uPix;
+uniform vec2 uWind;
+uniform float uSpeed;
+uniform float uDrive;
+uniform float uGroundY;
+attribute vec3 aux;
+varying float vA;
+varying float vPhase;
+${NOISE_GLSL}
+
+const float TILE = ${DUST_TILE.toFixed(1)};
+
+void main() {
+  /* Advection plus a slow convective wander. Motes this fine are tracers: they
+     go where the air goes, at the air's own speed, and the only reason they do
+     not simply translate is that the air is turbulent at metre scale. */
+  vec3 p = position;
+  float sd = aux.x;
+  p.xz += uWind * (uT * uSpeed * 0.22 * aux.z);
+  p.x += sin(uT * 0.21 + sd * 41.0) * 0.7;
+  p.y += sin(uT * 0.17 + sd * 23.0) * 0.5 + uT * 0.035 * aux.z;
+  p.z += cos(uT * 0.19 + sd * 57.0) * 0.7;
+
+  /* Wrap into the tile centred on the camera. */
+  p = mod(p - uCam + TILE * 0.5, TILE) - TILE * 0.5 + uCam;
+
+  vec3 toEye = uCam - p;
+  float dist = length(toEye);
+
+  /* Height above the local ground, taken from the camera's own eye height —
+     the wash floor is broad and flat and the camera is standing on it, so this
+     is right to a few tens of centimetres over the tile and costs nothing. */
+  float h = p.y - uGroundY;
+
+  /* Density falls off with height, but not to nothing: there is a well-mixed
+     column above the shallow suspension layer and the two together are what a
+     backlit canyon actually looks like. */
+  float dens = 0.30 + 0.70 * exp(-max(0.0, h) / 7.5);
+  dens *= smoothstep(-1.2, 0.35, h);
+
+  /* The shafts. Two bands in the plane perpendicular to the beam. */
+  vec3 up = vec3(0.0, 1.0, 0.0);
+  vec3 e1 = normalize(cross(uSun, up));
+  vec3 e2 = cross(e1, uSun);
+  float b1 = dot(p, e1), b2 = dot(p, e2);
+  float shaft = aNoise(vec2(b1 * 0.075, b2 * 0.045));
+  shaft = 0.30 + 1.45 * smoothstep(0.34, 0.86, shaft);
+  /* Air below the bank tops is in the wall's shadow at this solar elevation,
+     so the shaft only exists where the light can reach. */
+  shaft *= mix(0.22, 1.0, smoothstep(0.6, 5.5, h));
+
+  vA = dens * shaft * uDrive;
+  vA *= 1.0 - smoothstep(TILE * 0.30, TILE * 0.49, dist);
+  vPhase = dot(normalize(toEye), -uSun);
+
+  vec4 mv = modelViewMatrix * vec4(p, 1.0);
+  gl_Position = projectionMatrix * mv;
+  float px = uPix * aux.y * 0.010 / max(0.35, dist);
+  /* Below a pixel a point stops shrinking and starts having to lose energy
+     instead, or the field gets brighter with distance as more motes crowd into
+     each pixel and each one still paints a whole one. */
+  gl_PointSize = max(0.85, px);
+  vA *= min(1.0, px / 0.85) * min(1.0, px / 0.85);
+}`,
+    fragmentShader: /* glsl */`
+uniform vec3 uTint;
+varying float vA;
+varying float vPhase;
+${NOISE_GLSL}
+
+void main() {
+  float d = length(gl_PointCoord - 0.5);
+  float s = smoothstep(0.5, 0.13, d);
+  /* Backlit is the whole point. g = 0.62 puts about fourteen times as much
+     light toward the eye at zero degrees from the beam as at ninety, which is
+     roughly what a 2-micron mineral grain does and is why dust is a nuisance
+     in front of a low sun and invisible behind you. */
+  float ph = min(20.0, aHG(0.62, vPhase) / aHG(0.62, 0.0));
+  float amp = 0.0045 * (0.16 + ph);
+  vec3 c = uTint * amp * vA * s;
+  gl_FragColor = vec4(c, 1.0);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}`,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    depthTest: true,
+    fog: false,
+  });
+
+  const pts = new THREE.Points(g, mat);
+  pts.frustumCulled = false;
+  pts.renderOrder = 10;
+  pts.name = 'dust';
+  return pts;
+}
+
+/* ── the ground table ──────────────────────────────────────────────────────
+ *
+ * Saltation has to hug a surface, and the surface only exists on the CPU. Rather
+ * than move grains on the CPU every frame, the wash floor is baked once into a
+ * small float texture — height, and how much loose sand is available — and read
+ * in the vertex shader. Everything after that is free.
+ *
+ * The availability channel is the part that keeps this honest. Sand blows off
+ * sand, not off bedrock and not off a 30-degree cut bank, so it is the product
+ * of how flat the ground is and how close to the channel: the ribbons then run
+ * where a real wash keeps its loose sand, and stop at the toe of the banks
+ * instead of climbing them.
+ */
+const GX0 = -78, GX1 = 78, GZ0 = 34, GZ1 = -340;
+/* Metre-scale. Finer costs load time and buys nothing: a grain hops thirteen
+   centimetres, so the difference between reading the bed at 1 m and at 0.3 m is
+   invisible, and heightAtQ is expensive enough that the finer grid was adding
+   2.7 seconds to every page load. */
+const GW = 160, GH = 256;
+
+function bakeGround(terrain, path) {
+  const data = new Float32Array(GW * GH * 4);
+  const q = {};
+  const dx = (GX1 - GX0) / (GW - 1), dz = (GZ1 - GZ0) / (GH - 1);
+  const H = new Float32Array(GW * GH);
+  for (let j = 0; j < GH; j++) {
+    const z = GZ0 + j * dz;
+    path.atZ(z, q);
+    for (let i = 0; i < GW; i++) {
+      H[j * GW + i] = terrain.heightAtQ(GX0 + i * dx, z, q);
+    }
+  }
+  for (let j = 0; j < GH; j++) {
+    const z = GZ0 + j * dz;
+    path.atZ(z, q);
+    for (let i = 0; i < GW; i++) {
+      const o = (j * GW + i) * 4;
+      const h = H[j * GW + i];
+      const ia = Math.max(0, i - 1), ib = Math.min(GW - 1, i + 1);
+      const ja = Math.max(0, j - 1), jb = Math.min(GH - 1, j + 1);
+      const gx = (H[j * GW + ib] - H[j * GW + ia]) / ((ib - ia) * dx);
+      const gz = (H[jb * GW + i] - H[ja * GW + i]) / ((jb - ja) * dz);
+      const slope = Math.hypot(gx, gz);
+      const u = Math.abs((GX0 + i * dx - q.x) * Math.cos(q.th));
+      /* Flat, and in the channel. Both terms are soft: a real sand sheet
+         thins out toward the bank toe rather than ending at a line. */
+      const flat = 1 - smoothstep(0.16, 0.55, slope);
+      const near = 1 - smoothstep(9.0, 19.0, u);
+      data[o] = h;
+      data[o + 1] = flat * near;
+      data[o + 2] = gx;
+      data[o + 3] = gz;
+    }
+  }
+  const t = new THREE.DataTexture(data, GW, GH, THREE.RGBAFormat, THREE.FloatType);
+  t.minFilter = THREE.LinearFilter;
+  t.magFilter = THREE.LinearFilter;
+  t.wrapS = THREE.ClampToEdgeWrapping;
+  t.wrapT = THREE.ClampToEdgeWrapping;
+  t.generateMipmaps = false;
+  t.colorSpace = THREE.NoColorSpace;
+  t.needsUpdate = true;
+  return t;
+}
+
+function smoothstep(a, b, x) {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+}
+
+/* ── saltation ─────────────────────────────────────────────────────────────
+ *
+ * Grains do not fly. They hop: lifted a few centimetres, carried a fraction of
+ * a metre, and driven back into the bed hard enough to eject the next one. The
+ * whole population is therefore a field of short ballistic arcs of very
+ * different lengths, and what you see from standing height is not the grains
+ * but the *ribbons* — the metre-scale streaks of moving bed that snake around
+ * every obstacle, because the flow that carries them is a boundary layer with
+ * structure in it.
+ *
+ * So the model is: arcs for the grain, a travelling turbulence field for where
+ * the arcs are allowed to happen, and a hard threshold on the wind for whether
+ * they happen at all. The threshold is what keeps the desert still.
+ */
+const SALT_TILE = 84;
+
+function buildSaltation(count, ground, sunTint) {
+  const g = new THREE.BufferGeometry();
+  const pos = new Float32Array(count * 3);
+  const aux = new Float32Array(count * 4);
+  let s = 0x5a17d;
+  const rnd = () => {
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  for (let i = 0; i < count; i++) {
+    pos[i * 3] = rnd() * SALT_TILE;
+    pos[i * 3 + 1] = 0;
+    pos[i * 3 + 2] = rnd() * SALT_TILE;
+    aux[i * 4] = rnd();                        // seed / hop phase
+    /* Hop length is strongly skewed: most grains creep, a few take long
+       trajectories, and the tail is what you actually see as a streak. */
+    const u = rnd();
+    aux[i * 4 + 1] = 0.10 + u * u * u * 1.9;   // hop length, metres
+    aux[i * 4 + 2] = 0.5 + rnd() * 1.1;        // size
+    aux[i * 4 + 3] = rnd();                    // ribbon threshold jitter
+  }
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('aux', new THREE.BufferAttribute(aux, 4));
+  g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
+
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uT: { value: 0 },
+      uCam: { value: new THREE.Vector3() },
+      uWind: { value: new THREE.Vector2(0, 1) },
+      uSpeed: { value: 1 },
+      uSal: { value: 0 },
+      uPix: { value: 800 },
+      uGround: { value: ground },
+      uBox: { value: new THREE.Vector4(GX0, GZ0, 1 / (GX1 - GX0), 1 / (GZ1 - GZ0)) },
+      uTint: { value: sunTint.clone() },
+      uLevel: { value: 0.16 },
+    },
+    vertexShader: /* glsl */`
+uniform float uT;
+uniform vec3 uCam;
+uniform vec2 uWind;
+uniform float uSpeed;
+uniform float uSal;
+uniform float uPix;
+uniform sampler2D uGround;
+uniform vec4 uBox;
+attribute vec4 aux;
+varying float vA;
+${NOISE_GLSL}
+
+const float TILE = ${SALT_TILE.toFixed(1)};
+
+void main() {
+  vec2 p = position.xz;
+  float sd = aux.x, hopLen = aux.y;
+
+  /* Downwind travel. Grain speed is a fraction of wind speed and scales with
+     hop length, because a long trajectory spends longer being accelerated. */
+  float adv = uT * uSpeed * (0.14 + 0.30 * hopLen) + sd * 137.0;
+  p += uWind * adv;
+  p = mod(p - uCam.xz + TILE * 0.5, TILE) - TILE * 0.5 + uCam.xz;
+
+  vec2 uv = vec2((p.x - uBox.x) * uBox.z, (p.y - uBox.y) * uBox.w);
+  vec4 gt = texture2D(uGround, uv);
+  float avail = gt.y * step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
+
+  /* Ribbons: a turbulence field advected downwind, sheared along the flow so
+     the streaks are long and narrow and meander instead of tiling as blobs. */
+  vec2 wp = vec2(-uWind.y, uWind.x);
+  float along = dot(p, uWind), across = dot(p, wp);
+  float rib = aNoise(vec2(across * 0.30 + sin(along * 0.055) * 1.6,
+                          along * 0.055 - uT * 0.42));
+  rib *= 0.55 + 0.45 * aNoise(vec2(across * 0.07, along * 0.018 - uT * 0.11));
+
+  /* The threshold. Below it the bed is completely static — which is most of
+     the time, and is the point. */
+  float drive = uSal * 1.35;
+  float moving = smoothstep(0.0, 0.35, drive - 0.85 * (0.55 + 0.45 * aux.w) * (1.0 - rib));
+
+  /* The hop. A ballistic arc, its apex a fixed fraction of its length — real
+     saltation trajectories are flat, roughly one part height to eight of
+     range, which is why the sheet hugs the ground instead of billowing. */
+  float u = fract(uT * (0.7 + 1.9 / max(0.25, hopLen)) + sd * 7.31);
+  float arc = 4.0 * u * (1.0 - u);
+  float y = gt.x + arc * hopLen * 0.13;
+
+  /* Lee-side plumes. Where the bed falls away downwind the grains leave it and
+     rain down the slip face instead of following the surface, which is the one
+     place saltation stops being a sheet and becomes visible as a cloud. */
+  float dwn = -(gt.z * uWind.x + gt.w * uWind.y);
+  float lee = smoothstep(0.20, 0.75, dwn);
+  y += lee * arc * 0.30;
+
+  vec3 wpos = vec3(p.x, y, p.y);
+  float dist = distance(wpos, uCam);
+
+  vA = moving * avail * (0.35 + 0.65 * arc) * (1.0 + lee * 0.8);
+  vA *= 1.0 - smoothstep(TILE * 0.26, TILE * 0.46, dist);
+
+  vec4 mv = modelViewMatrix * vec4(wpos, 1.0);
+  gl_Position = projectionMatrix * mv;
+  float px = uPix * aux.z * 0.016 / max(0.30, dist);
+  gl_PointSize = max(0.9, px);
+  vA *= min(1.0, px / 0.9);
+}`,
+    fragmentShader: /* glsl */`
+uniform vec3 uTint;
+uniform float uLevel;
+varying float vA;
+
+void main() {
+  float d = length(gl_PointCoord - 0.5);
+  float a = vA * smoothstep(0.5, 0.15, d);
+  if (a < 0.002) discard;
+  gl_FragColor = vec4(uTint * uLevel, a * 0.75);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}`,
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    fog: false,
+  });
+
+  const pts = new THREE.Points(g, mat);
+  pts.frustumCulled = false;
+  pts.renderOrder = 9;
+  pts.name = 'saltation';
+  return pts;
+}
+
+/* ── heat shimmer ──────────────────────────────────────────────────────────
+ *
+ * The frame goes through one render target and comes back distorted. That is a
+ * post pass, and System 7 owns post-processing, so this one is deliberately a
+ * single isolated stage with no grading, no bloom and no colour management of
+ * its own beyond the tonemap it has to perform because rendering into a target
+ * skips it: a later chain can take the target and drop this stage, or keep it
+ * as its first pass, without untangling anything.
+ *
+ * The mask is the whole design. A full-screen wobble is a heat-haze filter in a
+ * video editor; real shimmer is a *path* phenomenon — you see it where the line
+ * of sight has spent a long time in the first couple of metres of superheated
+ * air above hot ground, which is exactly the grazing rays that run away up the
+ * wash and end on something far away. A ray to a butte top climbs out of that
+ * layer in twenty metres and gets nothing. So the mask is the same stratified
+ * column integral aerial.js uses, with a scale height of about a metre and a
+ * half instead of two hundred and eighty, evaluated against the reconstructed
+ * world position of each pixel.
+ *
+ * Which means it is strongest precisely where a distant butte edge is seen
+ * through air rising off nearer ground, and that is where it should be.
+ *
+ * At golden hour it is also *subtle*: the ground is still hot but the air above
+ * it is cooling fast, so the refractive gradient is a fraction of what it is at
+ * two in the afternoon. Peak displacement here is about two pixels at 1600 wide.
+ */
+function shimmerNoise(n = 128) {
+  const data = new Uint8Array(n * n * 4);
+  const grid = (freq, seed) => {
+    const g = new Float32Array(freq * freq);
+    let s = seed >>> 0;
+    for (let i = 0; i < g.length; i++) {
+      s = (s + 0x6d2b79f5) | 0;
+      let t = Math.imul(s ^ (s >>> 15), 1 | s);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      g[i] = ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    }
+    return g;
+  };
+  const sample = (g, freq, x, y) => {
+    const fx = x * freq, fy = y * freq;
+    const i0 = Math.floor(fx), j0 = Math.floor(fy);
+    const tx = fx - i0, ty = fy - j0;
+    const sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty);
+    const w = (i, j) => g[((j % freq) + freq) % freq * freq + ((i % freq) + freq) % freq];
+    return (w(i0, j0) * (1 - sx) + w(i0 + 1, j0) * sx) * (1 - sy) +
+           (w(i0, j0 + 1) * (1 - sx) + w(i0 + 1, j0 + 1) * sx) * sy;
+  };
+  /* Anisotropic on purpose: a rising thermal plume is tall and thin, so the
+     cells are stretched three to one in y. Two octaves per channel, and the
+     two channels are decorrelated so x and y displacement do not move together
+     and produce a pure zoom. */
+  const layers = [
+    [[8, 3, 0x11], [17, 6, 0x27]],
+    [[9, 3, 0x53], [19, 7, 0x71]],
+  ];
+  const gs = layers.map((ls) => ls.map(([fx, fy, sd]) => [fx, fy, grid(Math.max(fx, fy), sd)]));
+  for (let j = 0; j < n; j++) {
+    for (let i = 0; i < n; i++) {
+      const x = i / n, y = j / n;
+      for (let ch = 0; ch < 2; ch++) {
+        let v = 0, w = 0, amp = 1;
+        for (const [fx, fy, g] of gs[ch]) {
+          const f = Math.max(fx, fy);
+          v += amp * sample(g, f, x * fx / f, y * fy / f);
+          w += amp;
+          amp *= 0.55;
+        }
+        data[(j * n + i) * 4 + ch] = Math.round(255 * (v / w));
+      }
+      data[(j * n + i) * 4 + 2] = 0;
+      data[(j * n + i) * 4 + 3] = 255;
+    }
+  }
+  const t = new THREE.DataTexture(data, n, n, THREE.RGBAFormat, THREE.UnsignedByteType);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.minFilter = THREE.LinearFilter;
+  t.magFilter = THREE.LinearFilter;
+  t.generateMipmaps = false;
+  t.colorSpace = THREE.NoColorSpace;
+  t.needsUpdate = true;
+  return t;
+}
+
+class Shimmer {
+  constructor(renderer, camera) {
+    this.renderer = renderer;
+    this.camera = camera;
+    this.rt = null;
+    this.enabled = true;
+    this.samples = 4;
+    this.noise = shimmerNoise(128);
+
+    this.mat = new THREE.ShaderMaterial({
+      uniforms: {
+        tScene: { value: null },
+        tDepth: { value: null },
+        tNoise: { value: this.noise },
+        uT: { value: 0 },
+        uRes: { value: new THREE.Vector2(1, 1) },
+        uAmp: { value: 2.0 },
+        uCam: { value: new THREE.Vector3() },
+        uGroundY: { value: 0 },
+        uInvVP: { value: new THREE.Matrix4() },
+        uNear: { value: 0.06 },
+        uFar: { value: 6000 },
+      },
+      vertexShader: /* glsl */`
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+}`,
+      fragmentShader: /* glsl */`
+uniform sampler2D tScene;
+uniform sampler2D tDepth;
+uniform sampler2D tNoise;
+uniform float uT;
+uniform vec2 uRes;
+uniform float uAmp;
+uniform vec3 uCam;
+uniform float uGroundY;
+uniform mat4 uInvVP;
+uniform float uNear;
+uniform float uFar;
+varying vec2 vUv;
+
+/* Scale height of the superheated layer, metres. */
+const float HOT_H = 1.55;
+
+void main() {
+  float dz = texture2D(tDepth, vUv).x;
+
+  /* Reconstruct the world point. For sky the depth is at the far plane and the
+     ray is capped rather than followed, since the integral has converged long
+     before then anyway — but the cap matters, because an uncapped ray puts a
+     numerically enormous path into the sky and shimmers the whole dome. */
+  vec4 ndc = vec4(vUv * 2.0 - 1.0, dz * 2.0 - 1.0, 1.0);
+  vec4 wp = uInvVP * ndc;
+  vec3 world = wp.xyz / wp.w;
+  vec3 ray = world - uCam;
+  float dist = length(ray);
+  bool far = dz > 0.99999 || dist > 1800.0;
+  if (far) { ray = normalize(ray) * 1800.0; dist = 1800.0; }
+  vec3 dir = ray / max(1e-4, dist);
+
+  /* Column of hot air along the ray, as an equivalent ground-level path. */
+  float y0 = uCam.y - uGroundY, y1 = y0 + ray.y;
+  float k = (y1 - y0) / HOT_H;
+  float shape = abs(k) < 1e-3 ? 1.0 - 0.5 * k : (1.0 - exp(-k)) / k;
+  float col = dist * exp(-max(0.0, y0) / HOT_H) * shape;
+
+  /* A hundred metres of grazing path through the hot layer is a strong
+     shimmer; ten metres is nothing. Saturating, because the refraction angle
+     accumulates as a random walk, not linearly. */
+  float m = 1.0 - exp(-col / 42.0);
+  /* Nothing in the first few metres: the air right in front of your face has
+     not had a path length to bend anything through, and shimmer on the ground
+     at your feet is the single loudest wrong note this effect can play. */
+  m *= smoothstep(6.0, 26.0, dist);
+
+  vec2 d = vec2(0.0);
+  if (m > 0.004) {
+    /* Two layers rising at different rates. Screen space is the right domain
+       for the *cells* — they are between the eye and everything, at no
+       particular distance — but their size must not change with resolution,
+       hence the aspect-corrected uv. */
+    vec2 q = vec2(vUv.x * uRes.x / uRes.y, vUv.y);
+    vec2 n1 = texture2D(tNoise, q * 3.1 + vec2(0.013 * uT, -0.055 * uT)).rg;
+    vec2 n2 = texture2D(tNoise, q * 6.7 + vec2(-0.021 * uT, -0.115 * uT)).rg;
+    d = (n1 - 0.5) * 1.0 + (n2 - 0.5) * 0.55;
+    /* Vertical displacement dominates: the gradient is vertical, so the
+       refraction is too. */
+    d.x *= 0.55;
+    /* uAmp is quoted in pixels at 900 lines, so the displacement is an angle
+       rather than a fraction of the frame and an 800-wide iteration shows the
+       same effect as a 1600-wide handoff. */
+    d *= uAmp * m * (uRes.y / 900.0) / uRes;
+  }
+
+  gl_FragColor = vec4(texture2D(tScene, vUv + d).rgb, 1.0);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}`,
+      depthTest: false,
+      depthWrite: false,
+    });
+
+    const quad = new THREE.BufferGeometry();
+    quad.setAttribute('position', new THREE.BufferAttribute(
+      new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3));
+    quad.setAttribute('uv', new THREE.BufferAttribute(
+      new Float32Array([0, 0, 2, 0, 0, 2]), 2));
+    this.quadMesh = new THREE.Mesh(quad, this.mat);
+    this.quadMesh.frustumCulled = false;
+    this.quadScene = new THREE.Scene();
+    this.quadScene.add(this.quadMesh);
+    this.quadCam = new THREE.Camera();
+  }
+
+  resize(w, h) {
+    if (this.rt && this.rt.width === w && this.rt.height === h) return;
+    if (this.rt) { this.rt.dispose(); this.rt.depthTexture.dispose(); }
+    const depth = new THREE.DepthTexture(w, h, THREE.UnsignedIntType);
+    depth.format = THREE.DepthFormat;
+    this.rt = new THREE.WebGLRenderTarget(w, h, {
+      type: THREE.HalfFloatType,
+      depthBuffer: true,
+      depthTexture: depth,
+      samples: this.samples,
+    });
+    this.rt.texture.minFilter = THREE.LinearFilter;
+    this.rt.texture.magFilter = THREE.LinearFilter;
+    this.rt.texture.generateMipmaps = false;
+    this.mat.uniforms.tScene.value = this.rt.texture;
+    this.mat.uniforms.tDepth.value = depth;
+    this.mat.uniforms.uRes.value.set(w, h);
+  }
+}
+
+/* ── the system ────────────────────────────────────────────────────────────*/
+
+/**
+ * @param {object} opts
+ * @param {THREE.Scene} opts.scene
+ * @param {THREE.Camera} opts.camera
+ * @param {THREE.WebGLRenderer} opts.renderer
+ * @param {object} opts.terrain
+ * @param {object} opts.path
+ * @param {THREE.DirectionalLight} opts.sun
+ * @param {object} opts.audio   window.__game.audio
+ */
+export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, audio }) {
+  const wind = new Wind(audio);
+
+  const sunDir = new THREE.Vector3()
+    .subVectors(sun.position, sun.target.position).normalize();
+  const peak = Math.max(sun.color.r, sun.color.g, sun.color.b) || 1;
+  const sunTint = new THREE.Color(sun.color.r / peak, sun.color.g / peak, sun.color.b / peak);
+
+  const t0 = performance.now();
+  const ground = bakeGround(terrain, path);
+  const bakeMs = performance.now() - t0;
+
+  const dust = buildDust(9000, sunDir, sunTint);
+  const salt = buildSaltation(11000, ground, sunTint);
+  scene.add(dust, salt);
+
+  const shimmer = new Shimmer(renderer, camera);
+
+  /* Scene info has to be snapshotted after the scene pass and before the
+     composite, or `info()` reports the fullscreen triangle instead of the
+     frame. renderer.info is reset per render() call, so there is nowhere else
+     to catch it. */
+  const lastInfo = { calls: 0, triangles: 0 };
+
+  const W = { gust: 0, sal: 0, dirX: 0, dirZ: 1, speed: 0.5, heading: WIND_HEADING };
+  let clock = wind.CAP_LO;          // the atmosphere's own time, in audio-clock seconds
+  let live = false;                 // true once the loop is running freely
+
+  function applyWind() {
+    const d = dust.material.uniforms, s = salt.material.uniforms;
+    d.uWind.value.set(W.dirX, W.dirZ);
+    d.uSpeed.value = W.speed;
+    /* Dust density lifts with the wind but not much and not fast: suspended
+       load has a settling time of minutes, so the air does not clear between
+       gusts the way the bed does. */
+    d.uDrive.value = 0.72 + 0.55 * W.gust;
+    s.uWind.value.set(W.dirX, W.dirZ);
+    s.uSpeed.value = W.speed;
+    s.uSal.value = W.sal;
+  }
+
+  function setClock(t) {
+    clock = t;
+    wind.at(t, W);
+    dust.material.uniforms.uT.value = t;
+    salt.material.uniforms.uT.value = t;
+    applyWind();
+  }
+
+  function syncCamera() {
+    const gy = camera.position.y - EYE;
+    const d = dust.material.uniforms, s = salt.material.uniforms;
+    d.uCam.value.copy(camera.position);
+    d.uGroundY.value = gy;
+    s.uCam.value.copy(camera.position);
+    const h = renderer.domElement.height || 800;
+    const px = h / (2 * Math.tan(camera.fov * Math.PI / 360));
+    d.uPix.value = px;
+    s.uPix.value = px;
+    return gy;
+  }
+
+  setClock(wind.captureTime(0));
+
+  return {
+    /** Advance the live clock. Called from the render loop only. */
+    update(dt) {
+      live = true;
+      let now = clock + dt;
+      try { const t = audio.time; if (typeof t === 'number' && t > 0) now = t; } catch (e) {}
+      wind.pump(now);
+      setClock(now);
+    },
+    /**
+     * Place the atmosphere at the deterministic weather for this walk
+     * distance. Called from walkTo, which is the harness's entry point and the
+     * only place determinism is required.
+     */
+    setWalk(d) {
+      live = false;
+      setClock(wind.captureTime(d));
+    },
+    /**
+     * Draw the frame. Returns true if it went through the shimmer pass, in
+     * which case the caller must not render again.
+     */
+    composite(scn, cam) {
+      const gy = syncCamera();
+      if (!shimmer.enabled) return false;
+      const w = renderer.domElement.width, h = renderer.domElement.height;
+      if (!w || !h) return false;
+      shimmer.resize(w, h);
+      renderer.setRenderTarget(shimmer.rt);
+      renderer.render(scn, cam);
+      lastInfo.calls = renderer.info.render.calls;
+      lastInfo.triangles = renderer.info.render.triangles;
+
+      const u = shimmer.mat.uniforms;
+      u.uT.value = clock;
+      u.uCam.value.copy(cam.position);
+      u.uGroundY.value = gy;
+      u.uInvVP.value
+        .multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)
+        .invert();
+
+      renderer.setRenderTarget(null);
+      renderer.render(shimmer.quadScene, shimmer.quadCam);
+      return true;
+    },
+    /** Scene-pass draw call and triangle counts, excluding the composite. */
+    lastInfo() { return shimmer.enabled ? lastInfo : null; },
+    setShimmer(b) { shimmer.enabled = !!b; },
+    /* The frame probe re-renders the scene with an override material to
+       separate sky from ground. Points drawn through a mesh material come out
+       as stray single texels, and in a 1/8-scale mask a stray texel is a whole
+       region — so the particles step out of that pass. */
+    setHidden(b) { dust.visible = !b; salt.visible = !b; },
+    _diag: {
+      bakeMs,
+      dust: dust.geometry.attributes.position.count,
+      salt: salt.geometry.attributes.position.count,
+      get wind() { return { ...W, clock, live }; },
+      gusts: () => wind.gusts.length,
+    },
+  };
+}
