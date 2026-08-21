@@ -179,13 +179,33 @@ export const POST_DEFAULTS = {
      order, and re-tuning against it is a trim rather than a rebuild. */
   flareKnee: 20.0, flareRange: 40.0,
 
-  /* Polish. */
-  vignette: 0.20,            // linear light lost at the extreme corner
-  aberration: 0.9,           // pixels of radial split at the extreme corner
-  /* Encoded units, peak-to-peak 2x this in the shadows and 0.9x in the
-     highlights. That is +-1.7 code values against +-0.8, which sounds like
-     nothing and is the point: it is a photograph's grain, and it is also the
-     dither. Measured on the near-white sky of `juniper`, where a critic found
+  /* Polish, and all three of these were set by an audit rather than by eye.
+   *
+   * The standing instruction is that anything identifiable as an *effect* rather
+   * than as the scene is wrong here, however physically defensible, and to err
+   * off where borderline. That is a claim about visible magnitudes, so
+   * tools/_p7audit.mjs puts each one in the units a viewer sees, at 1440 lines
+   * rather than at the 900 the parameters are quoted in. Two of the three moved.
+   *
+   * Vignette was 0.20, which is a real 24 mm at f/11 — about a third of a stop
+   * in the corner — and it cost 16.6 code values at mid grey there. A smooth
+   * radial ramp that size is nameable by anyone who thinks to look at a corner,
+   * so this is deliberately sub-physical: 0.05 is 3.8 cv at worst, under a
+   * smoothstep that leaves the middle of the frame untouched, which is a corner
+   * that measures darker and does not read as darkening. */
+  vignette: 0.05,            // linear light lost at the extreme corner
+  /* Off, and the code path stays. At 0.9 the extreme corner split 0.90 px at
+     900 lines and 1.44 px at 1440 — over a pixel is exactly where a colour
+     fringe resolves as a fringe, and it was the most nameable term in the list.
+     Under half a pixel it cannot resolve at all, so the honest choices were
+     "invisible" or "off", and off also skips two texture fetches. 0.3 is the
+     largest value that stays sub-pixel at 1440 if anyone wants it back. */
+  aberration: 0.0,           // pixels of radial split at the extreme corner
+  /* Encoded units. Kept, because it is the one term here that measures *below*
+     the quantisation it is dithering: 0.44 code values rms in the shadows and
+     0.26 in the highlights, against a step of 1.0. The peak is +-1.6 cv and it
+     is four sigma, so it lands on a fraction of a percent of pixels. Nothing at
+     that level can be named as grain; what it can do is break a contour. Measured on the near-white sky of `juniper`, where a critic found
      the gradient stepping about once every eight rows, the plate takes the
      contour spacing from 14.5 rows to 10.5 and the distinct-colour count up
      with it. */
