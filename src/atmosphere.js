@@ -1379,12 +1379,47 @@ void main() {
   }
 }
 
+/* The calibrated amplitude, in pixels rms at 900 lines — see the moments note in
+ * shimmerNoise for why that units claim is now true and was not before. Kept as
+ * a named constant so that switching the effect back on restores the measured
+ * value rather than whatever happened to be in the uniform. */
+const SHIMMER_AMP = 2.2;
+
+/* Is the effect wanted at all — a look decision, and it outranks the quality
+ * governor. perf.js turns the shimmer on for its top tier, so a plain default of
+ * `off` in the constructor lasted exactly until the first tier evaluation and the
+ * amplitude was back to 2.2 by the time anything looked at it. A scratch probe
+ * caught that; a frame would not have, which is the point of asserting it.
+ *
+ * So the two switches are different questions and are kept apart: this one is
+ * whether the effect is wanted, perf.js's is whether the frame can afford it, and
+ * the effect runs only if both say yes. perf.js can therefore turn it further
+ * off, never back on. `#shimmer=1` restores it. */
+const SHIMMER_WANTED = hashNum('shimmer', 0) > 0.5;
+
 class Shimmer {
   constructor(renderer, camera) {
     this.renderer = renderer;
     this.camera = camera;
     this.rt = null;
-    this.enabled = true;
+    /* ---- off by default, and this is a look decision, not a bug -------------
+     *
+     * The physics here is right and the units fix underneath it was real: uAmp
+     * was multiplying a noise term of rms 0.167 rather than 1, so for three
+     * rounds this delivered a sixth of its nominal amplitude and every metric
+     * called it too weak. Corrected, it displaced the floor-to-wall junction by
+     * 1.26 px, which is a defensible inferior mirage and measured as one.
+     *
+     * The first thing a viewer said about it was that the mid distance looked
+     * like it was melting. That settles it: a refractive warp is an *effect*, and
+     * a viewer who can name the effect rather than the scene has already found
+     * the fault, whatever the measurement says. Necessary is not sufficient, and
+     * where a metric and a perception disagree the perception decides.
+     *
+     * Kept whole rather than deleted, because the mechanism is sound and the
+     *      reason it is off is taste rather than correctness. `#shimmer=1` restores
+     * it. */
+    this.enabled = SHIMMER_WANTED;
     this.samples = 4;
     const nz = shimmerNoise(128);
     this.noise = nz.tex;
@@ -1400,15 +1435,10 @@ class Shimmer {
         uNInv: { value: nz.inv },
         uT: { value: 0 },
         uRes: { value: new THREE.Vector2(1, 1) },
-        /* Pixels rms at 900 lines, and now actually that — see the moments note
-           in shimmerNoise. The old 3.0 was delivering 0.50 px at m = 1 and 0.24
-           at the floor-to-wall junction, which is where a critic measured it as
-           indistinguishable from the antialiasing floor and was right to.
-           2.2 puts roughly 2 px on a long grazing sightline over hot floor, under
-           1 px on a mesa skyline 400 m up, and nothing inside six metres. That
-           ordering is the point: an inferior mirage lives on the grazing ray, and
-           the brief rules out a full-screen wobble. */
-        uAmp: { value: 2.2 },
+        /* Zero unless the effect is switched on. The pass itself may still run
+           when the shafts need its depth, and in that case this has to be zero
+           or the warp comes back through the side door. */
+        uAmp: { value: this.enabled ? SHIMMER_AMP : 0 },
         uCam: { value: new THREE.Vector3() },
         uGroundY: { value: 0 },
         uInvVP: { value: new THREE.Matrix4() },
@@ -1490,7 +1520,9 @@ void main() {
   m *= smoothstep(6.0, 26.0, dist);
 
   vec2 d = vec2(0.0);
-  if (m > 0.004) {
+  /* uAmp is zero whenever the effect is off, and the branch is frame-coherent,
+     so this skips the noise taps entirely rather than multiplying them away. */
+  if (uAmp > 0.0 && m > 0.004) {
     /* Two layers rising at different rates. Screen space is the right domain
        for the *cells* — they are between the eye and everything, at no
        particular distance — but their size must not change with resolution,
@@ -1625,6 +1657,9 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
      frame. renderer.info is reset per render() call, so there is nowhere else
      to catch it. */
   const lastInfo = { calls: 0, triangles: 0 };
+  /* Did the offscreen pass actually run this frame? Not the same question as
+     whether the shimmer is enabled, now that the shafts can require it. */
+  let ranPass = false;
 
   const W = { gust: 0, sal: 0, dirX: 0, dirZ: 1, speed: 0.5, heading: WIND_HEADING };
   let clock = wind.CAP_LO;          // the atmosphere's own time, in audio-clock seconds
@@ -1717,9 +1752,44 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
      */
     composite(scn, cam) {
       const gy = syncCamera();
-      if (!shimmer.enabled) return false;
+
+      /* The dust field's shadow lookup, hoisted above every early return.
+         It used to sit further down, inside the branch that only runs when the
+         shimmer pass does — so switching the shimmer off silently un-shadowed
+         all 34,000 motes and put them back to scattering full sunlight inside
+         every wall shadow. Nothing about a mote's shadowing has anything to do
+         with whether a screen-space warp is enabled. */
+      {
+        const sm = sun.shadow && sun.shadow.map;
+        const du = dust.material.uniforms;
+        du.uHasShadow.value = sm ? 1 : 0;
+        if (sm) {
+          du.uShadowMap.value = sm.texture;
+          du.uShadowMat.value.copy(sun.shadow.matrix);
+        }
+      }
+
+      /* Whether to run the pass at all.
+       *
+       * Two things ride on this target besides the warp: the marched in-scatter
+       * needs its depth texture to know where the ray stops, and System 7's
+       * defocus reads the same depth. So "shimmer off" and "pass off" are not
+       * the same switch, and conflating them would have deleted the light shafts
+       * along with the effect nobody wanted.
+       *
+       * When neither wants it, returning false hands the frame to post.js, whose
+       * fallback draws the scene straight into its own target — one full-res
+       * RGBA16F target and one full-res blit less per frame, which is the largest
+       * single bandwidth item in the scene.
+       *
+       * To get that saving *with* the shafts on, sceneRT in post.js needs a depth
+       * texture instead of its current depth renderbuffer; then this pass can go
+       * away entirely and the march can read theirs. That is System 7's file and
+       * their call, so it is written up rather than done here. */
+      if (!shimmer.enabled && !shafts.enabled) { ranPass = false; return false; }
       const w = renderer.domElement.width, h = renderer.domElement.height;
-      if (!w || !h) return false;
+      if (!w || !h) { ranPass = false; return false; }
+      ranPass = true;
       shimmer.resize(w, h);
       renderer.setRenderTarget(shimmer.rt);
       renderer.render(scn, cam);
@@ -1738,22 +1808,6 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
          The shadow map is read every frame rather than cached: three allocates
          it on the first shadow render, so at construction time it is null, and
          it is reallocated whenever the quality governor changes the map size. */
-      /* The dust field's own shadow lookup, fed from the same place. Set before
-         the scene pass would be too early on the first frame — three allocates
-         the shadow map during that pass — so it is set here and picked up by the
-         next one. The dust is a field of unresolvable specks whose whole job is
-         to say where the light is; one frame of latency on that is not
-         observable, and it keeps this to a single place. */
-      {
-        const sm = sun.shadow && sun.shadow.map;
-        const du = dust.material.uniforms;
-        du.uHasShadow.value = sm ? 1 : 0;
-        if (sm) {
-          du.uShadowMap.value = sm.texture;
-          du.uShadowMat.value.copy(sun.shadow.matrix);
-        }
-      }
-
       if (shafts.enabled) {
         shafts.resize(w, h);
         const sm = sun.shadow && sun.shadow.map;
@@ -1779,7 +1833,7 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
       return true;
     },
     /** Scene-pass draw call and triangle counts, excluding the composite. */
-    lastInfo() { return shimmer.enabled ? lastInfo : null; },
+    lastInfo() { return ranPass ? lastInfo : null; },
     /* The marched in-scatter, for the quality governor in perf.js.
      *
      * Three rungs rather than a switch, because the pass degrades gracefully in
@@ -1839,8 +1893,14 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
        the target on the way out so re-enabling rebuilds it from scratch rather
        than reusing one that has been sitting unbound. */
     setShimmer(b) {
-      shimmer.enabled = !!b;
-      if (!b && shimmer.rt) {
+      /* Conjunction, not assignment: this is the performance tier's opinion, and
+         it cannot overrule the look decision in SHIMMER_WANTED. */
+      shimmer.enabled = !!b && SHIMMER_WANTED;
+      shimmer.mat.uniforms.uAmp.value = shimmer.enabled ? SHIMMER_AMP : 0;
+      /* Only give the target back if nothing else wants it. The marched
+         in-scatter reads its depth texture, so disposing it here while the
+         shafts are on would drop them too. */
+      if (!shimmer.enabled && !shafts.enabled && shimmer.rt) {
         shimmer.rt.depthTexture.dispose();
         shimmer.rt.dispose();
         shimmer.rt = null;
