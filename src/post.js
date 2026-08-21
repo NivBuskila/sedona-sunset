@@ -107,6 +107,31 @@ export const POST_DEFAULTS = {
      rather than choices. */
   contrast: 1.03, contrastPivot: 0.5,
 
+  /* The shadow toe, and it exists because the contrast term above was quietly
+     destroying shadow detail. A pivoted gain is algebraically a gain *plus a
+     negative offset*: (e - p)k + p is ke - (k-1)p, so it is a subtractive black
+     point at (k-1)p/k encoded, which at k 1.03 and p 0.5 is 3.7 code values.
+     Everything below that clamped to zero. Measured on the shaded wall face,
+     2.2% of it was pinned at exactly zero against 0.0% ungraded, and the first
+     percentile went from 3 code values to 0. Clipped shadow does not read as
+     dark, it reads as a hole, and System 4 was being asked to dim into it.
+     So below `toeTop` the curve is replaced by a cubic Hermite that matches the
+     contrast line's value and slope at toeTop and is pinned at the origin with
+     slope `toeSlope`. Nothing can clip, and because the mean slope over the toe
+     is forced below one while the slope at the top of it is k, a low toeSlope
+     buys slope *above* one in the middle of the band — the level comes down,
+     which is what the shadow-to-sunlit gate wants, and the local gradient goes
+     up, which is what the structure metric wants.
+     Where the knee sits matters more than how deep it is, and this is the whole
+     tuning rule: the shaded face has to land on the steep flank, not inside the
+     toe. Measured on two ungraded builds through tools/_p7toe.mjs, the same
+     curve at toeTop 0.17 moved the shaded face's gradient +10% on a build whose
+     face sat at 33 code values and -10% on one whose face sat at 14. So
+     **toeTop wants to be about two and a half times the shaded face level**,
+     and it needs revisiting whenever the fill moves. At the present face of
+     ~15 code values that is 0.111. `#toe=` and `#toes=` sweep it. */
+  toeTop: 0.111, toeSlope: 0.20,
+
   /* Defocus. A physical thin-lens circle of confusion, so the shape of the
      falloff is not a free parameter: 24 mm at f/11 focused at 20 m on a 24 mm
      sensor. That is what a landscape photographer at golden hour is actually
@@ -345,6 +370,13 @@ export function createPost({ renderer, camera, atmo, sun }) {
      the claim that the ceiling is an identity on the present frame gets tested
      rather than asserted: capture with and without and diff the files. */
   P.flareKnee = num('fknee', P.flareKnee);
+  /* The shadow toe is a trade between the shadow-to-sunlit gate and structure on
+     the lit side, and it has to be re-tuned whenever the fill moves, so both
+     ends of it are sweepable from the URL without a rebuild. `#toe=0` restores
+     the plain pivoted contrast, black point and all, which is how the toe's own
+     contribution gets separated from the rest of the grade. */
+  P.toeTop = num('toe', P.toeTop);
+  P.toeSlope = num('toes', P.toeSlope);
   let disabled = /(^|[#&])nopost(\b|$|&)/.test(hash);
 
   const plate = grainPlate(256);
@@ -623,6 +655,7 @@ ${GHOSTS.map(([t, r, tr, tg, tb, gi]) => `    {
       uVibrance: { value: P.vibrance },
       uContrast: { value: P.contrast },
       uContrastPivot: { value: P.contrastPivot },
+      uToe: { value: new THREE.Vector2(P.toeTop, P.toeSlope) },
 
       uGrain: { value: P.grain },
       uGrainOff: { value: new THREE.Vector2() },
@@ -657,6 +690,7 @@ uniform float uSplitPivot;
 uniform float uVibrance;
 uniform float uContrast;
 uniform float uContrastPivot;
+uniform vec2 uToe;
 
 uniform float uGrain;
 uniform vec2 uGrainOff;
@@ -798,8 +832,8 @@ void main() {
   gl_FragColor = vec4(o, 1.0);
   #include <colorspace_fragment>
 
-  /* Contrast, after the encode and on luminance alone. Both of those are
-     corrections that were measured rather than reasoned.
+  /* Contrast and the shadow toe: one transfer curve on encoded luminance.
+     Two things about it were corrections that were measured rather than reasoned.
      Luminance alone, because a uniform scale of all three channels leaves HSV
      saturation and hue exactly where they were, and the per-channel version of
      this term moved lit rock's saturation by 0.086 — four times the whole rest
@@ -810,11 +844,30 @@ void main() {
      symptom was wall_lit midwall dropping from L 0.143 to 0.113 for a term
      that is supposed to be imperceptible. In the encoded domain, which is where
      a photographer's contrast slider lives, the same gain moves that shadow by
-     7%. */
+     7%.
+     And the third: a pivoted gain has a negative offset in it and therefore a
+     black point, which was clipping 2.2% of the shaded wall face to zero. The
+     Hermite below toeTop removes that. See POST_DEFAULTS for the measurement
+     and for the rule about where the knee belongs.
+     At uGrade 0 every coefficient collapses to the identity — k is 1, vA is A,
+     the toe slope is 1, and the Hermite reduces to A*u, which is e. So the
+     chain remains provably a no-op against #nopost on every contract figure. */
   if (uGrade > 0.0) {
     float k = mix(1.0, uContrast, uGrade);
+    float p = uContrastPivot;
+    float A = uToe.x;
     float le = luma(gl_FragColor.rgb);
-    float te = clamp((le - uContrastPivot) * k + uContrastPivot, 0.0, 1.0);
+    float te;
+    if (le >= A || A <= 0.0) {
+      te = clamp((le - p) * k + p, 0.0, 1.0);
+    } else {
+      float s0 = mix(1.0, uToe.y, uGrade);
+      float vA = (A - p) * k + p;
+      float u = le / A, u2 = u * u, u3 = u2 * u;
+      te = max(0.0, A * s0 * (u3 - 2.0 * u2 + u)
+                  + vA * (-2.0 * u3 + 3.0 * u2)
+                  + A * k  * (u3 - u2));
+    }
     gl_FragColor.rgb = clamp(gl_FragColor.rgb * (le > 1e-4 ? te / le : 1.0), 0.0, 1.0);
   }
 
@@ -1063,6 +1116,7 @@ void main() {
     fu.uVibrance.value = P.vibrance;
     fu.uContrast.value = P.contrast;
     fu.uContrastPivot.value = P.contrastPivot;
+    fu.uToe.value.set(P.toeTop, P.toeSlope);
     fu.uGrain.value = P.grain;
     fu.uFocus.value = P.focus;
     fu.uFarCoc.value.set(P.farPx * (h / 900), P.farA, P.farB);
