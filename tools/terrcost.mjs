@@ -49,13 +49,16 @@ const ABLATIONS = [
      by `wide`, which is zero in the near field, so there they are already a
      no-op that is paid for anyway; and getShadow under PCFSoft is nine
      comparisons, times four extra taps, times two cascades. */
-  ['shadowWide',
-    'float m = getShadow(sm, sz, si, sb, sr, sc + vec4( t.x,  t.y, 0.0, 0.0))',
-    'float m = 4.0 * s; if (false) m = getShadow(sm, sz, si, sb, sr, sc + vec4( t.x,  t.y, 0.0, 0.0))'],
-  /* Every shadow lookup this material makes, including the stock one. Not a
-     proposal — it deletes the cast shadows — but it prices the whole shadow
-     term against everything else in the shader. */
-  ['shadowAll', 'float s = getShadow(sm, sz, si, sb, sr, sc);', 'float s = 1.0;'],
+  ['shadowWide', 'if (wide > 0.02) {', 'if (false) {'],
+  /* The centre tap on its own: one stock getShadow, sixteen comparisons under
+     PCF_SOFT, times two directional lights. It carries the penumbra and cannot
+     go, but it is the other half of the bill and the table should say so. */
+  ['shadowCentre', 'float s = getShadow(sm, sz, si, sb, sr, sc);', 'float s = 1.0;'],
+  /* Every shadow lookup this material makes at once. Not a proposal — it
+     deletes the cast shadows — but it prices the whole shadow term against
+     everything else in the shader. */
+  ['shadowAll', 'float s = getShadow(sm, sz, si, sb, sr, sc);',
+    'return gRake; float s = getShadow(sm, sz, si, sb, sr, sc);'],
   /* The raking grain march: nine fetches, eight of them in a loop. */
   ['rakeMarch', 'if (rakeW * grainF > 0.002) {', 'if (false) {'],
   /* Steep reprojection: six fetches on bank faces. */
