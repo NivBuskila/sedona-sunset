@@ -702,10 +702,11 @@ export function computeAtmosphere(over = {}) {
      over the lower forty percent of the wall and 0.5 to 0.75 at the crest. A
      smoothstep integrates to exactly one half over its span, so a crest of 0.57
      starting at four tenths of the skyline height gives a mean of 0.171 against
-     a measured 0.170. This is the only escarpment parameter that matters: the
-     sweep in tools/_wsweep.mjs moves the shaded fill from B/R 0.27 to 0.94
-     across its range, while the wall's own sky visibility moves the ratio by
-     0.002 and can be left alone. */
+     a measured 0.170. This is the only escarpment parameter that matters: swept
+     over its range it moves the shaded fill from B/R 0.27 to 0.94, while the
+     wall's own sky visibility moves the shadow-to-sunlit ratio by 0.002 and can
+     be left alone — the wall's radiance is set by what the sun does to its
+     crest, not by the sky it sees. */
   const WALL_LIT = over.wallLit ?? 0.57;            // sunlit fraction at the crest
   const LIT_FOOT = over.litFoot ?? 0.40;            // height it starts, as a fraction
   const FLOOR_VIEW = over.floorView ?? 0.5;         // vertical face over an infinite plane

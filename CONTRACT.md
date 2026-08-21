@@ -452,6 +452,73 @@ Geometry is the only ground truth. `window.__game._three` exists so a probe can 
 Raycaster; a dynamic `import('three')` inside an evaluate context hangs rather than
 throwing, which cost seven minutes of wall clock before that was understood.
 
+### The wash is a room with one lit doorway, and the fill was modelled as open country
+
+The skylight fill's level is set by an escarpment term in `src/atmos.js` that had two reasoned
+constants in it: a coverage of 0.46 of the horizon thinning out at 31 degrees. `tools/skyview.mjs`
+now measures what they were guessing at, by firing a hemisphere of rays from the standard
+viewpoints. The skyline round a point on the wash floor stands at **36 to 54 degrees at eleven of
+twelve bearings, with a single window at 15 degrees — at bearing 189, which is the sun's own
+bearing to within a degree.**
+
+Both constants were low, and the lateral weighting was worse than low. It credited open sky
+up-canyon, where the skyline is 45 degrees, and up-canyon is exactly the bearing the
+away-from-sun fill integrates over. A wall face was being given 0.89 of the sky where geometry
+gives it **0.215**, which is why substituting rock for sky moved the fill by 2.3% instead of the
+factor it should.
+
+Replacing the band with a measured skyline reproduces the raycast on all four normals — blocked
+0.407 / 0.818 / 0.768 / 0.524 modelled against 0.431 / 0.800 / 0.785 / 0.575 measured — so the
+parameters are calibrated to geometry and the gate moving is a consequence rather than a fit.
+
+Two further things the rays settled:
+
+- **Sky visibility is a function of height, not position along the wash.** It is 0.20 to 0.30 on a
+  lateral normal at 18, 46, 78 and 120 m, but climbs 0.215 → 0.262 → 0.321 → 0.456 → 0.744 →
+  0.954 from the floor to 70 m up. The rim is near 65 m.
+- **The sunlit fraction of that skyline is 0.123 to 0.218** across the viewpoints, and it is zero
+  over the lower forty percent of the wall and 0.5 to 0.75 at the crest. A smoothstep integrates
+  to exactly one half over its span, so a crest of 0.57 starting at four tenths of the height
+  gives a mean of 0.171 against a measured 0.170. That makes it a measurement, not a knob.
+
+It is also the *only* escarpment parameter that matters. Swept over its range it moves the shaded
+fill from B/R 0.27 to 0.94, while the wall's own sky visibility moves the shadow-to-sunlit ratio
+by 0.002 — the wall's radiance is set by what the sun does to its crest, not by the sky it sees.
+Bounce from a floor that is seventy percent sunlit is an obligatory term (a vertical face over an
+infinite Lambertian plane collects radiance × π/2, so the coefficient is geometry) and it is worth
++0.009 on the ratio.
+
+**The estimator matters more than the lighting.** On one build, shadow-to-sunlit reads 0.125
+comparing the darkest 40% against the brightest 40% within `wall_lit`, and 0.37 comparing a flat
+shaded face in `wall_shade` against a flat sunlit one in `wall_lit`. Three times, from the choice
+of population alone. `tools/fillprobe.mjs --ratio` uses the first, matching the 40/40 split
+`sat.mjs` and `hue.mjs` use, so a ratio and a colour always describe the same two populations —
+but the target's provenance is critics with image tools on photographs, which is the second.
+Quote the estimator whenever quoting the ratio, and note that on a region more than about two
+thirds sunlit the darkest 40% is not shadow at all and the number is meaningless: `wash_mid` and
+`ground` read 0.33 to 0.39 for that reason alone.
+
+Two costs came with it. Floor grad/L went from 0.141 to 0.186 against a 0.12–0.16 target, and the
+shaded wall face from 0.044 to 0.021.
+
+The first is headroom rather than damage. Floor structure is a modulation of direct light, so its
+contrast scales with how far shadowed bed sits below sunlit bed: the same authored texture now
+reads 32% more contrasty, which is the direction five rounds of work on that bed were trying to
+reach against a stated ceiling of 0.038 high-pass RMS versus 0.115–0.137 in photographs.
+Amplitude is the cheap knob for landing back inside the band; contrast that was not there is not.
+
+The second is a real defect. That face is lit by fill alone, and at mean relative luminance 0.039
+its gradient of 0.0075 is only a few code values, so 8-bit quantisation and the grade's black
+floor start eating the structure. It is the binding constraint on how dim the fill may go.
+
+**A penumbra widening was tried as the explanation for the first cost, and it is not.** The theory
+was that hard shadow edges convert shadow depth straight into local gradient, and the far
+cascade's 3.5-texel kernel is 0.18 m where a half-degree sun behind rock 50 m away throws 0.46 m.
+Measured: floor grad/L 0.186 at 3.5 texels and **0.186 at 10**, shaded wall 0.019 against 0.021.
+Cast-shadow edges are too small a share of a region's pixels to register in a nine-pixel
+high-pass. Reverted, because rpBias scales with radius and 10 texels nearly triples the
+receiver-plane bias for no measured gain.
+
 ### Blue chips on the wash floor — a scatter defect that a lit floor makes visible
 
 Not System 4's, but System 4's light is what reveals it, and the mechanism is the one
