@@ -1087,8 +1087,34 @@ export function buildWalls(path, terrain, material) {
    touched. The four distance steps — 550, 800, 1000, 1450 metres — are chosen
    against the fog so the haze passes them in legibly separated stages instead of
    flattening them into one veil. */
+/* `butte0` moved from [-118, 545] on 22 Aug, and the reasoning is worth keeping
+   because the obvious moves are all wrong and the measurements say why.
+   Enabling castShadow on these meshes fixed a lit-parallelogram defect and
+   exposed a placement one that the disabled flag had been hiding: 148 m of rock
+   at 323 m, crest subtending 22.7 degrees, straddling the sun's bearing, and at
+   15 degrees of elevation laying 600 m of shadow straight down the hero canyon —
+   81% of the wash floor's value and 59% of the lit wall. It was also what hid the
+   disc in two of the four views the sun is judged from.
+   The trap is that the gap up the wash is narrow and the sun is *in* it. Measured
+   from sun_gap, the near wall crest falls 24 degrees at azimuth -14 to 3 degrees
+   at 0, so a butte is only visible at all to the right of about -13, which is
+   where the sun sits. Every candidate that shifts it left far enough to clear the
+   bearing — 160 m, 230 m, 520 m, at four distances — measures 0.0 degrees of
+   skyline above the wall. That is not moving the formation, it is deleting it
+   behind a wall, which the brief rules out. Lowering fails for the same reason
+   from the other end: below 15 degrees it no longer clears a 15-to-24 degree wall
+   crest at its own azimuth, so it vanishes too.
+   What works is distance. Back 560 m and left 40 puts the crest at 9.9 degrees —
+   five clear of the sun, so it cannot occlude the disc at any azimuth — lays the
+   shadow tip at z -510, a hundred and fifty metres up-wash of the corridor's far
+   end, and leaves it 3.5 degrees wide and 2.0 degrees above the wall crest, in
+   the same role this table already gives its two long-distance entries: a hazed
+   mass under the sun. It also gains the left side a depth step, standing behind
+   butte2 at 318 m of separation rather than in front of it.
+   Skyline within +-6 degrees of the sun's bearing: measured per half-degree
+   against every butte silhouette from all four viewpoints, the rise is 0.00. */
 const BUTTES = [
-  [-118,  545,  95, 2.05], [ 142,  615, 105, 2.30],
+  [-158, 1105,  95, 2.05], [ 142,  615, 105, 2.30],
   [-222,  800, 125, 2.45], [ 268,  905, 135, 2.20],
   [  40,  845, 155, 0.78], [ 205, 1010, 180, 0.92],
   [-520,  665, 155, 1.85], [ 560,  745, 165, 1.70],
