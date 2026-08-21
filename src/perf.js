@@ -129,6 +129,13 @@ import * as THREE from 'three';
    palest, the smallest on screen, and by 5 km the airlight is nine tenths of
    the pixel, so what a bottom tier loses by dropping them is a tone step rather
    than an object. */
+/* Deliberately not on the ladder: System 4's probe height lerp, the term that
+   blends the wash floor's sky aperture toward the open sky as a surface climbs.
+   tools/shadercost.mjs puts it at zero texture fetches and zero derivatives —
+   four sqrts and about eleven vec3 multiply-adds on a scene that pays twenty-odd
+   dependent fetches per ground pixel. Gating it would need a #define, so a tier
+   change would recompile every lit program mid-play, and a compile hitch costs
+   more than the term does in its whole lifetime. Leave it on at potato. */
 export const QTIERS = [
   { name: 'high',   shadowFar: 4096, shadowNear: 2048, shimmer: true,  samples: 4, dust: 1.00, salt: 1.00, far: 4, softShadow: true,  post: { bloom: 4, dofTaps: 12, flare: 2 } },
   { name: 'medium', shadowFar: 3072, shadowNear: 1536, shimmer: true,  samples: 2, dust: 0.70, salt: 0.70, far: 4, softShadow: true,  post: { bloom: 4, dofTaps:  6, flare: 2 } },

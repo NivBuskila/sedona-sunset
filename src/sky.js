@@ -548,8 +548,101 @@ export function buildLights() {
      where the energy in this sky actually is. */
   const probe = new THREE.LightProbe(A.sh.clone(), 1);
   probe.sh.scale(SCALE);
+  installProbeHeightLerp(A);
 
   return { sun, sunNear, probe };
+}
+
+/* One probe is one aperture, and the aperture is a strong function of height.
+ * tools/skyview.mjs measured it: on a lateral normal a point on the wash floor
+ * sees 0.215 of the sky, and 0.954 at 70 m up. A LightProbe is a single SH set
+ * for the whole scene, so every surface was being handed the floor's figure —
+ * which underlights the walls, and the shaded wall face that is crushing spans
+ * roughly 5 to 40 m of height where geometry gives it 0.3 to 0.7.
+ *
+ * So carry two environments and lerp between them: the measured skyline, and the
+ * same sky with the escarpment removed. Irradiance is linear in the SH
+ * coefficients, so the difference is itself an SH and one extra nine-term
+ * evaluation covers it — not two probes.
+ *
+ * The ground half of both environments is identical by construction, but that
+ * does *not* leave undersides untouched, and it would be easy to claim it does:
+ * SH9 is a low-order fit, so the sky coefficients leak into a down-facing cosine
+ * lobe. Measured in tools/probefit.mjs, a downward normal goes 0.0109 0.0082
+ * 0.0074 to 0.0138 0.0107 0.0088 across the full lerp — 19 to 30 percent
+ * brighter at the rim, and still warm, R above G above B at both ends.
+ *
+ * Baked as literals rather than plumbed as uniforms, following src/aerial.js:
+ * the environment is fixed for a weather instant, and a global chunk patch would
+ * otherwise need its uniform added to every material three builds.
+ *
+ * UNVERIFIED against a rendered frame. The CPU check in tools/probefit.mjs is
+ * good — rms 0.050 in sky visibility across four normals and six heights, level
+ * with the 0.02-0.05 the skyline model itself achieves — but the residual is not
+ * uniform: it reaches +0.13 on the sun-facing normal high up, because even above
+ * the rim that bearing still has far skyline in it while the open probe assumes
+ * clear sky. Those surfaces are direct-dominated, so it lands where the fill is
+ * the smallest share of the light. */
+let BASE_PARS = null, BASE_FRAG = null;
+
+function installProbeHeightLerp(A) {
+  /* Exactly three's shGetIrradianceAt constants, folded into the coefficients.
+     Read out of the build rather than remembered. */
+  const K = [0.886227, 2 * 0.511664, 2 * 0.511664, 2 * 0.511664,
+    2 * 0.429043, 2 * 0.429043, 1, 2 * 0.429043, 0.429043];
+  const lit = (k) => {
+    const o = A.shOpen.coefficients[k], s = A.sh.coefficients[k], f = SCALE * K[k];
+    return `vec3(${((o.x - s.x) * f).toFixed(7)},${((o.y - s.y) * f).toFixed(7)},` +
+      `${((o.z - s.z) * f).toFixed(7)})`;
+  };
+  /* Fitted in tools/probefit.mjs against the raycast table. The two ramps exist
+     because the thing that differs between normals is not the level but the
+     rate: an up-facing surface is already half open at the floor and saturates
+     early, a wall face starts nearly shut and opens late. World Y is used raw —
+     the wash floor lies between -1.56 and +1.51 m of zero over the whole 220 m
+     traverse, which is three percent of the ramp's scale. */
+  const PARS = /* glsl */`
+#if defined( USE_LIGHT_PROBES ) && defined( USE_FOG )
+  vec3 s4ProbeDelta( vec3 n ) {
+    float x = n.x, y = n.y, z = n.z;
+    return ${lit(0)} + ${lit(1)} * y + ${lit(2)} * z + ${lit(3)} * x
+      + ${lit(4)} * ( x * y ) + ${lit(5)} * ( y * z )
+      + ${lit(6)} * ( 0.743125 * z * z - 0.247708 )
+      + ${lit(7)} * ( x * z ) + ${lit(8)} * ( x * x - y * y );
+  }
+  float s4ProbeOpen( float wy, float ny ) {
+    /* The free-exponent fit wanted 1.46 and 1.12; pinning them to 1.5 and 1.125
+       gives the same residual to three decimals (0.045 and 0.029), so the two
+       pow calls buy nothing and become a sqrt chain. */
+    float a = clamp( wy * 0.018692, 0.0, 1.0 );
+    float b = clamp( wy * 0.020619, 0.0, 1.0 );
+    float tl = a * sqrt( a );
+    float tu = b * sqrt( sqrt( sqrt( b ) ) );
+    return mix( tl, tu, clamp( ny, 0.0, 1.0 ) );
+  }
+#endif
+`;
+  /* Rebuild from the pristine chunks every time rather than appending to
+     whatever is there. Appending twice redefines a GLSL function, and appending
+     once with stale coefficients after a weather change is worse — it fails
+     silently and the fill is then wrong by however much the sky moved. */
+  if (BASE_PARS === null) {
+    BASE_PARS = THREE.ShaderChunk.lights_pars_begin;
+    BASE_FRAG = THREE.ShaderChunk.lights_fragment_begin;
+  }
+  const ANCHOR = 'irradiance += getLightProbeIrradiance( lightProbe, geometryNormal );';
+  if (!BASE_FRAG.includes(ANCHOR)) {
+    throw new Error('sky.js: three\'s light-probe line moved; the height lerp is not installed');
+  }
+  THREE.ShaderChunk.lights_pars_begin = BASE_PARS + PARS;
+  THREE.ShaderChunk.lights_fragment_begin =
+    BASE_FRAG.replace(ANCHOR, `${ANCHOR}
+    #if defined( USE_FOG )
+      {
+        vec3 s4wn = inverseTransformDirection( geometryNormal, viewMatrix );
+        irradiance += s4ProbeDelta( s4wn ) * s4ProbeOpen( vFogW.y, s4wn.y );
+      }
+    #endif`);
 }
 
 /** Everything the report needs, and a guard against the model drifting. */

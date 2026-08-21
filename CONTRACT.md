@@ -528,17 +528,52 @@ The second is a real defect. That face is lit by fill alone, and at mean relativ
 its gradient of 0.0075 is only a few code values, so 8-bit quantisation and the grade's black
 floor start eating the structure. It is the binding constraint on how dim the fill may go.
 
-**Open, and it may be most of that second cost: the probe is built for the floor, and the walls
+**Built, and unverified against a rendered frame: the probe was built for the floor, and the walls
 are not on the floor.** The rays measured sky visibility climbing 0.215 → 0.262 → 0.321 → 0.456 →
 0.744 → 0.954 from the wash floor to 70 m up, but a `LightProbe` is one set of SH coefficients for
-the whole scene, so every surface is given the floor's aperture. The shaded wall face that is
+the whole scene, so every surface was given the floor's aperture. The shaded wall face that is
 crushing spans roughly 5 to 40 m of height, where geometry gives it 0.3 to 0.7 of the sky against
-the 0.215 the probe assumes — so something like a factor of two of that crush is self-inflicted,
-and recoverable *without* touching the escarpment or the ratio. The fix is two probes rather than
-one, the measured skyline and the open sky, lerped per fragment by world height on the measured
-ramp; a scalar multiply on indirect is the cheap version and is wrong in structure, because it
-removes the sky without adding the rock that replaces it. Worth doing after System 7's grade work,
-since the crush metric moves when they change the black floor.
+the 0.215 the probe assumed — so something like a factor of two of that crush is self-inflicted,
+and recoverable *without* touching the escarpment or the ratio.
+
+`src/atmos.js` now also integrates the same environment with the escarpment removed, and
+`src/sky.js` lerps between the two per fragment on world height. Irradiance is linear in the SH
+coefficients, so the difference is itself an SH and one extra nine-term evaluation covers it
+rather than two probes. A scalar multiply on indirect would have been the cheap version and is
+wrong in kind: it removes the sky without adding the rock that replaces it, which is the old
+lateral-band error running backwards.
+
+What the CPU can and cannot settle, from `tools/probefit.mjs`:
+
+- **The constant folding is exact.** `closed + delta` reproduces three's own `shGetIrradianceAt`
+  on the open probe to 5.9e-16 relative, across five normals. Worth checking rather than trusting,
+  because a wrong basis constant would have shown up as nothing more specific than a slightly flat
+  frame.
+- **The ramp fit is level with the skyline model's own calibration**: rms 0.050 in sky visibility
+  over four normals and six heights, against 0.02–0.05 for the skyline itself. Two ramps blended on
+  `normal.y`, because what differs between normals is the *rate* — an up-facing surface is already
+  half open at the floor and saturates early, a wall face starts nearly shut and opens late.
+- **The residual is not uniform.** It reaches +0.13 on the sun-facing normal high up, because even
+  above the rim that bearing still has far skyline in it while the open probe assumes clear sky.
+  Those surfaces are direct-dominated, so the error lands where the fill is the smallest share of
+  the light.
+- **Undersides are not untouched, and it would be easy to claim they are.** The ground half of both
+  environments is identical by construction, but SH9 is low order and the sky coefficients leak
+  into a down-facing lobe: a downward normal goes 0.0109 0.0082 0.0074 to 0.0138 0.0107 0.0088
+  across the full lerp. Still warm at both ends, R above G above B.
+- **World Y is used raw.** The wash floor lies between −1.56 and +1.51 m of zero over the whole
+  220 m traverse, which is three percent of the ramp's 53.5 m scale.
+
+Not on the quality ladder, deliberately: zero texture fetches and zero derivatives by
+`tools/shadercost.mjs`, four sqrts and about eleven vec3 multiply-adds. Gating it would need a
+`#define`, so a tier change would recompile every lit program mid-play, and one compile hitch
+costs more than the term does in its lifetime. The free-exponent fit wanted 1.46 and 1.12; pinning
+to 1.5 and 1.125 gives the same residual to three decimals, so two `pow` calls became a sqrt chain
+for nothing.
+
+The one capture this needs should be taken after System 7's black-floor work, since the crush
+metric moves when they change it — and it should be one shot reporting the crush and the ratio
+together, not an iteration loop.
 
 **A penumbra widening was tried as the explanation for the first cost, and it is not.** The theory
 was that hard shadow edges convert shadow depth straight into local gradient, and the far

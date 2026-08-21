@@ -780,6 +780,17 @@ export function computeAtmosphere(over = {}) {
      surfaces, which is how the provisional rig turned every pale clast top into
      blue-grey card. */
   const sh = new THREE.SphericalHarmonics3();
+  /* And the same environment with the escarpment taken away, which is what a
+     surface above the rim actually sees. One probe is one aperture, and the
+     aperture the rays measured is a strong function of height — 0.215 of the sky
+     on a lateral normal at the wash floor, 0.954 at 70 m — so handing every
+     surface the floor's figure underlights the walls by about a factor of two
+     where they are crushing. src/sky.js lerps between the two by world height.
+     The ground half is deliberately identical in both, so the environment's
+     difference is purely the sky-versus-rock substitution — which does not leave
+     undersides untouched, because SH9 is low order and the sky coefficients leak
+     into a down-facing lobe by 19 to 30 percent. */
+  const shOpen = new THREE.SphericalHarmonics3();
   const basis = [0, 0, 0, 0, 0, 0, 0, 0, 0];
   const dir = new THREE.Vector3();
   const d3 = [0, 0, 0], env = [0, 0, 0], wall = [0, 0, 0];
@@ -824,6 +835,14 @@ export function computeAtmosphere(over = {}) {
           sh.coefficients[k].y += basis[k] * env[1] * dw;
           sh.coefficients[k].z += basis[k] * env[2] * dw;
         }
+        const op0 = d3[1] < 0 ? localGround[0] : sky0;
+        const op1 = d3[1] < 0 ? localGround[1] : sky1;
+        const op2 = d3[1] < 0 ? localGround[2] : sky2;
+        for (let k = 0; k < 9; k++) {
+          shOpen.coefficients[k].x += basis[k] * op0 * dw;
+          shOpen.coefficients[k].y += basis[k] * op1 * dw;
+          shOpen.coefficients[k].z += basis[k] * op2 * dw;
+        }
 
         const cS = Math.max(0, (d3[0] * sunH[0] + d3[2] * sunH[2]));
         for (let k = 0; k < 3; k++) {
@@ -841,7 +860,7 @@ export function computeAtmosphere(over = {}) {
     lut, SKY_W, SKY_H,
     sunRGB, sunLum, sunSpec: SUN_SPEC,
     mieTintRGB, groundRGB, groundSpec,
-    sh,
+    sh, shOpen,
     irradiance: { horizontal: eH, vertSun: eVsun, vertAnti: eVanti, skyHorizontal: eSkyH },
     directHorizontal: [sunRGB[0] * sy, sunRGB[1] * sy, sunRGB[2] * sy],
     ms,
