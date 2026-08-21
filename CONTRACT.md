@@ -2438,6 +2438,27 @@ Confirmed on HEAD with a matched ungraded capture and no page errors: lit rock *
 and the registration warp, the varnish density and the apron phase warp in `11e67dc` are
 cleared by measurement rather than by argument.
 
+**One follow-on reading, for whoever shoots the colour handoff.** A second ungraded capture
+half an hour later, across `639309d` (the shadow penumbra sized from the sun's angular
+diameter) and System 1's in-flight terrain work, reads `wall_lit` lit rock at **saturation
+0.687, hue 19.1°, B/G 0.642, V 0.704**. Hue and B/G are in band; the saturation is not, and it
+is a level effect rather than a pigment one:
+
+| | `s2v`, before | `s2x`, after |
+| --- | --- | --- |
+| lit-population saturation | 0.621 | 0.687 |
+| lit-population saturation p95 | 0.740 | **1.000** |
+| whole-window mean max channel | 58.6 cv | **56.7 cv** |
+| pixels with a channel at 254+ | 0.00% | **0.33%** |
+| sky mean | 154.8 | 154.5 |
+
+The window got *darker* on the mean while its top began to clip, and the sky is identical to
+three tenths of a code value. That is a contrast change on geometry — which is what resizing
+a penumbra does — and HSV saturation is (max − min)/max, so a clipped red channel over an
+unclipped blue one raises it mechanically. **Re-read this figure after the penumbra settles,
+and read the clipped fraction beside it**; nothing in `src/rock.js` moved between the two
+captures except the head of the corridor, forty metres behind this camera.
+
 ## Triangles are not what this frame costs, and the frame costs 31 ms
 
 `tools/bench.mjs` on the real adapter, 2560×1440, top tier, median of seven blocks of thirty:
