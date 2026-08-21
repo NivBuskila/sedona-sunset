@@ -75,6 +75,30 @@ await run({ width: 800, height: 450 }, async ({ page, errs }) => {
       gl.drawElements = realDraw;
       if (realDrawI) gl.drawElementsInstanced = realDrawI;
 
+      /* Mean horizontal gradient of the finished frame, off the default
+         framebuffer. Not a quality metric — a smoke test for the one thing the
+         fallback path could get silently wrong. On that branch the defocus reads
+         sceneRT's depth *texture*, which on a multisampled target only exists
+         because three blits the depth attachment down when it resolves. If that
+         resolve did not happen the depth would read as the near plane
+         everywhere, the circle of confusion would peg at its maximum over the
+         whole frame, and the number below would collapse. Comparing it between
+         the two branches is what turns "the handover should work" into a
+         measurement. */
+      let gradSum = 0, gradN = 0;
+      try {
+        const cw = r.domElement.width, chh = r.domElement.height;
+        const buf = new Uint8Array(cw * chh * 4);
+        gl.readPixels(0, 0, cw, chh, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+        for (let y = 0; y < chh; y += 3) {
+          for (let x = 1; x < cw; x += 1) {
+            const i = (y * cw + x) * 4, j = i - 4;
+            gradSum += Math.abs(buf[i] - buf[j]) + Math.abs(buf[i + 1] - buf[j + 1]);
+            gradN += 2;
+          }
+        }
+      } catch (e) { gradN = 0; }
+
       /* Tag what we can identify, so the list is readable. */
       const post = g._post && g._post._diag ? g._post._diag : null;
       const atmo = g._atmo || null;
@@ -86,6 +110,7 @@ await run({ width: 800, height: 450 }, async ({ page, errs }) => {
         targets: post ? post.targets : null,
         shafts: atmo && atmo.shaftInfo ? atmo.shaftInfo().enabled : 'unknown',
         draws,
+        grad: gradN ? gradSum / gradN : null,
         seen: order.map(k => ({ key: k, ...seen.get(k) })),
       };
     };
@@ -114,7 +139,8 @@ await run({ width: 800, height: 450 }, async ({ page, errs }) => {
     console.log(`\n── ${run.label} ──`);
     console.log(`post sceneRT: ${JSON.stringify(run.sceneRT)}`);
     console.log(`ownDraw (System 7 drew the scene): ${run.targets ? run.targets.ownDraw : '?'}` +
-                `    shaft pass: ${run.shafts}`);
+                `    shaft pass: ${run.shafts}` +
+                `    frame mean |dx|: ${run.grad === null ? 'n/a' : run.grad.toFixed(2)} CV`);
     console.log(`framebuffers bound during one frame (${run.draws} indexed draws total):`);
     console.log('  driver SAMPLES   binds   draws');
     for (const s of run.seen) {

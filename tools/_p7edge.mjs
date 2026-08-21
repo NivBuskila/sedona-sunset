@@ -211,8 +211,12 @@ for (const f of files) {
      and a render per candidate would make sweeping it a morning's work rather
      than a minute's. resolve() is the shader's arithmetic, so these are
      predictions of a capture and are checked against one afterwards. */
+  /* Bracketing the shipped 70-130. The sweep is what chose it: 40 moved a
+     standard crop's hf/lf onto the gate exactly, and 90 gave up 3 to 5 code
+     values of edge on every view to recover a single hundredth on one crop that
+     was already below the gate without any chain at all. */
   if (a.includes('--gate')) {
-    for (const [t0, t1] of [[30, 80], [40, 90], [55, 110], [70, 130]]) {
+    for (const [t0, t1] of [[40, 90], [70, 130], [90, 150], [110, 170]]) {
       const sim = resolve(im, { t0, t1, amt: 0.75 });
       rows.push([`  gate ${t0}-${t1} at 0.75`, edges(sim)]);
       const out = `shots/_gate${t0}_${f.replace(/^shots\//, '')}`;
