@@ -39,7 +39,19 @@ const views = only ? VIEWS.filter(v => only.split(',').includes(v.name)) : VIEWS
 const shotsDir = path.join(DIR, 'shots');
 fs.mkdirSync(shotsDir, { recursive: true });
 
-await run({ width: W, height: H }, async ({ page, errs }) => {
+/* The harness gives `window.__game` two minutes to appear, which was ample when
+   the page was a height field and a sky gradient. Measured with tools/boot.mjs
+   it is now 370 seconds on four cores — every texture in the scene is written
+   texel by texel before the first frame — so every capture was failing with a
+   bare `waitForFunction: Timeout`, which is indistinguishable from a page that
+   threw. Readiness is waited for here instead, with a budget sized to the boot
+   we actually have. Nothing in harness.mjs changes and neither does VIEWS. */
+await run({ width: W, height: H, waitReady: false }, async ({ page, errs }) => {
+  const t0 = Date.now();
+  await page.waitForFunction(() => !!window.__game, null, { timeout: 1_200_000 });
+  console.log(`  boot ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+  await page.evaluate(() => window.__game.begin());
+
   // one settle pass so procedural textures and any deferred geometry are resident
   await page.waitForTimeout(4000);
 
