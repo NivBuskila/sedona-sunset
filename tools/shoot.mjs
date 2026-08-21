@@ -48,7 +48,7 @@ fs.mkdirSync(shotsDir, { recursive: true });
    we actually have. Nothing in harness.mjs changes and neither does VIEWS. */
 await run({ width: W, height: H, waitReady: false }, async ({ page, errs }) => {
   const t0 = Date.now();
-  await page.waitForFunction(() => !!window.__game, null, { timeout: 1_200_000 });
+  await page.waitForFunction(() => !!window.__game, null, { timeout: 420_000 });
   console.log(`  boot ${((Date.now() - t0) / 1000).toFixed(0)}s`);
   await page.evaluate(() => window.__game.begin());
 
