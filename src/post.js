@@ -1122,6 +1122,16 @@ void main() {
      saturation and hue exactly where they were, and the per-channel version of
      this term moved lit rock's saturation by 0.086 — four times the whole rest
      of the grade.
+     Worth being explicit that this covers the toe below as well, because the toe
+     was once suspected of a 0.07 saturation excursion on lit rock and the shape
+     of the curve is irrelevant to the question. Whatever te comes out of it, the
+     pixel is multiplied by te/le, and HSV saturation is (max-min)/max and hue is
+     an angle between differences — both invariant under a positive scalar. The
+     only way this term can touch either is the clamp at 1.0, which pulls channels
+     together and therefore lowers saturation. Measured on a frozen pair across
+     all eight viewpoints, graded saturation came out equal to or below the
+     ungraded control in every one, and on lit rock the difference was 0.001 at
+     0.2 degrees of hue. A saturation *rise* cannot come from here.
      After the encode, because a pivoted contrast in *linear* light is far more
      aggressive in the shadows than it looks: at a pivot of 0.18 and a gain of
      1.03 a shadow sitting at 0.02 linear comes out 24% darker, and the measured
