@@ -498,6 +498,53 @@ function wallGrid(path, terrain, side) {
     cCrest[i] = Math.max(1.5, crest * endFade);
   }
 
+  /* Where the colluvial apron meets the rock. The wedge cannot guess this: the
+     wall's face at any height is `toe` plus a recess, a proud offset and four
+     joint offsets, and a head placed at `toe` alone would sit outside the rock
+     wherever a fin stands forward and hang in the air. So the apron's head is
+     read off the wall's own `u` at the row the apron reaches, recorded as the
+     column is built and handed out with the grid.
+     Height is set by the chutes, because an apron is a row of coalescing cones
+     fed by the gullies above it and not a fillet of even thickness — where a
+     chute delivers it stands ten metres up the wall, and between them it thins
+     to a metre or two of scree. */
+  const apH = new Float32Array(nu), apU = new Float32Array(nu);
+  const jHead = new Int32Array(nu);
+  for (let i = 0; i < nu; i++) {
+    const s = cS[i];
+    /* Zero between the chutes rather than a thin skirt everywhere. A continuous
+       wedge along four hundred metres of wall is a fillet, and a fillet reads as
+       modelling; an apron is a row of cones under the gullies that feed them,
+       with bare rock between where nothing is delivered. It also bounds the
+       damage the wedge does to System 1's scatter, which roots its plants at
+       terrain height and so loses their bases anywhere the apron stands over
+       them — confining that to the cones keeps it to a fraction of the wall
+       instead of all of it. */
+    /* Measured rather than guessed, because the first two settings bracketed it
+       from both sides: a continuous 2.2 m floor put a fillet along the whole
+       wall, and a 0.46 threshold cut cover to 28% and five cones in 390 m, which
+       left `wall_lit` with no apron in frame at all. This is 74 to 81% cover,
+       five to seven cones, mean height 3.2 m and the tallest near nine — an
+       apron that is present in most framings and genuinely absent between the
+       gullies. */
+    const chute = smoothstep(0.36, 0.80,
+      0.5 + 0.5 * fbm(s * 0.021, side > 0 ? 23 : 47, 3, 419));
+    /* Capped at a share of the wall it leans on, which matters at the two ends of
+       the corridor and nowhere else: the curtain is walked down to a metre and a
+       half there so the sun's gap stays open, and an apron sized independently
+       would have stood ten metres above a wall that is no longer there — putting
+       System 2's debris on System 4's skyline in the one view they are still
+       fighting for. A talus cone cannot be taller than its own cliff anyway. */
+    apH[i] = Math.min(10.0 * chute, 0.45 * cCrest[i]);
+    const want = Y_ANCHOR + apH[i];
+    let bj = 0, bd = 1e9;
+    for (let j = 0; j < COL.n; j++) {
+      const d = Math.abs(COL.Y[j] - want);
+      if (d < bd) { bd = d; bj = j; }
+    }
+    jHead[i] = bj;
+  }
+
   for (let i = 0; i < nu; i++) {
     const s = cS[i];
     const dat = cBed[i], toe = cToe[i], ret = cRet[i], prd = cPrd[i], crest = cCrest[i];
@@ -601,6 +648,8 @@ function wallGrid(path, terrain, side) {
       u += 0.55 * fbm(s * 0.052, yc * 0.070, 2, 397 + li)
          + 0.24 * fbm(s * 0.105, yc * 0.150, 1, 401);
 
+      if (j === jHead[i]) apU[i] = u;
+
       const k = j * nu + i;
       pos[k * 3] = cX[i] + cNx[i] * u;
       pos[k * 3 + 1] = dat + yc;
@@ -658,7 +707,8 @@ function wallGrid(path, terrain, side) {
   cavityPass(att, uu, nu, nv);
   const hard = new Uint8Array(nv);
   hard.set(COL.H);
-  return { pos, att, nu, nv, hard };
+  return { pos, att, nu, nv, hard,
+    foot: { x: cX, z: cZ, nx: cNx, nz: cNz, s: cS, h: apH, u: apU } };
 }
 
 /* How far a point sits back from its own neighbourhood. A cleft between two fins,
@@ -799,6 +849,180 @@ function creasedMesh(grid, cosT, flip) {
   return g;
 }
 
+/* ── the colluvial apron ───────────────────────────────────────────────────
+ *
+ * The whole-scene critique ranks this fifth overall and calls it "the structural
+ * reason the two systems don't feel connected": the walls rise straight out of
+ * smooth rounded benches, with nothing between the rock and the ground.
+ *
+ * The obvious response — more talus blocks — was measured and rejected. The wash
+ * banks occlude the wall foot in most of the eight framings, so blocks lying on
+ * the floor are cover the camera never sees. What is missing is not clasts, it is
+ * a *landform*: a wedge of debris banked against the wall that climbs it, breaks
+ * its bottom edge, and stands high enough to clear the bank crest. That is the
+ * join the critic is describing, and it is on the rock side of the boundary —
+ * System 1 keeps the wash floor and its fines.
+ *
+ * The construction is a cone slope, not a fillet. It springs from the wall face
+ * at the height the chutes deliver to, falls at the angle of repose, and stops
+ * where the ground overtakes it — which is a different distance in every column,
+ * so the outer edge is found by marching rather than set. Two consequences worth
+ * stating: where the bank falls away faster than repose the apron stands proud
+ * as a cone, which is what talus actually does; and where the bank is already
+ * steeper, the apron buries itself and contributes nothing, which is correct and
+ * costs only the triangles.
+ */
+const AP_ROWS = 9;
+/* 34 degrees. Dry angular sandstone rubble sits between 32 and 37, and the top
+   of that band reads as a scree cone while the bottom reads as a ramp. */
+const AP_TAN = Math.tan(34 * Math.PI / 180);
+/* Every second wall column. The apron's shape is driven by the chutes at a
+   fifty-metre period and by the bays at ninety, so 1.24 m of along-wash sampling
+   is four times finer than anything it carries. */
+const AP_STRIDE = 2;
+/* Below this the cone is not worth drawing and the column is sunk out of sight
+   instead, which is what makes the apron a row of discrete cones rather than a
+   continuous fillet along four hundred metres of wall. */
+const AP_MIN_H = 0.6;
+
+/* The apron profile, per wall column, cached per side so the talus can be laid
+ * on the landform instead of under it.
+ *
+ * The first build put the wedge in and left buildTalus placing its blocks at
+ * terrain.heightAt, which is now several metres *below* the apron wherever a
+ * cone stands — so every block was buried inside the thing it is supposed to be
+ * the surface of, and the apron rendered as a smooth sand ramp. The blocks are
+ * the apron's texture; the wedge is only its shape. They have to agree, and the
+ * cheapest way for them to agree is for both to read the same profile.
+ *
+ * buildWalls is evaluated before buildTalus in main.js's array literal and
+ * JavaScript evaluates those left to right, so the cache is populated by the
+ * time the talus asks for it. If it ever is not, apronYAt returns -Infinity and
+ * the talus falls back to the terrain, which is where it used to be.
+ */
+const APRON = new Map();
+
+function apronProfile(foot, terrain, side) {
+  const src = foot.x.length;
+  const uH = new Float32Array(src), yTop = new Float32Array(src);
+  const len = new Float32Array(src), live = new Uint8Array(src);
+  for (let i = 0; i < src; i++) {
+    const x = foot.x[i], z = foot.z[i], nx = foot.nx[i], nz = foot.nz[i];
+    const H = foot.h[i];
+    /* Driven two and a half metres into the rock, so the head is buried whatever
+       the joint offsets are doing locally and there is no lip to catch the light
+       along the contact. */
+    const u = foot.u[i] + 2.5;
+    const g = terrain.heightAt(x + nx * u, z + nz * u);
+    uH[i] = u;
+    live[i] = H >= AP_MIN_H ? 1 : 0;
+    /* Between the chutes the whole column is put three metres under the ground,
+       which hides it without a special case anywhere else. */
+    yTop[i] = live[i] ? g + H : g - 3.0;
+    const Lmax = H / AP_TAN * 2.4 + 6;
+    let L = Lmax;
+    for (let d = 1.0; d <= Lmax; d += 0.5) {
+      const yy = yTop[i] - d * AP_TAN + 0.11 * AP_TAN * d * d / Lmax;
+      if (yy < terrain.heightAt(x + nx * (u - d), z + nz * (u - d)) - 0.4) { L = d + 1.5; break; }
+    }
+    len[i] = L;
+  }
+  const p = { s0: foot.s[0], ds: foot.s.length > 1 ? foot.s[1] - foot.s[0] : 1,
+    n: src, uH, yTop, len, live };
+  APRON.set(side, p);
+  return p;
+}
+
+/** Surface height of the apron at arc-length `s`, `u` metres out from the path,
+ *  or -Infinity where there is no apron over that point. */
+function apronYAt(side, s, u) {
+  const p = APRON.get(side);
+  if (!p) return -Infinity;
+  const i = Math.round((s - p.s0) / p.ds);
+  if (i < 0 || i >= p.n || !p.live[i]) return -Infinity;
+  const d = p.uH[i] - u;
+  if (d < 0 || d > p.len[i]) return -Infinity;
+  return p.yTop[i] - d * AP_TAN + 0.11 * AP_TAN * d * d / p.len[i];
+}
+
+function apronGrid(foot, terrain, side) {
+  const p = apronProfile(foot, terrain, side);
+  const src = foot.x.length;
+  const nu = Math.floor((src - 1) / AP_STRIDE) + 1;
+  const nv = AP_ROWS;
+  const pos = new Float32Array(nu * nv * 3);
+  const att = new Float32Array(nu * nv * 4);
+
+  for (let ii = 0; ii < nu; ii++) {
+    const i = Math.min(src - 1, ii * AP_STRIDE);
+    const x = foot.x[i], z = foot.z[i], nx = foot.nx[i], nz = foot.nz[i], s = foot.s[i];
+    const uH = p.uH[i], yTop = p.yTop[i], L = p.len[i];
+    /* Slightly concave up — a talus slope is at repose near its head and flattens
+       into its own toe as the fines wash out — with the concavity written as a
+       fraction of the drop so it does not change the angle at the head, only the
+       tail. */
+    const yAt = (d) => yTop - d * AP_TAN + 0.11 * AP_TAN * d * d / Math.max(L, 1e-3);
+
+    for (let r = 0; r < nv; r++) {
+      const t = r / (nv - 1);           // 0 at the outer toe, 1 at the head
+      const d = (1 - t) * L;
+      const u = uH - d;
+      /* Chutes and flutes down the slope. Zero at both ends so it can neither
+         break the seal at the toe nor push the head back out of the rock. */
+      const shape = Math.sin(Math.PI * Math.min(1, t * 1.12));
+      let y = yAt(d)
+        + (0.55 * fbm(s * 0.075, d * 0.05, 2, 431)
+         + 0.28 * fbm(s * 0.23, d * 0.10, 2, 433)) * shape;
+      /* The outer row is driven under the ground it lands on, for the same
+         reason the back slope is: it makes the seal a property of the
+         construction rather than of the terrain happening to cooperate. */
+      if (r === 0) y = Math.min(y, terrain.heightAt(x + nx * u, z + nz * u) - 1.2);
+
+      const k = r * nu + ii;
+      pos[k * 3] = x + nx * u;
+      pos[k * 3 + 1] = y;
+      pos[k * 3 + 2] = z + nz * u;
+      /* Held at the contact rather than following the slope, for the reason the
+         back slope documents: a stratigraphic coordinate that climbs a slope
+         paints bedding diagonally across it, and bedding is horizontal. The
+         debris flag in z is what the shader reads to shade this as colluvium
+         instead of as a rock face, which is what it is. */
+      att[k * 4] = Y_ANCHOR;
+      att[k * 4 + 1] = s;
+      att[k * 4 + 2] = -1;
+      att[k * 4 + 3] = 0.5;
+    }
+  }
+  return { pos, att, nu, nv, hard: new Uint8Array(nv) };
+}
+
+/** Mean of the normal attribute's y, for the winding check below. */
+function meanNormalY(g) {
+  const n = g.getAttribute('normal');
+  let a = 0;
+  for (let i = 1; i < n.array.length; i += 3) a += n.array[i];
+  return a / (n.array.length / 3);
+}
+
+function buildApron(grid, terrain, material, side) {
+  const ag = apronGrid(grid.foot, terrain, side);
+  /* The apron's grid runs along the wash in u and *outward* in v, where the
+     wall's runs along the wash and *upward*, so the handedness is not the same
+     and is not the same on both sides either. Rather than reason it out — the
+     far ridgelines cost a whole capture to a winding argument that was wrong —
+     build it, measure which way the normals point, and rebuild flipped if the
+     surface is facing into the ground. An apron is very nearly horizontal, so
+     mean normal y is unambiguous. */
+  let g = creasedMesh(ag, Math.cos(0.9), side < 0);
+  if (meanNormalY(g) < 0) g = creasedMesh(ag, Math.cos(0.9), side >= 0);
+  const m = new THREE.Mesh(g, material);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  m.frustumCulled = false;
+  m.name = 'apron' + (side > 0 ? 'R' : 'L');
+  return m;
+}
+
 export function buildWalls(path, terrain, material) {
   const out = [];
   for (const side of [1, -1]) {
@@ -819,13 +1043,15 @@ export function buildWalls(path, terrain, material) {
          band, and those are gentler than any arris worth creasing. The other half
          of the quilt was the spall scar switching 1.5 m of offset over four
          hundredths of its driver, which is fixed above. */
-      const g = creasedMesh(wallGrid(path, terrain, side), Math.cos(0.78), side < 0);
+      const grid = wallGrid(path, terrain, side);
+      const g = creasedMesh(grid, Math.cos(0.78), side < 0);
     const m = new THREE.Mesh(g, material);
     m.castShadow = true;
     m.receiveShadow = true;
     m.frustumCulled = false;
     m.name = 'wall' + (side > 0 ? 'R' : 'L');
     out.push(m);
+    out.push(buildApron(grid, terrain, material, side));
   }
   return out;
 }
@@ -1153,7 +1379,25 @@ export function buildTalus(path, terrain, material) {
        it should be continuous. Nearly flat now, leaning slightly outward, which
        roughly doubles the blocks in the first few metres off the wall without
        touching the grading that makes the runout read. */
-    if (rand() > chute * (0.78 + 0.28 * t)) continue;
+    /* And weighted onto the wedge, which is the part the first build of the apron
+       got wrong in a way that was invisible until it was rendered. The blocks had
+       their own chute field at a thirteen-metre period and the apron's cones run
+       at forty-eight, from a different seed — so the two were uncorrelated, and
+       the cones came out as bare slopes with the rubble scattered on the flat
+       between them. That is backwards: the cone *is* the rockfall deposit, and
+       the blocks are its surface. Where a block lands on the apron it is now
+       given a floor, and off it the old rule is cut to a fifth.
+       The constants are solved rather than chosen. The first pair — a floor of
+       0.80 and off-apron at 0.55 — looked right and cost 270k triangles, because
+       the old rule's mean acceptance is only 0.225 and a floor of 0.80 is not a
+       redistribution, it is a near-tripling. The contract puts the ceiling at
+       ~3M and the scene arrived at 2.81M, so that setting spent the whole
+       remaining headroom of every system on one apron. This pair is 1.34x, about
+       forty thousand triangles, and it still leaves the cone six times the cover
+       of the swept ground beside it — which is the contrast that reads, not the
+       absolute count. */
+    const acc = chute * (0.78 + 0.28 * t);
+    if (rand() > (apronYAt(side, s, av) > -1e30 ? Math.max(acc, 0.32) : acc * 0.22)) continue;
 
     const x = p.x + nx * av, z = p.z + nz * av;
     /* Half-extent in metres. The exponent is what makes the grading: a cube root
@@ -1178,7 +1422,14 @@ export function buildTalus(path, terrain, material) {
        fines washed in around it and is half swallowed. This is the cheapest half
        of the burial cue — the sand fillet is the other half and belongs to
        System 1's scatter, which is where the wash floor's fines are. */
-    tr.set(x, terrain.heightAt(x, z) - r * (0.46 + 0.44 * rand()), z);
+    /* On the apron where there is one, on the ground where there is not. The
+       apron stands up to eleven metres above the height field, so a block laid
+       at terrain.heightAt under a cone is not a block on a talus slope, it is a
+       block inside a hill — which is exactly what the first build of the wedge
+       did, and why that apron rendered as bare sand. */
+    const yA = apronYAt(side, s, av);
+    const yS = Math.max(terrain.heightAt(x, z), yA === -Infinity ? -1e9 : yA);
+    tr.set(x, yS - r * (0.46 + 0.44 * rand()), z);
     e.set(rand() * 6.283, rand() * 6.283, rand() * 6.283);
     qt.setFromEuler(e);
     sc.set(r * (0.8 + rand() * 0.5), r * (0.55 + rand() * 0.5), r * (0.8 + rand() * 0.5));

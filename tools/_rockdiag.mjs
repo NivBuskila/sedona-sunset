@@ -68,7 +68,7 @@ await run({ width: W, height: H, waitReady: false }, async ({ page, errs }) => {
     };
   });
 
-  const variants = ['full', 'noshadow', 'nojoint', 'normals', 'flatnorm', 'shadowonly'];
+  const variants = (getf('vars', '') || 'full,noshadow,nojoint,normals,flatnorm,shadowonly').split(',');
 
   for (const v of views) {
     await page.evaluate(([d, yaw, pitch]) => {
@@ -85,6 +85,14 @@ await run({ width: W, height: H, waitReady: false }, async ({ page, errs }) => {
         if (which === 'normals') s.overrideMaterial = d.normal;
         if (which === 'flatnorm') s.overrideMaterial = d.flat;
         if (which === 'shadowonly') s.overrideMaterial = d.white;
+        /* The colluvial apron, on and off inside one page load. Comparing
+           against a capture from earlier in the night cannot attribute anything:
+           System 3 landed juniper work in between, so the vegetation in the two
+           frames is not the same vegetation. */
+        for (const n of ['apronL', 'apronR']) {
+          const o = s.getObjectByName(n);
+          if (o) o.visible = (which !== 'noapron');
+        }
         /* Shared uniform objects, so setting one value reaches every mesh that
            uses the rock material — walls, buttes and talus alike. */
         s.traverse((o) => {
