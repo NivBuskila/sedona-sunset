@@ -1661,6 +1661,44 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
      whether the shimmer is enabled, now that the shafts can require it. */
   let ranPass = false;
 
+  /* ---- who owns the full-frame pass ----------------------------------------
+   *
+   * Latched by the first call to renderShafts, which is System 7 saying it has
+   * a depth texture of its own and will drive the march itself. From then on
+   * this system stops drawing the scene into its own target and the target is
+   * handed back: a full-frame RGBA16F at four samples is about 100 MB of colour
+   * plus depth written and resolved every frame at 1080p, and once the shimmer is
+   * off it exists for nothing but the depth attachment.
+   *
+   * It has to be a latch rather than a constant because there are two callers
+   * with different capabilities. post.js's main path renders the scene into its
+   * own float target and then asks for the shaft buffer. Its `#nopost` path does
+   * not: it hands the frame straight back here, and on that path this pass is the
+   * only multisampling in the frame as well as the only thing that can march the
+   * shafts. Returning false unconditionally would have quietly stripped both
+   * antialiasing and light shafts out of every ungraded control set — which is
+   * the set that exists specifically so the graded one can be trusted.
+   *
+   * The cost of the latch is that on the first frame, before renderShafts has
+   * ever been called, this owns the pass and the march runs twice. One frame at
+   * startup, against carrying the target forever.
+   *
+   * `#handover=1` pre-latches it. That exists because the saving had to be
+   * measured before the call site existed on the other side, and it is worth
+   * keeping as a switch for measuring it again: with it set, this pass is gone
+   * whether or not anything is driving the march, which is the only way to price
+   * the target on its own rather than the target plus the march. */
+  let externalDriver = hashNum('handover', 0) > 0.5;
+
+  function releaseTarget() {
+    if (!shimmer.rt) return;
+    shimmer.rt.depthTexture.dispose();
+    shimmer.rt.dispose();
+    shimmer.rt = null;
+    shimmer.mat.uniforms.tScene.value = null;
+    shimmer.mat.uniforms.tDepth.value = null;
+  }
+
   const W = { gust: 0, sal: 0, dirX: 0, dirZ: 1, speed: 0.5, heading: WIND_HEADING };
   let clock = wind.CAP_LO;          // the atmosphere's own time, in audio-clock seconds
   /* Frozen means "the harness put us here". The contract requires that two
@@ -1782,11 +1820,15 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
        * RGBA16F target and one full-res blit less per frame, which is the largest
        * single bandwidth item in the scene.
        *
-       * To get that saving *with* the shafts on, sceneRT in post.js needs a depth
-       * texture instead of its current depth renderbuffer; then this pass can go
-       * away entirely and the march can read theirs. That is System 7's file and
-       * their call, so it is written up rather than done here. */
-      if (!shimmer.enabled && !shafts.enabled) { ranPass = false; return false; }
+       * Since System 7 now attaches a depth texture to sceneRT and drives the
+       * march through renderShafts, that is exactly what happens on the shipped
+       * path — see the externalDriver note above for why it is a latch and not
+       * simply `return false`. */
+      if (!shimmer.enabled && (externalDriver || !shafts.enabled)) {
+        ranPass = false;
+        releaseTarget();
+        return false;
+      }
       const w = renderer.domElement.width, h = renderer.domElement.height;
       if (!w || !h) { ranPass = false; return false; }
       ranPass = true;
@@ -1832,6 +1874,85 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
       renderer.render(shimmer.quadScene, shimmer.quadCam);
       return true;
     },
+    /* March the in-scatter against somebody else's depth, and hand back the
+     * buffer. This is the whole of the depth handover.
+     *
+     *   const tex = atmo.renderShafts(depthTexture, camera);
+     *   if (tex) { ...add it to the frame... }
+     *
+     * Three things about the buffer that are not guessable from its type, and
+     * getting any of them wrong will look like a bug somewhere else:
+     *
+     * 1. IT IS NEGATIVE, OR ZERO. NEVER POSITIVE. It is a correction to
+     *    in-scatter the fog chunk has already granted under the assumption that
+     *    nothing shadows the air, so it can only ever take light back out. Add it
+     *    with a positive gain and it darkens; the beams are the places it takes
+     *    nothing. Do not clamp it, do not abs it, do not treat it as an emissive
+     *    layer, and do not "fix" the sign — see the long note in the shader.
+     * 2. The gain is already applied. SHAFT_GAIN was set by measuring what the
+     *    pass costs the depth ladder across four settings, so a second gain on
+     *    top is a second, unmeasured decision. Add it at 1.0 unless there is a
+     *    reason on the record.
+     * 3. Half resolution, HalfFloat, linear filtered, so it wants sampling at
+     *    full-res UVs and will interpolate. It carries no alpha worth reading.
+     *
+     * Returns null when the pass is off, when there is no depth to march against
+     * or when the frame has no size — so a null return is normal and means "add
+     * nothing", not "something failed". The previous render target is restored
+     * before returning, because this is called in the middle of somebody else's
+     * frame and silently redirecting their output would be unforgivable. */
+    renderShafts(depthTexture, cam) {
+      externalDriver = true;
+      if (!shafts.enabled || !depthTexture || !cam) return null;
+      const w = renderer.domElement.width, h = renderer.domElement.height;
+      if (!w || !h) return null;
+
+      shafts.resize(w, h);
+      const su = shafts.mat.uniforms;
+      const sm = sun.shadow && sun.shadow.map;
+      su.uHasShadow.value = sm ? 1 : 0;
+      if (sm) {
+        su.uShadowMap.value = sm.texture;
+        su.uShadowMat.value.copy(sun.shadow.matrix);
+      }
+      su.tDepth.value = depthTexture;
+      su.uCam.value.copy(cam.position);
+      su.uInvVP.value
+        .multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)
+        .invert();
+
+      const prev = renderer.getRenderTarget();
+      renderer.setRenderTarget(shafts.rt);
+      renderer.render(shafts.quadScene, shafts.quadCam);
+      renderer.setRenderTarget(prev);
+      return shafts.rt.texture;
+    },
+    /* Which side owns the full-frame pass, and what that target costs while it
+     * exists. For tools/_a5hand.mjs, which is what proves the handover happened
+     * rather than asserting it — `owned` going false is the whole saving, and it
+     * is not visible in a frame, so nothing else could catch a regression here. */
+    passInfo() {
+      const rt = shimmer.rt;
+      const samples = rt ? (rt.samples | 0) : 0;
+      /* RGBA16F colour plus a 32-bit depth texture, times the sample count for
+         the colour, written and resolved. Bytes per frame, so a reader does not
+         have to reconstruct the arithmetic to know what dropping it buys. */
+      const px = rt ? rt.width * rt.height : 0;
+      return {
+        owned: !!rt,
+        externalDriver,
+        width: rt ? rt.width : 0,
+        height: rt ? rt.height : 0,
+        samples,
+        megabytesPerFrame: +((px * (8 * Math.max(1, samples) + 4)) / 1048576).toFixed(1),
+      };
+    },
+    /* The half-res marched buffer itself, for readRenderTargetPixels. Diagnostic
+       only — the texture is what callers want. It exists so the *sign* of the
+       correction can be asserted directly rather than inferred from whether the
+       frame got darker, which cannot be measured on a path where nothing
+       composites it yet. See tools/_a5hand.mjs. */
+    _shaftRT() { return shafts.rt; },
     /** Scene-pass draw call and triangle counts, excluding the composite. */
     lastInfo() { return ranPass ? lastInfo : null; },
     /* The marched in-scatter, for the quality governor in perf.js.
