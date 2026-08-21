@@ -360,6 +360,80 @@ near floor has nearly all of it. At 0.70 a shaded vertical goes **pink, hue 331*
 it reads B/R 1.29 at a 23% channel spread against 1.12 at 11%, and the underside keeps its
 warm bounce — the bounce's *hue* is 21 at every value in the sweep, only its weight moves.
 
+### The sun disc is hidden by two independent things, and geometry is the lesser one
+
+The brief asks three times for a visible sun low in the gap, and `sys7a` does not have
+one. It would be natural to spend geometry or sun position on that. Measured, neither
+would work on its own.
+
+**Occlusion.** `tools/sundisc.mjs` raycasts five rays across the disc's true angular width
+from each viewpoint's eye. At the shipped azimuth −9°, elevation 11° the disc is in frame
+in all four views and blocked in all four — by `butte0` at 469–493 m in the two wash views,
+and by `wallL` at **58 m** in `sun_gap` and `bend`. Two different occluders, and the one
+guarding the composition view is a near wall, not a distant butte. Candidates, all measured
+on the same worktree at HEAD:
+
+| candidate | disc | floor sunlit | floor grad/L | wall sat | wall V | wall grad/L |
+|---|---|---|---|---|---|---|
+| az −9, el 11 (shipped) | blocked, all 4 | 0.735 | 0.180 | 0.615 | 0.589 | 0.132 |
+| az −4, el 11 | **clear, all 4** | 0.800 | 0.147 | 0.545 | **0.247** | 0.143 |
+| az −10, el 18 | **clear, all 4** | 0.961 | **0.098** | 0.512 | 0.805 | 0.153 |
+
+The skyline has a real gap from azimuth −4° to +6° that is open at every elevation down to
+9°; the sun sits 5° outside it. So the cheap route is 5° of azimuth, and its cost is the
+lit wall — value 0.247, which puts the project's own rock-colour gate in shade. Elevation
+18° clears it while keeping the azimuth and lighting everything, and its cost is the
+floor's structure: grad/L 0.098 against a reference band of 0.12–0.16, because a sun that
+high stops raking. That is System 1's granular detail going flat again, and the brief's
+"heavy and low" with it.
+
+**Contrast, which is the one that actually matters.** A frame was rendered at az −4 where
+the disc is geometrically clear. It is still invisible, and the pixels say why: the
+brightest pixel sits exactly at the disc's predicted screen position, and the luminance
+profile across it reads 77, 177, 249, **255**, 249, 247, 247. The disc is seventeen
+saturated pixels on a plateau at 247 — a **3% contrast**. The near-sun sky is already in
+the tone curve's shoulder before the disc is drawn.
+
+Neither lever moves that. Raising the disc radiance from 40× the aureole peak to 1650×
+— a defect worth fixing on its own, see `src/sky.js`, since the cap was guarding half-float
+headroom that `tools/hdrmax.mjs` measures as unused by four orders of magnitude — only
+widens the clip: saturated pixels 17 → 23, pixels above L 250 873 → 1172, peak unchanged at
+255. Cutting exposure 1.15 → 0.90 moves the plateau 247 → 244 while taking the floor from
+0.800 to 0.690 sunlit and the wall from V 0.247 to 0.200. ACES's shoulder is compressing a
+22% exposure cut into three code values.
+
+**So the sun cannot be made visible by moving it, by brightening it, or by exposure.** What
+has to come down is the near-sun haze itself — System 5's in-scatter, whose source function
+a critic independently found to be neutral white while the sun reddens the rock, and which
+System 5 is correcting with solar transmittance and a Henyey–Greenstein phase. That
+correction reduces exactly the near-sun brightness that is clipping. **Do not spend a notch
+into `wallL` at 58 m, or the lit wall, until it lands** — either would buy a geometrically
+unoccluded disc that still reads as a 3% ripple, which is the frame that was just rendered.
+Re-measure with `tools/sundisc.mjs` afterwards; the azimuth decision is worth making then.
+
+### Three ways to ask "is the sun occluded" that all give wrong answers
+
+Kept because each failure looks like a result, and two of them produced tables that were
+confidently wrong before the third was tried.
+
+`tools/horizon.mjs` marches the terrain heightfield. The buttes are separate meshes, so it
+reported the sun clear at elevation 11 while System 7 reported it occluded from every
+viewpoint. Both were right about different geometry.
+
+Reading post's `_diag.sceneRT` gave two contradictory answers for the same candidate on
+consecutive runs: that buffer is only rewritten while the bloom chain is live, so the tier
+governor can turn it off on a slow frame and leave a *stale* frame to be measured.
+
+Testing a sky-off frame against black reported everything occluded — the grade lifts the
+black floor and adds grain, so no pixel in a finished frame is ever zero. Differencing a
+sky-on frame against a sky-off one then reported everything clear, because veiling glare is
+computed from the whole frame, so removing the sky perturbs every pixel including the ones
+standing on rock.
+
+Geometry is the only ground truth. `window.__game._three` exists so a probe can build a
+Raycaster; a dynamic `import('three')` inside an evaluate context hangs rather than
+throwing, which cost seven minutes of wall clock before that was understood.
+
 ### Blue chips on the wash floor — a scatter defect that a lit floor makes visible
 
 Not System 4's, but System 4's light is what reveals it, and the mechanism is the one

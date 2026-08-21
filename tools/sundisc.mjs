@@ -114,7 +114,8 @@ await run({ width: 800, height: 450, hash: 'high&noadapt' }, async ({ page, errs
         : r.cov === 0 ? 'CLEAR — disc visible'
           : r.cov < 1 ? `partial, ${Math.round(r.cov * 100)}% covered`
             : 'blocked';
-      console.log(`  ${r.view.padEnd(9)} ${where}  ${occ}`);
+      const by = r.hit ? `  by ${r.hit.name} at ${r.hit.dist} m` : '';
+      console.log(`  ${r.view.padEnd(9)} ${where}  ${occ}${by}`);
     }
   } else {
     /* One line per candidate: which viewpoints show the disc. sun_gap is the

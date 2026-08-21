@@ -255,12 +255,26 @@ export function buildSky() {
       uMieTint: { value: new THREE.Vector3(...A.mieTintRGB).multiplyScalar(SCALE) },
       uMieG: { value: MIE_G },
       /* The true radiance of the disc is the beam's irradiance divided by its
-         solid angle, which is some forty thousand times the brightest sky texel
-         and is not a number any tone curve is going to do something sensible
-         with before System 7 puts a bloom under it. Capped at forty times the
-         measured aureole peak: comfortably clipped, so the disc reads as white
-         with a warm fringe, without pushing float16 targets around. */
-      uDisc: { value: 40 * aureolePeak() },
+         solid angle, which is some forty thousand times the brightest sky texel.
+         This was capped at forty times the aureole peak to avoid "pushing
+         float16 targets around", and that caution was misplaced by three orders
+         of magnitude: tools/hdrmax.mjs reads the scene buffer and its finite
+         maximum is **2.89** against a half-float ceiling of 65504, so the
+         headroom the cap was protecting was never in use.
+         The cost of the cap was the brief's central composition. At forty times
+         the aureole the disc lands at 195, and the near-sun haze around it tone
+         maps to 247 while the disc clips at 255 — a **3% contrast**, seventeen
+         saturated pixels indistinguishable from the glare they sit in. Measured
+         on a frame where the disc was geometrically unoccluded, the brightest
+         pixel is exactly at the disc's predicted screen position and the profile
+         across it goes 77, 177, 249, 255, 249, 247, 247: a plateau with a pinprick
+         on it. The sun was not missing, it was the same colour as the sky.
+         1650x instead. That is still 24x below the guard in src/post.js and 8x
+         below the half-float ceiling, while putting the disc two orders of
+         magnitude above anything else in the frame, so any bright-pass threshold
+         catches it and System 7's ghost path has a real source. It is also
+         closer to the truth than 40x was. */
+      uDisc: { value: 1650 * aureolePeak() },
       uDiscTint: {
         value: new THREE.Vector3(...A.sunRGB).divideScalar(Math.max(...A.sunRGB)),
       },
