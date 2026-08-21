@@ -979,7 +979,41 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
     },
     /** Scene-pass draw call and triangle counts, excluding the composite. */
     lastInfo() { return shimmer.enabled ? lastInfo : null; },
-    setShimmer(b) { shimmer.enabled = !!b; },
+    /* Multisampling on the offscreen buffer the whole scene is drawn into, for
+       the quality governor in perf.js. It is by far the most expensive number
+       in this system and it is not obvious from looking at it: the target is
+       RGBA16F, so at 1920x1080 four samples is 66 MB of colour plus 33 MB of
+       depth written and then resolved every single frame. Two samples halves
+       that and zero quarters it. Nothing else about the pass changes.
+       Only the geometric edges of the scene depend on it, and the canvas has no
+       multisampling of its own to fall back on while this pass owns the frame,
+       so the top tier keeps four and the ladder spends them. Drops the target,
+       because resize() compares dimensions and would otherwise keep the old
+       sample count for a buffer of unchanged size. */
+    setShimmerSamples(n) {
+      const s = Math.max(0, n | 0);
+      if (s === shimmer.samples) return;
+      shimmer.samples = s;
+      if (shimmer.rt) {
+        shimmer.rt.depthTexture.dispose();
+        shimmer.rt.dispose();
+        shimmer.rt = null;
+      }
+    },
+    /* Toggling this at runtime is a development affordance, not a supported
+       path: it swaps the whole frame between two different framebuffers. Drop
+       the target on the way out so re-enabling rebuilds it from scratch rather
+       than reusing one that has been sitting unbound. */
+    setShimmer(b) {
+      shimmer.enabled = !!b;
+      if (!b && shimmer.rt) {
+        shimmer.rt.depthTexture.dispose();
+        shimmer.rt.dispose();
+        shimmer.rt = null;
+        shimmer.mat.uniforms.tScene.value = null;
+        shimmer.mat.uniforms.tDepth.value = null;
+      }
+    },
     /* The frame probe re-renders the scene with an override material to
        separate sky from ground. Points drawn through a mesh material come out
        as stray single texels, and in a 1/8-scale mask a stray texel is a whole
