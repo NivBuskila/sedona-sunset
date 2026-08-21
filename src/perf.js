@@ -96,12 +96,34 @@ import * as THREE from 'three';
  *   softShadow            PCFSoft is the most expensive filter three offers.
  *                         It cannot be changed after boot without recompiling
  *                         every material, so it is read once, at startup.
+ *   post                  System 7's chain, as three separate levers because
+ *                         they cost quite different things.
+ *                         `bloom` is the divisor of the low-resolution buffer
+ *                         the bright pass, the two blurs and the flare all run
+ *                         at, and 0 drops those four passes and their two
+ *                         RGBA16F targets entirely.
+ *                         `dofTaps` is the defocus gather. It is branch-gated
+ *                         on the circle of confusion, so it costs nothing over
+ *                         most of the frame and a lot on the metre or two of
+ *                         ground at the bottom of a downward view — which is
+ *                         also exactly where a struggling machine is least
+ *                         likely to be looking at anything interesting. 0
+ *                         compiles the gather out.
+ *                         `flare` is 2 for ghosts, veil and the anamorphic
+ *                         streak, 1 for ghosts and veil, 0 for neither. The
+ *                         streak is the expensive half at seventeen taps.
+ *                         The grade, the vignette, the aberration and the grain
+ *                         are not on the ladder at any tier. They are one pass
+ *                         that has to exist regardless — something has to tone
+ *                         map — and they are what the scene looks like, so
+ *                         spending them would change the picture rather than
+ *                         its quality.
  */
 export const QTIERS = [
-  { name: 'high',   shadowFar: 4096, shadowNear: 2048, shimmer: true,  samples: 4, dust: 1.00, salt: 1.00, softShadow: true  },
-  { name: 'medium', shadowFar: 3072, shadowNear: 1536, shimmer: true,  samples: 2, dust: 0.70, salt: 0.70, softShadow: true  },
-  { name: 'low',    shadowFar: 2048, shadowNear: 1024, shimmer: true,  samples: 0, dust: 0.45, salt: 0.40, softShadow: false },
-  { name: 'potato', shadowFar: 1024, shadowNear:  512, shimmer: false, samples: 0, dust: 0.25, salt: 0.20, softShadow: false },
+  { name: 'high',   shadowFar: 4096, shadowNear: 2048, shimmer: true,  samples: 4, dust: 1.00, salt: 1.00, softShadow: true,  post: { bloom: 4, dofTaps: 12, flare: 2 } },
+  { name: 'medium', shadowFar: 3072, shadowNear: 1536, shimmer: true,  samples: 2, dust: 0.70, salt: 0.70, softShadow: true,  post: { bloom: 4, dofTaps:  6, flare: 2 } },
+  { name: 'low',    shadowFar: 2048, shadowNear: 1024, shimmer: true,  samples: 0, dust: 0.45, salt: 0.40, softShadow: false, post: { bloom: 8, dofTaps:  0, flare: 1 } },
+  { name: 'potato', shadowFar: 1024, shadowNear:  512, shimmer: false, samples: 0, dust: 0.25, salt: 0.20, softShadow: false, post: { bloom: 0, dofTaps:  0, flare: 0 } },
 ];
 
 const RSCALE = [1.0, 0.88, 0.78, 0.68, 0.58];
@@ -202,11 +224,12 @@ class GpuTimer {
  * @param {THREE.Scene} o.scene
  * @param {THREE.PerspectiveCamera} o.camera
  * @param {object} o.atmo            the buildAtmosphere handle
+ * @param {object} [o.post]          the createPost handle
  * @param {THREE.DirectionalLight} o.sun      coarse cascade
  * @param {THREE.DirectionalLight} o.sunNear  fine cascade
  * @param {() => void} o.onResize    re-derive anything sized in device pixels
  */
-export function createPerf({ renderer, scene, camera, atmo, sun, sunNear, onResize }) {
+export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, onResize }) {
   const hash = (location.hash || '').toLowerCase();
   const flag = (re) => re.test(hash);
   const num = (key, dflt) => {
@@ -228,6 +251,13 @@ export function createPerf({ renderer, scene, camera, atmo, sun, sunNear, onResi
   const frameCap = num('fps', 0);
   const adapting = pinned < 0 && !flag(/noadapt/);
 
+  /* Kept only for the overlay's counts. The *ladder* goes through
+     atmo.setParticleFraction now: reaching in by name found `dust` and
+     `saltation` but not `saltation_far`, so every rung below the top left the
+     far saltation layer at full count — half the particle cost the tier
+     thought it had spent was still being paid. System 5 exposed the call for
+     exactly this, and it also owns the knowledge of how many layers there are,
+     which is not a thing this file should be tracking. */
   const dust = scene.getObjectByName('dust');
   const salt = scene.getObjectByName('saltation');
   const dustN = dust ? dust.geometry.attributes.position.count : 0;
@@ -276,13 +306,18 @@ export function createPerf({ renderer, scene, camera, atmo, sun, sunNear, onResi
       if (atmo.setShimmerSamples) atmo.setShimmerSamples(q.samples);
       atmo.setShimmer(q.shimmer);
     }
-    /* setDrawRange rather than rebuilding the buffers: the attribute data is
-       already resident, the particles are distributed by a hash over the index
-       so any prefix of them is still an even scatter, and the change costs one
-       number. Both clouds have frustumCulled off, so this is the only thing
-       that reduces their vertex cost at all. */
-    if (dust) dust.geometry.setDrawRange(0, Math.max(1, Math.round(dustN * q.dust)));
-    if (salt) salt.geometry.setDrawRange(0, Math.max(1, Math.round(saltN * q.salt)));
+    /* setDrawRange under the hood rather than rebuilding the buffers: the
+       attribute data is already resident, the particles are distributed by a
+       hash over the index so any prefix of them is still an even scatter, and
+       the change costs one number. Both clouds have frustumCulled off, so this
+       is the only thing that reduces their vertex cost at all. */
+    if (atmo && atmo.setParticleFraction) atmo.setParticleFraction(q.dust, q.salt);
+    else {
+      if (dust) dust.geometry.setDrawRange(0, Math.max(1, Math.round(dustN * q.dust)));
+      if (salt) salt.geometry.setDrawRange(0, Math.max(1, Math.round(saltN * q.salt)));
+    }
+
+    if (post && post.setLevel) post.setLevel(q.post);
   }
 
   function setRung(i) {
@@ -345,6 +380,14 @@ export function createPerf({ renderer, scene, camera, atmo, sun, sunNear, onResi
 
   let el = null;
   const _v2 = new THREE.Vector2();
+
+  /** Draw calls and triangles for the *scene* pass, not for the last blit. */
+  function sceneCounts() {
+    const s = (atmo && atmo.lastInfo && atmo.lastInfo()) ||
+              (post && post.lastInfo && post.lastInfo());
+    return s || renderer.info.render;
+  }
+
   function overlay() {
     if (!el) {
       el = document.createElement('div');
@@ -355,15 +398,23 @@ export function createPerf({ renderer, scene, camera, atmo, sun, sunNear, onResi
     }
     const i = renderer.info;
     const d = renderer.getDrawingBufferSize(_v2);
+    /* renderer.info is reset per render() call, and the last render of a frame
+       is now a full-screen triangle, so reading it directly reports `calls 1`.
+       The scene pass snapshots itself — System 5's when its stage ran, System
+       7's otherwise — which is what the counts in this readout have to mean if
+       anyone is going to compare them with the budget in CONTRACT.md. */
+    const s = sceneCounts();
     el.textContent =
       `${QTIERS[qi].name}${pinned >= 0 ? ' (pinned)' : ''}  scale ${(curScale()).toFixed(2)}  rung ${li}\n` +
       `fps ${fps.toFixed(0)}  cpu ${cpuMs.toFixed(2)}ms  ` +
       `gpu ${timer.available ? timer.ms.toFixed(2) + 'ms' : 'n/a'}  target ${target().toFixed(2)}ms\n` +
-      `buffer ${d.x}x${d.y}   calls ${i.render.calls}  tris ${(i.render.triangles / 1000) | 0}k  ` +
+      `buffer ${d.x}x${d.y}   calls ${s.calls}  tris ${(s.triangles / 1000) | 0}k  ` +
       `prog ${i.programs ? i.programs.length : 0}  tex ${i.memory.textures}\n` +
       `shadow ${sun.shadow.mapSize.x}/${sunNear.shadow.mapSize.x}  ` +
       `shimmer ${QTIERS[qi].shimmer ? QTIERS[qi].samples + 'x' : 'off'}  ` +
       `dust ${Math.round(dustN * QTIERS[qi].dust)}  salt ${Math.round(saltN * QTIERS[qi].salt)}\n` +
+      `post bloom ${QTIERS[qi].post.bloom ? '1/' + QTIERS[qi].post.bloom : 'off'}  ` +
+      `dof ${QTIERS[qi].post.dofTaps || 'off'}  flare ${QTIERS[qi].post.flare}\n` +
       gpuName;
   }
   /* F3, because that is where a debug readout lives and because it is the only
@@ -446,6 +497,7 @@ export function createPerf({ renderer, scene, camera, atmo, sun, sunNear, onResi
     stats() {
       const i = renderer.info;
       const d = renderer.getDrawingBufferSize(_v2);
+      const s = sceneCounts();
       return {
         tier: QTIERS[qi].name,
         scale: curScale(),
@@ -454,12 +506,13 @@ export function createPerf({ renderer, scene, camera, atmo, sun, sunNear, onResi
         cpuMs: +cpuMs.toFixed(3),
         gpuMs: timer.available ? +timer.ms.toFixed(3) : null,
         gpuTimerAvailable: timer.available,
-        calls: i.render.calls,
-        triangles: i.render.triangles,
+        calls: s.calls,
+        triangles: s.triangles,
         programs: i.programs ? i.programs.length : 0,
         textures: i.memory.textures,
         geometries: i.memory.geometries,
         shadow: [sun.shadow.mapSize.x, sunNear.shadow.mapSize.x],
+        post: post ? post.level : null,
         gpu: gpuName,
       };
     },

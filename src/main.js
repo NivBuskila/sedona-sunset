@@ -27,6 +27,7 @@ import { createAudio } from './audio.js';
 import { installAerial } from './aerial.js';
 import { buildAtmosphere } from './atmosphere.js';
 import { createPerf } from './perf.js';
+import { createPost } from './post.js';
 
 const EYE = 1.65;
 const DEG = Math.PI / 180;
@@ -217,6 +218,15 @@ const atmo = buildAtmosphere({
    point — a ReferenceError that stopped the page building at all. */
 let maskRT = null;
 
+/* ── System 7: post-processing ─────────────────────────────────────────────
+ *
+ * The grade, defocus, flare, vignette and grain. It composes with System 5's
+ * shimmer rather than replacing it — see src/post.js for how — so the frame
+ * still goes through exactly one heat-haze stage and comes out the other side
+ * as scene-linear radiance for this chain to tone map.
+ */
+const post = createPost({ renderer, camera, atmo, sun });
+
 /* ── System 7: the quality governor ────────────────────────────────────────
  *
  * Down here because it reaches into the atmosphere and into the particle clouds
@@ -227,7 +237,7 @@ let maskRT = null;
  * the settings this scene has always had.
  */
 const perf = createPerf({
-  renderer, scene, camera, atmo, sun, sunNear,
+  renderer, scene, camera, atmo, post, sun, sunNear,
   onResize() { syncViewport(); maskRT = null; },
 });
 
@@ -367,10 +377,11 @@ function renderOnce() {
   syncCamera();
   syncShadow();
   camera.updateMatrixWorld();
-  /* System 5's heat shimmer takes the frame through a render target, so it owns
-     the final blit when it is on. It falls back to a plain render otherwise, so
-     this stays one call either way. */
-  if (!atmo.composite(scene, camera)) {
+  /* System 7's chain owns the frame, and System 5's shimmer is its first stage
+     — post.render drives the composite and falls back to a plain scene render
+     if the tier has switched the shimmer off, so this stays one call whatever
+     the quality settings are. */
+  if (!post.render(scene, camera)) {
     renderer.setRenderTarget(null);
     renderer.render(scene, camera);
   }
@@ -391,7 +402,12 @@ function frame(t) {
   const t0 = performance.now();
   step(dt);
   audio.update(dt, player);
-  atmo.update(dt, Math.hypot(player.vx, player.vz) > 0);
+  const moving = Math.hypot(player.vx, player.vz) > 0;
+  atmo.update(dt, moving);
+  /* Same freeze rule as the atmosphere, for the same reason: the grain phase
+     must not advance through the 400 ms the harness waits between walkTo and
+     the capture, or two shots of one viewpoint differ. */
+  post.update(dt, moving);
   renderOnce();
   perf.endFrame(performance.now() - t0, dt);
   const inst = 1 / Math.max(1e-4, dt);
@@ -420,6 +436,7 @@ const api = {
        distance, so a capture is a fixed instant of the weather rather than of
        the wall clock. */
     atmo.setWalk(+d || 0);
+    post.setWalk(+d || 0);
   },
   lookAt(yawDeg, pitchDeg) {
     player.yaw = path.headingAt(currentS()) + (+yawDeg || 0) * DEG;
@@ -431,7 +448,8 @@ const api = {
     const i = renderer.info;
     /* renderer.info is reset per render() call, so after a shimmer composite it
        is describing the fullscreen triangle. The scene pass snapshots itself. */
-    const s = atmo.lastInfo() || { calls: i.render.calls, triangles: i.render.triangles };
+    const s = atmo.lastInfo() || post.lastInfo() ||
+      { calls: i.render.calls, triangles: i.render.triangles };
     return {
       calls: s.calls,
       triangles: s.triangles,
@@ -446,6 +464,7 @@ const api = {
   audio: audio.api,
   // handy while developing; not part of the contract
   _scene: scene, _camera: camera, _terrain: terrain, _path: path, _atmo: atmo,
+  _post: post,
   _instances: clasts.reduce((n, m) => n + m.count, 0),
 };
 
