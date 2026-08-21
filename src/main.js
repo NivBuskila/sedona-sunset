@@ -276,12 +276,20 @@ canvas.addEventListener('click', () => canvas.requestPointerLock());
    up the wash, the ground underfoot, a lit wall, a shaded one, the bend and the
    sun gap. Routed through the same walkTo/lookAt the harness uses, so a jump
    lands exactly where a capture would and cannot drift from it. */
+/* 1–5 are the capture framings, so what you see is what the critics see. 6–9
+   walk the rest of the wash, which runs about 340 m and which those five all
+   sit inside the first third of. 0 returns to the start. */
 const SPOTS = [
   { key: 'Digit1', d: 8,   yaw: 0,   pitch: -4 },  // low, entering the wash
   { key: 'Digit2', d: 46,  yaw: 0,   pitch: 0 },   // mid wash, toward the sun
   { key: 'Digit3', d: 62,  yaw: 34,  pitch: 3 },   // the juniper
   { key: 'Digit4', d: 92,  yaw: -22, pitch: 2 },   // the bend
   { key: 'Digit5', d: 120, yaw: 0,   pitch: 6 },   // the sun gap
+  { key: 'Digit6', d: 170, yaw: 0,   pitch: 2 },   // past the second bend
+  { key: 'Digit7', d: 220, yaw: 0,   pitch: 2 },   // the long straight
+  { key: 'Digit8', d: 270, yaw: 0,   pitch: 2 },   // the upper wash
+  { key: 'Digit9', d: 320, yaw: 0,   pitch: 4 },   // the far end
+  { key: 'Digit0', d: 0,   yaw: 0,   pitch: 0 },   // back to the start
 ];
 addEventListener('keydown', e => {
   const spot = SPOTS.find(s => s.key === e.code);
