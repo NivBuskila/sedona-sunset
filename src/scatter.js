@@ -536,9 +536,29 @@ export function buildScatter(terrain, tex) {
          coarsest mottle at hand scale and everything finer below the resolution
          the eye was looking at: the slab came out featureless, which was the
          single loudest defect in the set. */
+      /* ---- and this is where the level of detail has to be computed ----
+       * It used to be in the begin_vertex block below, and that was a real bug
+       * rather than a tidiness point: three's vertex main() runs uv_vertex, then
+       * color_vertex, then a dozen normal chunks, and only then begin_vertex. So
+       * the colour convergence in the color_vertex block was reading vFar a
+       * whole chunk before anything assigned it. An unwritten varying is
+       * undefined, this driver evidently hands back zero, and the effect is that
+       * the distance colour fade — the term the long note below is entirely
+       * about — has never once run. The geometry cull and the normal flattening
+       * were unaffected, because those happen at or after begin_vertex, which is
+       * why the gravel hash still went away and nothing pointed at this.
+       * Hoisted to the first chunk in main(), where every consumer is downstream
+       * of it. */
       .replace('#include <uv_vertex>', /* glsl */`
         #include <uv_vertex>
-        float uvK = clamp(length(instanceMatrix[0].xyz) * 34.0, 1.0, 18.0);
+        /* Instance centre in view space, and the instance's world radius from the
+           first column of its matrix. projectionMatrix[1][1] is 1/tan(fov/2), so
+           this is a true projected pixel radius, correct under any fov or
+           resolution rather than a hand-tuned distance. */
+        vec3 iCen = (modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+        float iRad = length(instanceMatrix[0].xyz);
+        float px = 0.5 * uVpH * projectionMatrix[1][1] * iRad / max(-iCen.z, 0.05);
+        float uvK = clamp(iRad * 34.0, 1.0, 18.0);
         #ifdef USE_MAP
           vMapUv *= uvK;
         #endif
@@ -548,17 +568,18 @@ export function buildScatter(terrain, tex) {
         #ifdef USE_ROUGHNESSMAP
           vRoughnessMapUv *= uvK;
         #endif
+        vFarN = 1.0 - smoothstep(1.20, 3.50, px);
+        vFar  = 1.0 - smoothstep(0.70, 2.20, px);
       `)
       .replace('#include <begin_vertex>', /* glsl */`
         #include <begin_vertex>
-        /* Instance centre in view space, and the instance's world radius from the
-           first column of its matrix. projectionMatrix[1][1] is 1/tan(fov/2), so
-           this is a true projected pixel radius, correct under any fov or
-           resolution rather than a hand-tuned distance. */
-        vec3 iCen = (modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
-        float iRad = length(instanceMatrix[0].xyz);
-        float px = 0.5 * uVpH * projectionMatrix[1][1] * iRad / max(-iCen.z, 0.05);
-        /* ---- two fades, not one ----
+        /* Below about a pixel the instance collapses to zero size and stops
+           being drawn at all; by then the terrain's own grain map is carrying
+           that size class anyway. This is the one part that has to wait for
+           begin_vertex, because "transformed" does not exist before it. */
+        transformed *= smoothstep(0.60, 1.60, px);
+      `)
+      /* ---- two fades, not one ----
            These were a single threshold, and sharing it is what emptied the mid
            distance. Worked through at the capture height: a 20 cm cobble at
            thirty metres projects to a 3 px radius, so it is six pixels across and
@@ -584,10 +605,6 @@ export function buildScatter(terrain, tex) {
            silhouette on anything four pixels across or more, which is what a 20 cm
            cobble at thirty metres is, while still averaging out the granules that
            actually were the problem. */
-        vFarN = 1.0 - smoothstep(1.20, 3.50, px);
-        vFar  = 1.0 - smoothstep(0.70, 2.20, px);
-        transformed *= smoothstep(0.60, 1.60, px);
-      `)
       /* Converging on the population mean is right — a pixel covering ten clasts
          genuinely sees the mean of ten clasts — but converging every distant clast
          on the *same* mean is not, and that is what flattened the mid distance. The
@@ -604,12 +621,19 @@ export function buildScatter(terrain, tex) {
                         + 0.25 * sin(iW.z * 0.087 - iW.x * 0.052 + 2.1);
         vec3 far = uFarCol * mix(vec3(0.90, 0.97, 1.09), vec3(1.11, 1.00, 0.87), pat);
         vColor = mix(vColor, far, vFar);
-        vSeat = normalize(normalMatrix * mat3(instanceMatrix) * vec3(0.0, 1.0, 0.0));
+        /* The seat direction, with a per-instance dust weight smuggled in as its
+           length so this costs no second varying. A pebble is turned over by
+           every flood and stays the colour of its own lithology; a slab has lain
+           in the same attitude for decades and its sky-facing faces carry a film
+           of whatever the wash is made of. So the weight is a function of size,
+           which is the closest thing available to residence time. */
+        vSeat = normalize(normalMatrix * mat3(instanceMatrix) * vec3(0.0, 1.0, 0.0))
+              * (1.0 + smoothstep(0.11, 0.30, iRad));
       `);
 
     shader.fragmentShader = ('varying float vFar;\nvarying float vFarN;\n' +
       'varying vec3 vSeat;\nuniform vec3 uSunDir;\nuniform sampler2D uGrit;\n' +
-      'float cTone = 1.0;\nfloat cCav = 1.0;\n' + shader.fragmentShader)
+      'float cTone = 1.0;\nfloat cCav = 1.0;\nfloat cDust = 0.0;\n' + shader.fragmentShader)
       /* ---- two different fades, and only one of them existed ----
        * vFarN handles the *instance* shrinking below a pixel, which is the
        * gravel-hash problem. It says nothing about the surface map's own feature
@@ -697,6 +721,8 @@ export function buildScatter(terrain, tex) {
         float gLodC = log2(max(cFootG, 2.5e-4) * 256.0);
         float gFlC = floor(gLodC);
         float gScC = exp2(-gFlC);
+        vec3 seatC = normalize(vSeat);
+        float dustK = length(vSeat) - 1.0;
         vec3 nWc = normalize((vec4(nGeoC, 0.0) * viewMatrix).xyz);
         vec3 wpC = cameraPosition + (vec4(-vViewPosition, 0.0) * viewMatrix).xyz;
         vec3 aWc = abs(nWc);
@@ -727,7 +753,22 @@ export function buildScatter(terrain, tex) {
         vec3 gWc = normalize(nWc + tT * g2.x + tB * g2.y);
         normal = normalize(normal + (viewMatrix * vec4(gWc - nWc, 0.0)).xyz);
 
-        normal = normalize(mix(normal, vSeat, vFarN * 0.92));
+        /* ---- dust, on the sky-facing facets only ----
+         * The last thing that separates a big clast from the bed it lies in, and
+         * the one that is a mechanism rather than a colour choice. A slab that
+         * has lain in one attitude for decades collects a film of whatever the
+         * wash is made of on every face the sky can see, and keeps its own
+         * lithology on the faces it cannot. That is why real desert talus has
+         * red tops and pale sides, and it is the reverse of what this material
+         * was doing: a uniform per-instance tint, so the sky-facing table top of
+         * a buff sandstone block was as clean as its underside.
+         * Convergence toward a fixed dust albedo, not a multiply, so it darkens
+         * a pale block and lifts a varnished dark one — which is what a film
+         * does. Weighted by instance size through vSeat's length, so the gravel
+         * keeps the lithological variety that took three rounds to get. */
+        cDust = smoothstep(0.34, 0.90, nWc.y) * 0.44 * dustK;
+
+        normal = normalize(mix(normal, seatC, vFarN * 0.92));
       `)
       /* Same reasoning as the terrain: a dust-filmed dry stone does not go
          mirror-bright along its edges, and the stock material's specularF90 of 1.0
@@ -739,6 +780,9 @@ export function buildScatter(terrain, tex) {
         material.specularColor *= 0.55;
         material.specularF90 *= 0.16;
         material.diffuseColor *= cTone;
+        /* Linear albedo of the wash's own fines, a little above the open bed
+           because this is a thin film over rock rather than a bed of it. */
+        material.diffuseColor = mix(material.diffuseColor, vec3(0.186, 0.104, 0.071), cDust);
         /* A pit is rougher than the face around it: the cement has gone and what
            is left is loose grain. Small, but it stops the crevices reading as
            specular dimples. */
