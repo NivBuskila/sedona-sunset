@@ -106,6 +106,19 @@ export const LAYERS = [
   { y0:  67.0, kind: CAP,   rec: 1.80, proud:  1.40, bedT: 2.60,
     col: [0.308, 0.207, 0.149], iron: 0.35, pale: 0.15, rough: 0.96 },
 ];
+/* Cumulative retreat: how far behind the body radius a layer sits because of the
+   recessive layers under it. Used by the buttes, where the profile is read against
+   the sky and an overhang is unmissable. The walls keep their own local scheme,
+   which reads correctly because it is seen face-on rather than in profile. */
+const SETBACK = (() => {
+  const out = [];
+  let acc = 0;
+  for (let i = 0; i < LAYERS.length; i++) {
+    out.push(acc);
+    if (!isVert(LAYERS[i].kind)) acc += LAYERS[i].rec * 0.85;
+  }
+  return out;
+})();
 const Y_TOP = 75.0;
 const Y_ANCHOR = 3.0;      // foot of the lowest cliff: where the plan is anchored
 
@@ -783,7 +796,20 @@ export function buildWalls(path, terrain, material) {
        one's does, which means its faces come out inside-out; the winding and the
        normals are both flipped rather than the grid being reversed, because the
        joint azimuths have to stay in world space. */
-    const g = creasedMesh(wallGrid(path, terrain, side), Math.cos(0.62), side < 0);
+      /* The weld angle goes from 36 degrees to 45, which is the cheap half of the
+         quilt. The quilt is per-quad flat shading in places that ought to be
+         smooth: where the lateral offset field turns faster than the weld
+         threshold tolerates, a quad finds no neighbour to average with and
+         renders as a facet, and a field of facets is a low-frequency term in
+         exactly the band that is already too loud. Widening the threshold costs
+         nothing on the silhouette — welding changes vertex normals, not vertex
+         positions, so the stepped profile is untouched — and the bedding risers do
+         not rely on it either, since those are flagged rows and stay hard at any
+         angle. What is given up is creasing on genuine fractures in the 36-to-45
+         band, and those are gentler than any arris worth creasing. The other half
+         of the quilt was the spall scar switching 1.5 m of offset over four
+         hundredths of its driver, which is fixed above. */
+      const g = creasedMesh(wallGrid(path, terrain, side), Math.cos(0.78), side < 0);
     const m = new THREE.Mesh(g, material);
     m.castShadow = true;
     m.receiveShadow = true;
@@ -878,10 +904,31 @@ function butteGrid(cx, cz, rad, hs, terrain, seed) {
          it. Sedona's Coconino cap is a vertical cliff flush with or set back from
          the body, so the ledges are allowed to recess freely and to stand out only
          a little. */
-      let r = r0 - (R * ret + Math.max(P, -0.40) * 1.5) * hs;
+      /* Clamping the proud offset was not enough, because the overhang was never
+         mainly the proud offset — it was the recess. Every cliff returned to the
+         full body radius while the bench under it was cut three to six metres
+         inside it, and a full-radius cliff standing on a recessed bench *is* an
+         overhang: that is the plate-on-a-neck profile, produced by construction
+         rather than by any one bad number.
+         A real butte does not work that way. Its cliffs are vertical and each one
+         stands *behind* the one below, set back by however far the bench between
+         them has retreated, which is why a butte tapers upward and why its
+         profile is a staircase and not a stack of mushrooms. So the taper is
+         cumulative — each layer inherits the retreat of every recessive layer
+         beneath it — and the local recess that used to carry the whole step is
+         reduced to under half, just enough for a bench to read as a bench. The
+         two together are within a few centimetres of flush at every cliff foot,
+         which is what removes the overhangs without flattening the staircase. */
+      let r = r0 - (SETBACK[li] + R * ret * 0.45 + Math.max(P, -0.40) * 1.5) * hs;
       r -= jointOffset(a1, seed + li * 13, 9.0);
       r -= jointOffset(a2, seed + li * 7 + 5, 14.0);
       r -= 2.4 * fbm(ct * 9 + li, st * 9, 2, seed + 51);
+      /* Spires and notches. A distant butte silhouette is serrated — the joints
+         weather out into slots and leave fins standing between them — and smooth
+         is one of the reliable ways a rendered skyline reads as clay. Cubed, so
+         the notches are sparse and deep rather than a general waviness, which is
+         what the octave above already provides. */
+      r -= 6.0 * Math.pow(ridged(ct * 16 + li * 0.7, st * 16, 2, seed + 83), 3);
       r = Math.max(r, rad * 0.12);
       const k = jj * nu + i;
       pos[k * 3] = cx + ct * r;
