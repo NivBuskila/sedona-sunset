@@ -83,6 +83,31 @@ const M_GAIN = 0.68;
 const H_DUST = 210;
 const Y0 = 0;
 
+/* A third species: the shallow suspension layer that the blowing sand feeds.
+ *
+ * Two defects turned out to be this one omission. A critic found the height law
+ * did not manifest — on a distant ridge, saturation read 0.205 at the cap
+ * against 0.216 at the foot, flat where a 210 m column should show the cap
+ * clearer — and separately that the base of the far walls, backlit against the
+ * gap, was crisp and dark where a real dusty wash shows a luminous warm band
+ * hugging the floor. Both follow from the same arithmetic: over a 200 m wall,
+ * a 210 m scale height varies by a factor of 1.1, which is no vertical
+ * structure at all. The term was reaching the shader; it had nothing to say.
+ *
+ * What produces a visible band is the layer the saltation is throwing grains
+ * into, which is metres to tens of metres deep, not hundreds. At 16 m a distant
+ * wall's foot picks up a fifth again of optical depth while its cap picks up
+ * four percent, so the height law becomes legible and the band appears exactly
+ * where a backlit wash puts one.
+ *
+ * Measured from the same Y0 datum as the deep layer, which is the wash floor's
+ * own elevation, so it hugs the floor and thins out over ground that stands
+ * above it. That is right for this scene and would be wrong in a scene whose
+ * ground was not roughly one plane; noted rather than hidden. */
+const BETA_S = [1.000, 0.985, 0.955];
+const S_GAIN = 0.35;
+const H_SUSP = 16;
+
 /* Airlight, as multiples of FOG's *luminance*.
  *
  * Not of FOG itself, and the difference is the whole colour of the far field.
@@ -349,7 +374,9 @@ export function installAerial(sun, fogColor) {
   const vec3  AER_JNEAR = ${v3(jNear)};
   const vec3  AER_BETAR = ${v3(BETA_R.map((x) => x * R_GAIN))};
   const vec3  AER_BETAM = ${v3(BETA_M.map((x) => x * M_GAIN))};
+  const vec3  AER_BETAS = ${v3(BETA_S.map((x) => x * S_GAIN))};
   const float AER_H     = ${f(H_DUST, 2)};
+  const float AER_HS    = ${f(H_SUSP, 2)};
   const float AER_Y0    = ${f(Y0, 2)};
   const float AER_AMB   = ${f(AMB)};
   const float AER_FWD   = ${f(FWD)};
@@ -367,10 +394,10 @@ export function installAerial(sun, fogColor) {
      a guarded division: (1 - e^-k)/k -> 1 - k/2 as k -> 0, and single
      precision loses the difference of the two exponentials long before the
      series does. */
-  float aerColumn(float y0, float y1, float dist) {
-    float k = (y1 - y0) / AER_H;
+  float aerColumn(float y0, float y1, float dist, float H) {
+    float k = (y1 - y0) / H;
     float shape = abs(k) < 1e-3 ? 1.0 - 0.5 * k : (1.0 - exp(-k)) / k;
-    return dist * exp(-(y0 - AER_Y0) / AER_H) * shape;
+    return dist * exp(-(y0 - AER_Y0) / H) * shape;
   }
 
   vec3 aerialPerspective(vec3 color, vec3 world) {
@@ -389,7 +416,8 @@ export function installAerial(sun, fogColor) {
        under three percent across the frame and is not worth an exponential;
        the dust layer is the one that is shallow enough to see. */
     vec3 tauR = AER_BETAR * (dens * dist);
-    vec3 tauM = AER_BETAM * (dens * aerColumn(cameraPosition.y, world.y, dist));
+    vec3 tauM = AER_BETAM * (dens * aerColumn(cameraPosition.y, world.y, dist, AER_H))
+              + AER_BETAS * (dens * aerColumn(cameraPosition.y, world.y, dist, AER_HS));
     vec3 tau = tauR + tauM;
     vec3 T = exp(-tau);
 
@@ -461,16 +489,20 @@ export function aerialModel(sun, fogColor, density = 0.0019) {
     const rx = world[0] - cam[0], ry = world[1] - cam[1], rz = world[2] - cam[2];
     const dist = Math.hypot(rx, ry, rz);
     if (dist < 1e-3) return color.slice();
-    const k = (world[1] - cam[1]) / H_DUST;
-    const shape = Math.abs(k) < 1e-3 ? 1 - 0.5 * k : (1 - Math.exp(-k)) / k;
-    const col = dist * Math.exp(-(cam[1] - Y0) / H_DUST) * shape;
+    const column = (H) => {
+      const k = (world[1] - cam[1]) / H;
+      const shape = Math.abs(k) < 1e-3 ? 1 - 0.5 * k : (1 - Math.exp(-k)) / k;
+      return dist * Math.exp(-(cam[1] - Y0) / H) * shape;
+    };
+    const col = column(H_DUST), colS = column(H_SUSP);
     const ca = (rx * d.x + ry * d.y + rz * d.z) / dist;
     const lobe = W_BROAD * hg(G_BROAD, ca) * nB + W_NARROW * hg(G_NARROW, ca) * nN;
     const ds = dist / S_ILL;
     const out = [0, 0, 0];
     for (let i = 0; i < 3; i++) {
       const tR = BETA_R[i] * R_GAIN * density * dist;
-      const tM = BETA_M[i] * M_GAIN * density * col;
+      const tM = BETA_M[i] * M_GAIN * density * col
+               + BETA_S[i] * S_GAIN * density * colS;
       const t = tR + tM, T = Math.exp(-t);
       const jM = jSky[i] * AMB + jSun[i] * FWD * lobe;
       const J = (tR * jRay[i] + tM * jM) / Math.max(1e-6, t);

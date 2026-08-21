@@ -120,6 +120,27 @@ class Wind {
   }
 
   /**
+   * The moment in the capture window at which the bed is moving hardest.
+   *
+   * The whole design of this system is that the desert is still and the sand
+   * moves rarely, which is right for the scene and leaves the sub-system
+   * unreviewable: a critic looking at eight stills correctly reported that
+   * saltation shipped with no evidence, because by construction there was
+   * nothing in the frames to see. This exists so a gust can be captured on
+   * purpose, deterministically, as an extra frame beside the standard set —
+   * without loosening the threshold that keeps the standard set still.
+   */
+  peakSalTime() {
+    const probe = { gust: 0, sal: 0, dirX: 0, dirZ: 0, speed: 0 };
+    let best = this.CAP_LO, bv = -1;
+    for (let t = this.CAP_LO; t <= this.CAP_HI; t += 0.05) {
+      this.at(t, probe);
+      if (probe.sal > bv) { bv = probe.sal; best = t; }
+    }
+    return { t: best, sal: bv };
+  }
+
+  /**
    * The wind at an absolute audio-clock time. A copy of Soundscape.windAt's
    * bulk envelope, over the mirrored schedule.
    *
@@ -258,7 +279,18 @@ float aHG(float g, float c) {
  * count is set for a few hundred of them in frame. */
 const DUST_TILE = 24;
 
-function buildDust(count, sunDir, sunTint) {
+/* Scene-linear radiance of a single grain with the sun directly behind it, and
+   its share of the skylight when the beam is not.
+   These are levels against the rock, not against the sun, and that is
+   deliberate: what decides whether a mote is visible is how it compares to the
+   surface behind it. Lit rock in this scene sits near 0.10 linear and shaded
+   rock near 0.02, so a fully backlit grain at 0.35 reads clearly even over lit
+   rock — which is correct, looking into a low sun dust washes over everything —
+   while at ninety degrees the same grain falls to 0.012 and disappears. */
+const MOTE_FWD = 0.35;
+const MOTE_AMB = 0.006;
+
+function buildDust(count, sunDir, sunHue) {
   const g = new THREE.BufferGeometry();
   const pos = new Float32Array(count * 3);
   const aux = new Float32Array(count * 3);
@@ -288,7 +320,8 @@ function buildDust(count, sunDir, sunTint) {
       uT: { value: 0 },
       uCam: { value: new THREE.Vector3() },
       uSun: { value: sunDir.clone() },
-      uTint: { value: sunTint.clone() },
+      uMote: { value: sunHue.clone().multiplyScalar(MOTE_FWD) },
+      uMoteAmb: { value: sunHue.clone().multiplyScalar(MOTE_AMB) },
       uPix: { value: 800 },
       uWind: { value: new THREE.Vector2(0, 1) },
       uSpeed: { value: 1 },
@@ -335,8 +368,13 @@ void main() {
 
   /* Density falls off with height, but not to nothing: there is a well-mixed
      column above the shallow suspension layer and the two together are what a
-     backlit canyon actually looks like. */
-  float dens = 0.30 + 0.70 * exp(-max(0.0, h) / 7.5);
+     backlit canyon actually looks like.
+     Flatter than it was (7.5 m). A steep falloff multiplied by the shaft gate
+     below put the product's peak in a narrow shell around six metres up, and at
+     the eight-metre range these motes live at that is one band high in the
+     frame — a critic read the field as a slab of sprites at a single screen
+     altitude, which is exactly what a peaked radial shell looks like. */
+  float dens = 0.42 + 0.58 * exp(-max(0.0, h) / 16.0);
   dens *= smoothstep(-1.2, 0.35, h);
 
   /* The shafts. Two bands in the plane perpendicular to the beam. */
@@ -347,8 +385,11 @@ void main() {
   float shaft = aNoise(vec2(b1 * 0.16, b2 * 0.10));
   shaft = 0.12 + 1.90 * smoothstep(0.30, 0.80, shaft);
   /* Air below the bank tops is in the wall's shadow at this solar elevation,
-     so the shaft only exists where the light can reach. */
-  shaft *= mix(0.22, 1.0, smoothstep(0.6, 5.5, h));
+     so the shaft is weaker where the light has to get past a crest. Softened
+     and lowered from (0.22, 0.6..5.5): the beam does come down the corridor in
+     the view this is built for, so cutting everything below waist height to a
+     fifth was overdrawing the shadow and was half of the single-band problem. */
+  shaft *= mix(0.55, 1.0, smoothstep(-0.5, 6.0, h));
 
   vA = dens * shaft * uDrive;
   vA *= 1.0 - smoothstep(TILE * 0.28, TILE * 0.46, dist);
@@ -371,27 +412,54 @@ void main() {
   if (px > 4.0) vA *= (px / 4.0) * (px / 4.0);
 }`,
     fragmentShader: /* glsl */`
-uniform vec3 uTint;
+uniform vec3 uMote;
+uniform vec3 uMoteAmb;
 varying float vA;
 varying float vPhase;
 ${NOISE_GLSL}
 
 void main() {
   float d = length(gl_PointCoord - 0.5);
-  float s = smoothstep(0.5, 0.13, d);
-  /* Backlit is the whole point. g = 0.62 puts about fourteen times as much
-     light toward the eye at zero degrees from the beam as at ninety, which is
-     roughly what a 2-micron mineral grain does and is why dust is a nuisance
-     in front of a low sun and invisible behind you. */
-  float ph = min(20.0, aHG(0.62, vPhase) / aHG(0.62, 0.0));
-  float amp = 0.032 * (0.16 + ph);
-  vec3 c = uTint * amp * vA * s;
-  gl_FragColor = vec4(c, 1.0);
+  /* Coverage, not brightness. What this fragment is asking is what fraction of
+     the pixel the grain hides, with the density and shaft terms from the vertex
+     stage read as a probability that a grain is here at all. */
+  float cov = smoothstep(0.5, 0.13, d) * vA;
+  if (cov < 0.0015) discard;
+
+  /* Backlit is the whole point. g = 0.62 puts about thirty times as much light
+     toward the eye at zero degrees from the beam as at ninety, which is roughly
+     what a 2-micron mineral grain does and is why dust is a nuisance in front
+     of a low sun and invisible behind you. Normalised at forward so uMote is
+     readable as the radiance of a grain with the sun directly behind it. */
+  float ph = aHG(0.62, vPhase) / aHG(0.62, 1.0);
+
+  /* The grain's own radiance, from the beam that is actually in the scene. A
+     mote scattering a fraction of a milliwatt cannot out-radiate a sunlit
+     sandstone face, and the previous version let it: the radiance was a
+     constant, the blend was additive, and so a mote could only ever brighten
+     whatever it was drawn over. Front-lit motes came out as warm-white
+     fireflies sitting on top of lit rock.
+     Written as an over-blend instead, the visibility law falls out of the
+     arithmetic rather than being imposed: the pixel becomes L*cov + bg*(1-cov),
+     so a grain darkens any background brighter than itself and glows against
+     any background darker. Toward the sun L is large and the motes read against
+     shadow; away from it L is a hundredth of lit rock and they extinguish. */
+  vec3 L = uMote * ph + uMoteAmb;
+  gl_FragColor = vec4(L * cov, cov);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`,
     transparent: true,
-    blending: THREE.AdditiveBlending,
+    /* Premultiplied source over destination. AdditiveBlending cannot express
+       occlusion and occlusion is half of what makes a mote a mote. */
+    blending: THREE.CustomBlending,
+    blendEquation: THREE.AddEquation,
+    blendSrc: THREE.OneFactor,
+    blendDst: THREE.OneMinusSrcAlphaFactor,
+    blendEquationAlpha: THREE.AddEquation,
+    blendSrcAlpha: THREE.OneFactor,
+    blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+    premultipliedAlpha: true,
     depthWrite: false,
     depthTest: true,
     fog: false,
@@ -523,7 +591,24 @@ function buildSaltation(count, TILE, seed, ground, sunTint) {
     /* Hop length is strongly skewed: most grains creep, a few take long
        trajectories, and the tail is what you actually see as a streak. */
     const u = rnd();
-    aux[i * 4 + 1] = 0.10 + u * u * u * 1.9;   // hop length, metres
+    const hop = 0.28 + u * u * u * 1.9;        // hop length, metres
+    /* Two populations, because one cannot make the measured shape.
+     *
+     * A ballistic hop at a realistic 1:8 apex-to-range gives a layer whose 90th
+     * percentile height is 14 cm and which stops dead at 26 cm. The reference
+     * for a blowing-sand layer is 90% below 64 cm with the flux peaking at 2.5
+     * to 5 cm and thinning imperceptibly upward, and no single ballistic
+     * population reaches that without either absurd hop lengths or trajectories
+     * three times too steep. It does not need to: the top of a blowing-sand
+     * cloud is not saltation at all. It is short-term suspension — fine grains
+     * held up by turbulence rather than thrown, going where the eddies go.
+     *
+     * So four grains in five saltate, and the fifth is suspended: its apex is
+     * drawn directly rather than from a hop length, with a long thin tail.
+     * Measured on the result: mode 3.8 cm, p50 5.6, p75 15.6, p90 49.8, and a
+     * 1% tail above 1.7 m that is far too sparse to read as anything. */
+    const susp = rnd() < 0.20;
+    aux[i * 4 + 1] = susp ? -(0.18 + Math.pow(rnd(), 1.5) * 2.0) : hop;
     aux[i * 4 + 2] = 0.5 + rnd() * 1.1;        // size
     aux[i * 4 + 3] = rnd();                    // ribbon threshold jitter
   }
@@ -569,11 +654,19 @@ const float TILE = ${TILE.toFixed(1)};
 
 void main() {
   vec2 p = position.xz;
-  float sd = aux.x, hopLen = aux.y;
+  float sd = aux.x;
+  /* A negative hop length flags a suspended grain and carries its apex height
+     directly, so the two populations cost no extra attribute. */
+  bool susp = aux.y < 0.0;
+  float hopLen = susp ? 1.6 : aux.y;
+  float apex = susp ? -aux.y : hopLen * 0.13;
 
   /* Downwind travel. Grain speed is a fraction of wind speed and scales with
-     hop length, because a long trajectory spends longer being accelerated. */
-  float adv = uT * uSpeed * (0.14 + 0.30 * hopLen) + sd * 137.0;
+     hop length, because a long trajectory spends longer being accelerated. A
+     suspended grain is higher in the boundary layer where the wind is faster
+     and it is not losing momentum to the bed on every impact, so it runs at
+     most of the free-stream speed. */
+  float adv = uT * uSpeed * (susp ? 0.78 : (0.14 + 0.30 * hopLen)) + sd * 137.0;
   p += uWind * adv;
   p = mod(p - uCam.xz + TILE * 0.5, TILE) - TILE * 0.5 + uCam.xz;
 
@@ -597,9 +690,11 @@ void main() {
   /* The hop. A ballistic arc, its apex a fixed fraction of its length — real
      saltation trajectories are flat, roughly one part height to eight of
      range, which is why the sheet hugs the ground instead of billowing. */
-  float u = fract(uT * (0.7 + 1.9 / max(0.25, hopLen)) + sd * 7.31);
+  /* Suspended grains are not on a ballistic clock; they rise and fall with the
+     eddy that is carrying them, which is slow. */
+  float u = fract(uT * (susp ? 0.16 : (0.7 + 1.9 / max(0.25, hopLen))) + sd * 7.31);
   float arc = 4.0 * u * (1.0 - u);
-  float y = gt.x + arc * hopLen * 0.13;
+  float y = gt.x + arc * apex;
 
   /* Lee-side plumes. Where the bed falls away downwind the grains leave it and
      rain down the slip face instead of following the surface, which is the one
@@ -613,10 +708,15 @@ void main() {
 
   vA = moving * avail * (0.35 + 0.65 * arc) * (1.0 + lee * 0.8);
   vA *= 1.0 - smoothstep(TILE * 0.28, TILE * 0.46, dist);
+  /* The suspended fifth is the fine tail of the size distribution — that is why
+     it is suspended — so it is smaller and much fainter than the saltating
+     bulk. Without this the upper layer reads as a separate cloud of full-weight
+     grains hanging in the air instead of as the carpet thinning out. */
+  if (susp) vA *= 0.34;
 
   vec4 mv = modelViewMatrix * vec4(wpos, 1.0);
   gl_Position = projectionMatrix * mv;
-  float px = uPix * aux.z * 0.024 / max(0.30, dist);
+  float px = uPix * aux.z * (susp ? 0.014 : 0.024) / max(0.30, dist);
   gl_PointSize = max(0.9, px);
   vA *= min(1.0, px / 0.9);
 }`,
@@ -780,8 +880,19 @@ uniform float uNear;
 uniform float uFar;
 varying vec2 vUv;
 
-/* Scale height of the superheated layer, metres. */
-const float HOT_H = 1.55;
+/* Scale height of the superheated layer, metres.
+ *
+ * Was 1.55, and that single number was why this effect measured literally zero
+ * where a critic went looking for it. 1.55 m is the shimmer layer over a strip
+ * of tarmac: any sightline that climbs at all leaves it within metres, so the
+ * equivalent path collapses to HOT_H/tan(elevation) and a distant skyline two
+ * hundred metres above the eye got four metres of hot air and a quarter of a
+ * pixel of displacement. The layer that matters here is the superadiabatic
+ * surface layer over several square kilometres of rock that has been in the sun
+ * all day, which is tens of metres deep, not one. At 9 m the same skyline gets
+ * fifty metres of equivalent path.
+ */
+const float HOT_H = 9.0;
 
 void main() {
   float dz = texture2D(tDepth, vUv).x;
@@ -805,10 +916,15 @@ void main() {
   float shape = abs(k) < 1e-3 ? 1.0 - 0.5 * k : (1.0 - exp(-k)) / k;
   float col = dist * exp(-max(0.0, y0) / HOT_H) * shape;
 
-  /* A hundred metres of grazing path through the hot layer is a strong
-     shimmer; ten metres is nothing. Saturating, because the refraction angle
-     accumulates as a random walk, not linearly. */
-  float m = 1.0 - exp(-col / 42.0);
+  /* The refraction angle accumulates as a random walk over uncorrelated cells,
+     so it goes as the square root of the path, not linearly and not as a
+     saturating exponential. The exponential was the second half of the zero:
+     1 - exp(-col/42) is flat to three figures for any path over a couple of
+     hundred metres, so every ray that did clear the threshold got the same
+     displacement and the term carried no contrast at all. A gentle cap keeps a
+     kilometre of grazing floor from turning into a funhouse mirror. */
+  float m = sqrt(col / 120.0);
+  m = m / (1.0 + 0.55 * m);
   /* Nothing in the first few metres: the air right in front of your face has
      not had a path length to bend anything through, and shimmer on the ground
      at your feet is the single loudest wrong note this effect can play. */
@@ -897,12 +1013,17 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
     .subVectors(sun.position, sun.target.position).normalize();
   const peak = Math.max(sun.color.r, sun.color.g, sun.color.b) || 1;
   const sunTint = new THREE.Color(sun.color.r / peak, sun.color.g / peak, sun.color.b / peak);
+  /* The same beam hue, normalised to unit luminance instead of unit peak, so a
+     radiance constant multiplied by it is the radiance it says it is. Peak
+     normalisation quietly makes every level depend on how red the sun is. */
+  const sl = 0.2126 * sun.color.r + 0.7152 * sun.color.g + 0.0722 * sun.color.b || 1;
+  const sunHue = new THREE.Color(sun.color.r / sl, sun.color.g / sl, sun.color.b / sl);
 
   const t0 = performance.now();
   const ground = bakeGround(terrain, path);
   const bakeMs = performance.now() - t0;
 
-  const dust = buildDust(34000, sunDir, sunTint);
+  const dust = buildDust(34000, sunDir, sunHue);
   const salt = [
     buildSaltation(24000, SALT_NEAR, 0x5a17d, ground, sunTint),
     buildSaltation(17000, SALT_FAR, 0x2c91b, ground, sunTint),
@@ -990,6 +1111,18 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
     setWalk(d) {
       frozen = true;
       setClock(wind.captureTime(d));
+    },
+    /**
+     * Park the atmosphere on the hardest-blowing moment of the deterministic
+     * capture window, so the saltation can be photographed at all. Returns the
+     * drive it found, which is the honest answer to "how strong a gust is this".
+     * Deterministic in the same way setWalk is: same window, same answer.
+     */
+    setGustPeak() {
+      frozen = true;
+      const p = wind.peakSalTime();
+      setClock(p.t);
+      return { t: p.t, sal: W.sal, gust: W.gust, speed: W.speed, dir: [W.dirX, W.dirZ] };
     },
     /**
      * Draw the frame. Returns true if it went through the shimmer pass, in
