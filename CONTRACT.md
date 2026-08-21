@@ -147,6 +147,115 @@ Not forgiven, only deferred. Revisit these after System 4 and System 7.
 - Shadow ambient is warm grey and red-dominant — needs a hemispherical skylight term so
   shadows go cool/violet. **System 4 owns this.**
 
+### A texture pinned to a world scale goes to wax at distance
+
+Twice now — System 1's wash floor and System 2's cliff face — a surface has been correct up
+close and turned to smooth wax further away, and both times the first diagnosis was wrong.
+There are two distinct causes and they need separate fixes.
+
+1. **A sum of smooth noise is one continuous membrane**, however many octaves go into it.
+   Granular material is a *packing*: elements occupy space, the largest stand proudest, and
+   smaller ones fill the gaps. Combine populations by maximum, not by sum.
+2. **A texture at a fixed world scale cannot hold detail at distance at all.** Past the
+   range where its texels fall below a pixel, the mip chain returns its mean and the surface
+   goes flat. Real rock and real ground do not do this, because they are structured at every
+   scale — which is why a photograph of a cliff has pixel-scale energy at two metres and at
+   two hundred. The fix is a detail layer with **no low-frequency content**, sampled at
+   whatever scale the pixel footprint asks for, snapped to octaves with the bracketing pair
+   crossfaded.
+
+Note also that a detail layer which is only ever *brighter* than its surface reads as dust.
+Grain needs its dark half — the sockets left where grains have fallen out.
+
+### Measuring surface structure
+
+`tools/grad.mjs` measures mean absolute per-pixel luminance gradient on a region crop, and
+also prints an `hf/lf` column — the ratio of high- to low-frequency energy.
+
+**`hf/lf` is the canonical metric. Report it. Do not report `grad/L`.**
+
+| | render (sys2g) | real Sedona rock |
+| --- | --- | --- |
+| raw grad | 0.0078 – 0.0415 | 0.0274 – 0.0604 |
+| **hf/lf** | **0.30 – 0.44** | **0.54 – 0.75** |
+
+Raw gradient is easy to game: a dense field of high-contrast mid-frequency blobs raises it
+8.5× without adding any material. That is exactly what happened once — grad went up 8.5×
+while `hf/lf` did not move at all. `hf/lf` is dimensionless, exposure-invariant and
+haze-invariant (atmospheric scattering is an affine transform of radiance and scales both
+bands equally), so it measures the thing we actually care about and cannot be bought with
+amplitude.
+
+**Pass condition for rock: `hf/lf` ≥ 0.55**, the bottom of the real range.
+
+### How to move `hf/lf`, and how to iterate on it in seconds
+
+`hf/lf` is a statement about the *spectrum of the maps*, far more than about anything the
+scene does. `tools/wallprobe.mjs` shades a flat wall out of the actual procedural maps —
+same world scales as `rock.js`, same footprint-locked octave pair, same normal composition
+and terminator fade, through a real mip pyramid — and reports the same statistics
+`grad.mjs` does, in seconds rather than the eight-to-twenty minutes a three-view capture
+costs under contention. Its absolute numbers are not the render's, because it has no
+shadows, no bedding geometry and no aerial perspective. What transfers is the ratio and its
+direction of travel. `--only coarse|fine|grit` isolates one contributor, which is the
+difference between knowing which term is dragging and guessing at it.
+
+Two things determine the answer, and both were wrong once:
+
+- **Spectral slope.** Amplitude must fall only *slowly* with wavelength — near enough as its
+  cube root over the range a pixel sees. A layer built with amplitudes 1.00 / 0.40 / 0.155
+  across a 5.6× scale range is falling as roughly the wavelength itself: the coarsest
+  population dominates, and it measured 0.41 in isolation at every distance. Sum octaves at
+  a near-flat law rather than letting one win by maximum. Within an octave a packing is
+  still right, because grains occupy space; across octaves a fractal surface is a sum. And
+  weight the *finest* octaves generously, because shading responds to slope and slope for a
+  given amplitude goes as the reciprocal of the wavelength.
+- **Sampling rate.** A detail map read at 1.7 texels per pixel is read a whole mip level up:
+  the driver averages away everything at the texel scale and hands back the coarse
+  populations. Locking it to slightly *under* one texel per pixel — 0.9 — is what makes mip
+  level zero actually get used, and mip zero is the only level with the top octave still in
+  it. That one number moved the grit layer from 0.41 to 0.65 with no change to the map.
+
+And one thing that will silently undo all of it: **pigment survives what geometry does not.**
+Albedo goes through the mip chain and every terminator fade intact, so any feature you author
+as a colour change will still be there when its normal has faded to nothing — as a flat spot
+facing nowhere. That is how a field of weathering pits ended up reading as fly-dirt on a
+scanned negative while raising raw gradient 8.5×. If a feature is a hole, give it depth,
+occlusion and a rim, keep its normal alive on shaded faces, and give it almost no pigment at
+all. A terminator floor of 0.05 does not fade a decimetre cavity, it deletes it.
+
+`grad/L` was tried and rejected. The physics is sound in principle — for a Lambertian
+surface, spatial contrast really is proportional to mean radiance — but it divides by a
+*regional* mean, so a region that is half cast shadow has its denominator dragged down by
+geometry rather than exposure and scores inflated. Empirically it runs *anti*-correlated
+with luminance across real photographs (0.048 on a bright macro to 0.201 on a dark cliff of
+the same rock type). Tested honestly at matched luminance — render L 0.141 scoring 0.087
+against real rock at L 0.137 scoring 0.201 — it does not rescue an underexposed frame; it
+only shrinks the apparent failure from 3× to 2.3×.
+
+### Verify the instrument before you trust the measurement
+
+This project runs on measurement, so a broken instrument is worse than no instrument — it
+sends work confidently in the wrong direction. Three real examples:
+
+- A narrow-peak detector tested each frame's raw periodogram bin against its neighbours.
+  A raw bin of filtered noise is exponentially distributed, so over two minutes *some* bin
+  clears its neighbours by 20 dB by chance alone. It reported a "harmonic series" that was
+  bins 25/50/75/100 — exact multiples — of its own variance. Fix: average across frames
+  first (a real resonance is stationary in frequency, noise is not) and report the
+  detector's own noise level so the threshold is auditable.
+- With that fixed, the detector found a *genuine* comb and attributed it to rock edge tones.
+  It was a coyote and its answering neighbour. A search built to find stationary narrow
+  combs will find voices.
+- A "footsteps are quieter than the wind" figure compared step level against a gust peak
+  measured over a window that contained the footsteps — a comparison of the footsteps with
+  themselves.
+
+Two habits follow. Have a measurement report its own noise floor so a reader can see
+whether a result clears it. And when a statistic is aggregated over a whole take, ask what
+fraction of that take it is actually describing: a full-duration band RMS is dominated by
+the loud 15% and says nothing about the quiet 85%, which in an ambience *is the piece*.
+
 ### A process note worth keeping
 
 Three rounds running, the measured symptom pointed at the wrong mechanism. The "gravel
