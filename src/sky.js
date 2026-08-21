@@ -340,6 +340,20 @@ const NEAR_BOX = { xLo: -20, xHi: 16, yLo: -9, yHi: 22 };
 /* The light sits far enough up-sun that a wall top 500 m up the corridor is
    still in front of the near plane. Depth is cheap: an orthographic camera is
    linear in z, so 1,860 m across a 24-bit buffer is a tenth of a millimetre. */
+/* The light sits far enough up-sun that a wall top 500 m up the corridor is
+   still in front of the near plane. Depth is cheap: an orthographic camera is
+   linear in z, so 1,860 m across a 24-bit buffer is a tenth of a millimetre.
+
+   tools/_shadowbox.mjs shows `terrain` reaching clip z -2.36, which is 1,225 m in
+   front of this near plane, so up-sun terrain is outside the frustum. That looked
+   like the cause of System 2's pale patch on the far wall and it is not: pushing
+   NEAR_Z to -1340 to capture all of it left the patch bit-for-bit unchanged, at
+   2,291 pixels over V 0.88 against 2,297 before, so nothing that was being culled
+   was casting anything that mattered. Reverted rather than kept, because it costs
+   geometry in the shadow pass every frame and buys a difference no instrument can
+   see. Recording it so the next reader does not spend the same hour: the receiver
+   under that patch is comfortably inside the far frustum at clip 0.456, 0.291,
+   -0.083, so neither end of the box is what makes it bright. */
 const LIGHT_DIST = 900, NEAR_Z = 40, FAR_Z = 1900;
 const DEPTH_RANGE = FAR_Z - NEAR_Z;
 

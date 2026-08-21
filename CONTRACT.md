@@ -1758,6 +1758,98 @@ eight views** — the term that would do this is currently not landing. **Routed
 System 4's contribution is the ramp re-fit, worth 0.02, and it is not worth capturing on its
 own.
 
+## The gate is closed. Stop spending on it.
+
+Confirmed independently on System 4's own build, not taken on report. `sys4l` against
+`sys4m`, across System 1's fix to the shadow wrapper in `terrain.js`:
+
+| | shaded | sunlit | ratio |
+| --- | --- | --- | --- |
+| `sys4l`, before | 23.8 cv | 63.0 cv | 0.378 |
+| `sys4m`, after | 17.6 cv | 79.2 cv | **0.222** |
+
+Both ends moved, which is the signature of a leak rather than a level: the phantom sun was
+adding to the shaded numerator *and* the wrapper's constant was capping the sunlit
+denominator. Target band is 0.15–0.25 and 0.222 is inside it. **Nothing in System 4 is to be
+tuned against this number again** — not the escarpment, not the fill, and specifically not the
+azimuth trade, which was already measured and declined at 62% of the wash floor.
+
+## Airlight cannot fix the near shaded wall, and the reason is in three numbers
+
+After System 1's fix the inversion is smaller in saturation and *worse* in hue, because
+removing the phantom sun removed the one warm-but-sunlit component that was diluting the
+bounce:
+
+| `sys4m` | saturation | hue | V |
+| --- | --- | --- | --- |
+| lit wall | 0.558 | 24.4° | 0.808 |
+| shaded wall | 0.600 | 5.5° | 0.180 |
+
+Shade is now **18.9° warmer** than light, up from 10.2°. The conclusion that the remainder has
+to be airlight was right about the mechanism and wrong about this measurement, and three
+things settle it:
+
+1. **`sources()` in `src/aerial.js` takes only `lum(fogColor)`.** The fog colour's chroma is
+   discarded, so System 4 cannot colour the airlight through it at all; `jRay`, `jSky` and
+   `jSun` each carry their own tint and only the level comes from here.
+2. **The near-field source is deliberately dark.** `NEAR_LVL` is 0.061, so the air in the
+   first stretch is at 6% of the fog's luminance — correctly, because the air in front of a
+   shaded wall is shadowed by the same rock the wall is.
+3. **And it is warm.** `jNear` is `WALL_SHARE`-weighted toward the wall bounce tint, which is
+   sun times rock albedo.
+
+At the receiver's measured 53 m the airlight is roughly a quarter of the rock's own radiance
+and pulls warm. So it cannot cool this wall, and no distance term will: the frame's shaded
+wall is *near*. Airlight is what separates shaded rock at kilometres, which is the depth
+ladder, and that is a different complaint.
+
+**What System 4 owns here totals about 0.04 of the 0.15 needed**, in two corrections that are
+each independently right: the ramp re-fit (0.021, above) and the escarpment albedo ignoring
+varnish. `uVarnish` is 0.058 0.042 0.033 at up to 0.34 coverage, so the wall the renderer
+draws is ~17% darker than the clean `LAYERS` mean the escarpment proxy is built from, which
+makes the bounce ~17% too strong — worth another ~0.02, since varnish darkens far more than
+it desaturates. A third lever was tested and is empty: raising the opposite wall's own sky
+visibility from 0.20 to 0.85 moves rock saturation 0.666 to 0.669, because **everything
+arriving via the opposite wall is multiplied by rock albedo first and therefore arrives red**,
+however blue the sky lighting it was. That is the trap in this geometry and it is worth
+stating plainly.
+
+## The buttes were not casting shadows, and three of the ten are inside the box
+
+System 2's pale parallelogram on the far wall in `wall_shade` is a shadow hole with a complete
+cause. `tools/_shadowbox.mjs`:
+
+- The receiver is `wallL` at 53 m, world y 12.6–15.2 m, at **n·L 0.921** — a face turned almost
+  straight at the sun, so it is brilliant unless something shades it.
+- It is inside the far cascade at clip 0.456, 0.291, −0.083, so neither hypothesis about the
+  box was right, and `rpBias` is not involved either.
+- The sun ray from it is blocked by **`butte0` at 520 m**, and `butte0` has `castShadow = false`
+  at `src/rock.js:1253`.
+
+The stated reason there is that the buttes are "half a kilometre outside the shadow camera's
+box, so asking for shadows only costs a second rasterisation of forty thousand triangles that
+lands nowhere". That is true of seven of the ten and false of the three that matter: `butte0`
+sits at clip z −0.83..−0.54, fully inside, with x and y both crossing the box, and `butte1` and
+`butte2` likewise. The general point is worth keeping — **for a directional light a caster
+shares clip x and y with its own shadow**, so a butte whose shadow lands on a wall inside the
+box cannot be outside the box in x or y, and only z was ever in question. z spans 1,860 m.
+
+Verified at runtime in `tools/_buttecast.mjs` without touching `rock.js`:
+
+| buttes | patch mean V | pixels over V 0.88 | hot pixels, upper half |
+| --- | --- | --- | --- |
+| `castShadow false` | 0.676 | 2292 / 3876 | 4171 |
+| `castShadow true` | 0.142 | **0** / 3876 | **29** |
+
+The patch goes completely, and the upper half loses 99.3% of its hot pixels — so there were
+several holes from this one cause, not one. Cost is 19k triangles for the three that overlap;
+the other seven are frustum-culled on a bounding-sphere test. **One line, and it is System 2's
+to make.**
+
+Also checked and reverted rather than kept: pushing `NEAR_Z` from 40 to −1340 to capture the
+1,225 m of up-sun `terrain` that sits in front of the near plane left the patch at 2,291
+pixels against 2,297, so nothing being culled there was casting anything that mattered.
+
 ## The aureole is System 4's, and it is not the stale dial it looked like
 
 Two aureoles exist and only one is the sky. `src/atmos.js` `MIE_G` plus the Mie integral in

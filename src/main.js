@@ -81,7 +81,15 @@ renderer.shadowMap.needsUpdate = true;
 setAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.FogExp2(FOG.getHex(), 0.0019);
+/* FOG is scene-linear radiance and its brightest channel is 1.0923, so routing it
+   through getHex() clamped red and green to 1.0 and handed src/aerial.js a colour
+   6.7% dark and 46% desaturated — 0.1615 of saturation down to 0.0869. Only the
+   luminance of it survives aerial's `sources()`, so the chroma loss costs nothing
+   in practice and the level loss is the whole of it, but there is no reason to
+   quantise a float to eight bits on the way between two systems that both want
+   the float. Copy it instead. */
+scene.fog = new THREE.FogExp2(0x000000, 0.0019);
+scene.fog.color.copy(FOG);
 
 /* Far plane 9000 rather than 6000: System 2's far ridgelines reach 7.3 km, and
    the aerial ladder they exist to feed is a statement about the *ratio* of the
