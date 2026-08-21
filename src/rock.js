@@ -1253,10 +1253,22 @@ export function buildDistantButtes(terrain, material) {
   for (const [lat, dist, rad, hs] of BUTTES) {
     const g = creasedRing(butteGrid(lat, -dist, rad, hs, terrain, 601 + i * 97), Math.cos(0.72));
     const m = new THREE.Mesh(g, material);
-    /* Half a kilometre outside the shadow camera's box, so asking for shadows
-       only costs a second rasterisation of forty thousand triangles that lands
-       nowhere. */
-    m.castShadow = false;
+    /* These used to be excluded as "half a kilometre outside the shadow camera's
+       box". That is true of most of them and false of the ones that matter, and
+       the reasoning is worth keeping because it is easy to make again: for a
+       directional light **a caster shares clip x and y with its own shadow**, so
+       a butte whose shadow falls on a wall inside the box cannot itself be
+       outside the box in x or y. Only z can differ, and z spans 1,860 m here.
+       `butte0` sits at clip z −0.83..−0.54 — fully inside — and its sun ray is
+       what should have been shading a wall face at 53 m sitting at n·L 0.921.
+
+       Leaving it off put direct sun on a wall that is geometrically in shadow:
+       2,292 blown pixels in one patch and 4,171 across the upper wall, which
+       read as a lit parallelogram pasted onto shaded rock. Enabling it takes
+       those to 0 and 29. Three culls the genuinely-distant ones on their
+       bounding spheres, so the cost is the ~19k triangles of the ones that
+       actually cast. */
+    m.castShadow = true;
     m.receiveShadow = false;
     m.name = 'butte' + i;
     out.push(m);
