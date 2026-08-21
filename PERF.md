@@ -209,9 +209,18 @@ node tools/shadercost.mjs --detail src/terrain.js     # every fetch, with its ga
 
 ### `tools/bench.mjs` — real GPU frame time
 
-The one tool in this project that runs on the real adapter, using
-`jungle-trail`'s launch flags and its `readPixels` fence, interleaved medians and
-all. It reports, per viewpoint, the full frame time and the frame time with each
+The one tool in this project that runs on the real adapter by default, and it
+does so through the switch `tools/harness.mjs` gained mid-pass (`RENDER_GPU=1` or
+a `.gpu` file in the root) rather than keeping a second copy of the launch flags —
+those flags are fiddly enough that a divergent copy would end up measuring a
+different browser than the one that draws the captures. The fence, the
+interleaving and the medians are `jungle-trail`'s.
+
+It does not take the render mutex. A GPU bench and a SwiftShader capture are not
+competing for the same device, and making a one-command benchmark queue behind a
+twenty-minute capture would mean nobody ever runs it — but it prints a warning if
+a capture is live, because the shared four-core budget will still show up in the
+figures. It reports, per viewpoint, the full frame time and the frame time with each
 major system ablated, then walks the tier ladder. It also reads the GPU's own
 answer through `EXT_disjoint_timer_query_webgl2` where the driver exposes it.
 

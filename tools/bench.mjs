@@ -55,8 +55,7 @@
  * run reports numbers a hundred times larger and means nothing.
  */
 import { chromium } from 'playwright';
-import './tame.mjs';
-import { serve } from './harness.mjs';
+import fs from 'node:fs';
 
 const args = process.argv.slice(2);
 const getf = (k, d) => { const i = args.indexOf('--' + k); return i < 0 ? d : args[i + 1]; };
@@ -80,32 +79,32 @@ const VIEWS = [
   { name: 'sun_gap',   d: 120, yaw: 0,  pitch: 6 },
 ];
 
-/* Politeness is inherited: importing tools/tame.mjs above pins node and every
-   chrome-headless-shell child to four of twelve logical cores at Idle priority,
-   re-applied on a timer because Chromium spawns its workers late, and installs
-   the teardown. That is the same budget every other tool here runs under, and
-   it is if anything generous for this one — the GPU path leaves the CPU mostly
-   waiting, where a SwiftShader capture saturates every thread it can reach. */
+/* The rasteriser choice and the flags that implement it belong to
+   tools/harness.mjs, which decides from RENDER_GPU or a `.gpu` file in the root.
+   Set it here and import afterwards rather than keeping a second copy of the
+   list: the flags are fiddly enough that a divergent copy would eventually be
+   measuring a different browser than the one that draws the captures.
+   Dynamic import because a static one is hoisted above this assignment. */
+if (!CPU) process.env.RENDER_GPU = '1';
+const { serve, LAUNCH_ARGS } = await import('./harness.mjs');
+/* tame.mjs comes in through harness and pins node and every
+   chrome-headless-shell child to four of twelve logical cores at Idle priority.
+   Same budget as every other tool here, and generous for this one: the GPU path
+   leaves the CPU mostly waiting where a SwiftShader capture takes every thread
+   it can reach. */
 
-const COMMON = [
-  '--autoplay-policy=no-user-gesture-required',
-  '--disable-dev-shm-usage',
-  '--disable-features=CalculateNativeWinOcclusion,site-per-process',
-  '--disable-background-timer-throttling',
-  '--renderer-process-limit=1',
-];
-
-/* Headless Chromium picks SwiftShader even when a GPU is present, so each of
-   these is load-bearing. Verified by printing the adapter string below: if it
-   does not say the real card, the run is void and says so. */
-const GPU_ARGS = [...COMMON,
-  '--use-angle=d3d11', '--enable-gpu-rasterization', '--ignore-gpu-blocklist',
-  '--enable-zero-copy',
-];
-const CPU_ARGS = [...COMMON,
-  '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
-  '--ignore-gpu-blocklist', '--enable-webgl', '--js-flags=--single-threaded-gc',
-];
+/* No render lock. A GPU bench and a SwiftShader capture are not competing for
+   the same device, and making a one-command benchmark queue behind a
+   twenty-minute capture would mean nobody ever runs it. Say so if one is live,
+   because the shared core budget will still show up in the numbers. */
+try {
+  const lock = new URL('../.renderlock', import.meta.url);
+  if (fs.existsSync(lock)) {
+    console.log(`\n  ⚠ a capture is running (pid ${fs.readFileSync(lock, 'utf8').trim()}).`);
+    console.log('    Both are pinned to the same four cores, so these figures will be');
+    console.log('    pessimistic. Worth re-running once it is done.');
+  }
+} catch (_) {}
 
 const srv = serve();
 await new Promise(r => srv.listen(0, r));
@@ -114,7 +113,7 @@ await new Promise(r => srv.listen(0, r));
    every figure a measurement of a different setting. */
 const url = `http://localhost:${srv.address().port}/#noadapt`;
 
-const browser = await chromium.launch({ headless: true, args: CPU ? CPU_ARGS : GPU_ARGS });
+const browser = await chromium.launch({ headless: true, args: LAUNCH_ARGS });
 const out = { w: W, h: H, backend: CPU ? 'swiftshader' : 'gpu', views: {} };
 
 try {
