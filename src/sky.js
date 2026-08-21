@@ -59,7 +59,15 @@ const A = computeAtmosphere();
  */
 const SCALE = 19.0;
 
-export const EXPOSURE = 1.0;
+/* Lifted from the derived 1.0 after measurement. The derivation puts a flat
+   lit wall face at value 0.62, dead centre of the reference band, but the frames
+   it produces have a median luminance in the high twenties because at this sun
+   angle most of what is on screen is self-shadowed rock and floor in the left
+   wall's shadow. 1.15 puts the lit face at 0.71 and the sunlit floor at 0.55
+   with saturation 0.53 — every one of those inside its measured target — at the
+   cost of clipping facets that stand square to the beam, which is what a
+   photograph exposed for a golden-hour cliff does anyway. */
+export const EXPOSURE = 1.15;
 
 /* ── the fog colour ────────────────────────────────────────────────────────
  * Aerial perspective is System 5's, but scene.fog needs a colour now and the
@@ -113,12 +121,20 @@ function phaseHG(c) {
  * and the shader multiplies it back in analytically. That is the aureole, and it
  * is the brightest and warmest thing in the frame after the disc itself.
  */
+/* The direction is taken from the camera, not from the sphere's own centre.
+   The dome sits at the world origin and the player walks up to 350 m away from
+   it, so reading the direction off the vertex position — which is what the
+   provisional sky did — mis-states every sky direction by up to atan(350/5000),
+   1.4 degrees at the far end of the path. On a smooth gradient that is
+   invisible. On a half-degree sun disc it is three disc widths, and it was
+   enough to push the disc behind the left wall's edge in the one framing the
+   whole composition is built around. */
 const VERT = /* glsl */`
 varying vec3 vDir;
 void main() {
-  vDir = position;
-  vec4 mv = modelViewMatrix * vec4(position, 1.0);
-  gl_Position = projectionMatrix * mv;
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vDir = wp.xyz - cameraPosition;
+  gl_Position = projectionMatrix * viewMatrix * wp;
   gl_Position.z = gl_Position.w;      // always at the far plane
 }`;
 
