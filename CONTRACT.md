@@ -1123,7 +1123,115 @@ Not forgiven, only deferred. Revisit these after System 4 and System 7.
   0.47 → 0.45. No ground surface was edited in that window, so the cause is almost certainly
   the light rather than the material.
 - The pale confetti specks on the wash floor and the lavender sand sheet are System 1
-  albedos reacting to the new skylight — recheck both after System 4.
+  albedos reacting to the new skylight — recheck both after System 4. **Partly
+  resolved**: the specks on *shaded* ground were not albedo at all but the shadow
+  wrapper's constant convergence handing shaded banks 44% of full sun with the
+  micro-shadow signal on top of it — see "A footprint filter that converges on a
+  constant" below. What remains on sunlit ground is still worth a look.
+
+### A footprint filter that converges on a constant cannot tell a partial occlusion from a total one
+
+This was "every shaded bank turns into noise instead of ground", the single most
+frequent line in the whole-scene critique, and it survived two rounds of work on
+the clast layer because it was never the clast layer. Ablating the direct light
+on **every** clast instance moved 0.55% of the shaded bank. It was one constant in
+`terrain.js`'s shadow wrapper.
+
+The wrapper is right to exist. Once a screen pixel covers many shadow texels a
+single binary depth test is the wrong answer at any bias — the sun is at a low
+elevation, the incidence on the floor is grazing, the depth slope across a texel
+is enormous, and the bed is covered in occluders a couple of texels across that
+cannot be represented and so flicker per pixel. The correct answer is the mean
+coverage over the footprint. But the code converged on the **constant 0.55**:
+
+```glsl
+return gRake * mix(s, mix(s, 0.55, 0.80), 1.0 - gFoot);   // = 0.2*s + 0.44 far
+```
+
+A footprint over a sunlit gravel bed really is about half lit, so on the bed the
+constant is a fair guess. A footprint inside the cast shadow of a butte is lit not
+at all, and there the constant hands the surface **44% of full sunlight that
+nothing in the scene is emitting**. Worse, the leak is multiplied by `gRake`,
+which carries every high-frequency term the direct light is supposed to modulate —
+the raking march, the ripple and lineation shadows, the grit's sockets. So a
+shaded bank received a phantom sun at nearly half strength with the entire
+micro-shadow signal written across it. That is the salt and pepper, exactly.
+
+The fix is to take the mean rather than guess it: four extra taps at the
+footprint's own spread, averaged with the centre. Deep inside a shadow all five
+agree on zero and the ground goes properly dark; over a hash they disagree and the
+average is the coverage the footprint actually has, so the anti-acne purpose
+survives. Offsets are pre-divide (`* sc.w`) and collapse to zero in the near
+field, which keeps the near field bit-identical and keeps implicit-LOD fetches out
+of non-uniform control flow.
+
+Measured on `bend`: shaded floor 0.084 → 0.069 with the lit strip unmoved at
+0.291 → 0.293, so **shadow-to-sunlit 0.289 → 0.235**, entering the 0.15–0.25 band
+from above. Standard deviation in the shaded bank falls 60%, which is the noise
+leaving. Far banks the same: `far_270` 0.089 → 0.054, sd 0.079 → 0.032.
+
+**The generalisable form.** Any filter that fades toward a fixed value as
+confidence drops is asserting that the fixed value is the population mean. If the
+population is bimodal — and lit-versus-shadowed is the most bimodal quantity in a
+renderer — that assertion is wrong for one of the two modes, and it will be wrong
+in the direction of adding energy where there is none. **Note also that it flatters
+the shadow-to-sunlit metric**: it was inflating the measured ratio project-wide,
+so some of System 4's 0.312 was this, not their fill.
+
+### Resolution is not extent: the wash "dead end" was neither an edge nor a wall
+
+Two defects were reported from the far end of the walk — a dead straight slab
+across the channel at −270 and a black wall filling the frame at −320 — and both
+were read as the edge of the built world. They were not. The world runs to
+−1900. What ended at −256 was the **dense zone of the mesh's z axis**, while the
+path runs to −320 and the number keys can put the player anywhere on it. Past
+−256 the geometric expansion tail took over: rows 1 m apart at −270, 3 m at −300,
+6 m at −308. The slab is the first giant quad seen face-on and the void is the
+player standing inside one.
+
+Worth stating because the two symptoms both look like a missing-geometry bug and
+neither is. If a far framing reads as boundary, **check the axis tables before
+checking the extents** — `buildTerrainMesh`'s `axis()` segments are the thing that
+has to cover the reachable world, not the height field's domain.
+
+The wash now has a head: the channel narrows and shallows past −274 and a backlit
+amphitheatre rises behind it, because a real wash between buttes heads up into a
+box canyon rather than running on forever. A 340 m wash that ends is a better
+scene than a 600 m one that does not. Two calibration notes for whoever touches
+it: the first draft stood its toe fourteen metres from the end of the walk and
+rose forty metres over fifty, which subtends about fifty degrees — that is not a
+canyon head, it is a wall in the face, and it darkened the up-wash view as far
+back as −220. Thirty metres of set-back over sixty of run puts the rim near
+seventeen degrees with sky above it. And the z segments are graded in three steps
+so no column carries a spacing ratio above 1.32, for the same reason the x axis
+is graded: a jump in spacing leaves a crease along one row, and a dead straight
+line across the wash is the thing that file exists to avoid.
+
+### Density sorting is not size sorting
+
+The facies model had been varying *how many* clasts land at a point for three
+rounds — a lag band carries several times the density of swept ground — and the
+critique still said "sorted by the last flood… scattered by a random number
+generator". The half that was missing is that it never varied **which** clasts.
+Every patch drew from the same size distribution, so all sizes were interleaved
+everywhere at their global proportions, and a field with correct density structure
+and no local size structure still reads as random.
+
+Real bedload sorts because falling water loses competence as it spreads and slows,
+dropping its coarse fraction first and its fine last. What it leaves is a mosaic
+of patches each *narrow* in size and *different* from its neighbour. So the
+quantity to author is **low local variance in grain size with high spatial
+variance in the local mean** — not more noise, less of it, arranged.
+
+Two implementation notes. The placement loop already carries `s` and `u`,
+arclength down the wash by offset across it, so the field can be built directly in
+the flow frame with no rotation — 18 m along by 3 across, which is a real bar's
+aspect. And it must be **mean-one**: the loop runs until `cl.count` is placed, so
+a mean-one gain redistributes without thinning, and thinning this field has gone
+wrong before. Verify that (deciles of the field, total instance count before and
+after) rather than assuming it. `wash_mid` floor grad/L 0.176 → 0.138, into the
+band from above, with hf/lf 0.55 → 0.59: less raw gradient and more structure,
+which is the direction that metric pair is supposed to move.
 
 ### Past ~30 m the shading normal IS the mesh normal
 
