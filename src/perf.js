@@ -159,12 +159,39 @@ export const QTIERS = [
 const RSCALE = [1.0, 0.88, 0.78, 0.68, 0.58];
 
 /* Degradation order, as pairs of (scale index, tier index). Interleaved, and it
-   opens with two pure resolution steps: at 1080p the frame is overwhelmingly
-   fragment-bound — a terrain shader with twenty-odd texture fetches over most
-   of the screen — so the first thing worth trying is simply fewer fragments,
+   opens with a pure resolution step: the frame is overwhelmingly fragment-bound
+   — measured, at 2560x1440, the terrain fragment shader alone is 9.1 ms of a
+   15.7 ms frame — so the first thing worth trying is simply fewer fragments,
    and it is the change the eye is least likely to notice on a 200 Hz panel
-   where the alternative is a dropped frame. */
-const LADDER = [[0, 0], [1, 0], [2, 0], [2, 1], [3, 1], [3, 2], [4, 2], [4, 3]];
+   where the alternative is a dropped frame.
+
+   ── retuned against tools/bench.mjs's rung table rather than reasoned ───────
+
+   The previous order was [0,0] [1,0] [2,0] [2,1] [3,1] [3,2] [4,2] [4,3] — three
+   resolution steps before any quality at all, then quality trailing resolution
+   by a rung the rest of the way. That was written before anything had been
+   measured on a GPU, and the measurement does not support it. Per rung at
+   sun_gap, 2560x1440, on the 4060:
+
+     high   15.73  13.27  11.46   9.88   8.51     at scale 1.00 .88 .78 .68 .58
+     medium 13.33  11.28   9.78   8.46   7.31
+     low    10.75   8.98   7.68   6.54   5.56
+     potato  9.99   8.34   7.13   6.06   5.14
+
+   Read down a column rather than along a row: once the shadow filter stopped
+   being three quarters of the frame, a *tier* step became worth roughly as much
+   as a scale step and costs less picture than one. The old order reached the
+   8.33 ms budget at medium/0.68 — 1741x979. This one reaches it at low/0.78 —
+   1997x1123, which is 34% more pixels at a shorter frame. Both numbers are
+   measured; the trade the retune makes is MSAA for resolution, and it is the
+   right way round because System 7's along-edge resolve runs at full strength
+   on every rung precisely so that the samples-0 rungs are not left bare.
+
+   The bottom rung is potato at 0.58, and it is now 5.14 ms — 195 fps — against
+   the 18.03 ms that was recorded as the ladder's floor. That figure was potato
+   at *native* resolution, which is a setting the governor never selects: see
+   the note on `rungs` below. */
+const LADDER = [[0, 0], [1, 0], [1, 1], [2, 1], [2, 2], [3, 2], [3, 3], [4, 3]];
 
 const SOFTWARE = /swiftshader|llvmpipe|software|basic render|microsoft basic/i;
 
@@ -405,7 +432,7 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
     if (farRidge && farRidge.setDetail) farRidge.setDetail(q.far);
   }
 
-  function setRung(i) {
+  function gotoRung(i) {
     li = Math.max(0, Math.min(LADDER.length - 1, i));
     const [r, q] = LADDER[li];
     const rChanged = r !== ri, qChanged = q !== qi;
@@ -452,11 +479,11 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
          half a minute; it wants to be somewhere playable now. */
       const r = t / cost;
       const steps = r > 0.72 ? 1 : r > 0.45 ? 2 : 3;
-      setRung(li + steps);
+      gotoRung(li + steps);
       floorI = li;
       hold = 2.5;
     } else if (cost < t * 0.62) {
-      if (li > floorI) { setRung(li - 1); hold = 4; }
+      if (li > floorI) { gotoRung(li - 1); hold = 4; }
       else if (floorI > 0) { floorI--; hold = 12; }
     }
   }
@@ -588,6 +615,24 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
       return QTIERS[qi].name;
     },
     setScale(s) { scaleOverride = +s || 0; applyScale(); },
+
+    /* ── the ladder as the governor actually walks it ─────────────────────
+     *
+     * Exposed because the tier table was being read as the answer to "does the
+     * quality ladder reach the target" and it is not that question. setTier
+     * changes the quality tier and deliberately leaves the render scale at 1.0,
+     * so a `potato` row is potato at native resolution — a setting nothing ever
+     * runs at. The governor's bottom step is rung 7, which is potato *and* a
+     * 0.58 render scale, and the two differ by most of the frame on a
+     * fill-bound scene. A ladder measured one lever at a time cannot say
+     * whether the interleaved ladder lands inside the budget, and reporting
+     * that it could not was how "the bottom rung is 55 fps" got written down.
+     */
+    get rungs() {
+      return LADDER.map(([r, q], i) => ({ i, scale: RSCALE[r], tier: QTIERS[q].name }));
+    },
+    /** Move to rung `i` of the interleaved ladder — scale and tier together. */
+    setRung(i) { scaleOverride = 0; gotoRung(i); return li; },
 
     /** Everything a benchmark wants in one object. */
     stats() {

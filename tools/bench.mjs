@@ -222,9 +222,28 @@ try {
         off: () => atmo.setHidden(false),
         run: frame,
       },
+      /* ---- this column used to measure nothing, and it mattered ----
+         `renderer.shadowMap.enabled` is a *compile-time* parameter: three folds
+         it into USE_SHADOWMAP when a program is built and does not rebuild
+         anything when it changes at runtime. So flipping it here stopped the
+         shadow *maps* being redrawn — which costs nothing anyway, since
+         shadowMap.autoUpdate is false and a static camera redraws no cascade —
+         while every lit fragment went on sampling them exactly as before. The
+         column read 30.54 against a full frame of 30.49 and was quoted as
+         "shadows are inside the noise", at a moment when tools/fillcost.mjs and
+         tools/terrcost.mjs put the terrain's shadow lookups at 23 ms of that
+         30.49. An hour of the wrong diagnosis came out of one unrecompiled
+         define. Forcing every material to relink is slow and lands in the six
+         warm-up frames rather than in the timed block. */
       noShadow: {
-        on: () => { r.shadowMap.enabled = false; },
-        off: () => { r.shadowMap.enabled = true; r.shadowMap.needsUpdate = true; },
+        on: () => {
+          r.shadowMap.enabled = false;
+          scene.traverse((o) => { if (o.material) for (const m of [].concat(o.material)) m.needsUpdate = true; });
+        },
+        off: () => {
+          r.shadowMap.enabled = true; r.shadowMap.needsUpdate = true;
+          scene.traverse((o) => { if (o.material) for (const m of [].concat(o.material)) m.needsUpdate = true; });
+        },
         run: frame,
       },
       noVeg: {
@@ -350,6 +369,57 @@ try {
       }
     }
     await page.evaluate(() => window.__game.perf.setTier('high'));
+
+    /* ---- and the ladder the governor actually walks ----
+       The tier table above holds the render scale at 1.0, which is the right
+       control for "what does a tier cost" and the wrong answer to "does the
+       fallback reach the target". The governor descends an *interleaved*
+       ladder: rung 7 is potato at 0.58 scale, not potato at native. On a
+       fill-bound frame those two differ by most of the frame, and reading the
+       tier row as the fallback is how "the bottom rung is 55 fps" was recorded
+       against a rung nothing runs at. */
+    const rungs = await page.evaluate(() =>
+      (window.__game.perf.rungs ? window.__game.perf.rungs : null));
+    if (rungs) {
+      if (!JSON_OUT) {
+        console.log(`\n  ── the governor's own ladder, at ${worst.name} ──`);
+        console.log('  rung  tier      scale      buffer   frame ms    gpu ms   fps@this cost');
+      }
+      out.rungs = [];
+      for (const rg of rungs) {
+        const row = await page.evaluate(async ([i, v, reps, blocks]) => {
+          const g = window.__game, gl = g.renderer.getContext();
+          g.setPaused(true);
+          g.perf.setRung(i);
+          g.walkTo(v.d); g.lookAt(v.yaw, v.pitch);
+          const px = new Uint8Array(4);
+          const sync = () => gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+          const time = (n) => {
+            for (let k = 0; k < 6; k++) g.renderOnce();
+            sync();
+            const t0 = performance.now();
+            for (let k = 0; k < n; k++) g.renderOnce();
+            sync();
+            return (performance.now() - t0) / n;
+          };
+          time(10);
+          const a = []; for (let b = 0; b < blocks; b++) a.push(time(reps));
+          const s = g.perf.stats();
+          g.setPaused(false);
+          return { i, ms: +a.sort((x, y) => x - y)[a.length >> 1].toFixed(3), stats: s };
+        }, [rg.i, worst, REPS, BLOCKS]);
+        out.rungs.push({ ...rg, ...row });
+        if (!JSON_OUT) {
+          console.log(`  ${String(row.i).padEnd(5)} ${row.stats.tier.padEnd(9)} ` +
+            `${row.stats.scale.toFixed(2).padStart(5)}  ` +
+            `${(row.stats.buffer[0] + 'x' + row.stats.buffer[1]).padStart(11)}  ` +
+            `${row.ms.toFixed(2).padStart(9)}  ` +
+            `${String(row.stats.gpuMs == null ? 'n/a' : row.stats.gpuMs.toFixed(2)).padStart(8)}  ` +
+            `${String(Math.round(1000 / row.ms)).padStart(13)}`);
+        }
+      }
+      await page.evaluate(() => { window.__game.perf.setRung(0); });
+    }
   }
 
   out.errors = [...new Set(errs)].slice(0, 8);
