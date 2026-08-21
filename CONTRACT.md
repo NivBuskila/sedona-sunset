@@ -1633,6 +1633,16 @@ large, flips the sign, because the fill is multiplied by rock albedo and the alb
 blue away. This is the same argument that killed violet-on-rock-from-fill, now with a number
 on it.
 
+A later `tools/skyview.mjs` run confirms the foundation independently rather than re-using the
+table the fit was built on. At d 46 and floor level it returns 0.431 / 0.799 / 0.779 / 0.587
+blocked for up / away / across / toward, against the 0.431 / 0.800 / 0.785 / 0.575 in
+`probefit.mjs` — reproducible to the third decimal. It also validates the escarpment's two
+lit parameters, which the bounce depends on: the sunlit fraction of the skyline by height band
+runs 0, 0, 0.13, 0.27, 0.54 from foot to crest, so `WALL_LIT` at 0.57 and `LIT_FOOT` at 0.40
+are both measured rather than chosen. And it makes the case stronger going up-wash: on a wall
+normal the sky is **0.949 blocked at d 18** against 0.799 at d 46, so the near-wash framings
+the critique judges are *more* red-room-bound than the d 46 fit assumes, not less.
+
 So the term that can fix this is one that is **added in front of the rock rather than
 multiplied by its albedo**, which means airlight. That is System 5's in-scatter, and the same
 critique independently measures aerial perspective at a **0% median saturation edge in all
