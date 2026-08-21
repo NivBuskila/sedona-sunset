@@ -248,34 +248,106 @@ than content.
   ablation was live; the lattice was **unchanged**. It is not acne, so it is not
   System 4's depth or normal bias, and it should not be routed there.
 
-**What it is.** With the shadow map gone the dots are still dark, so they are shaded
-by their own normals. Measured in the artefact region: dots rgb(105,59,39) against
-bank rgb(204,142,96) — **B/G 0.669 against 0.675**, the same material to three
-decimal places, but half the luminance and much redder (R/G 1.79 against 1.44). Losing
-the warm-white sun and keeping the red bounce is exactly what a facet turned away from
-the sun looks like. So this is *geometry*: a regular grid of facets tilted off the
-sun, which is the mesh grid showing through the vertex normals. That makes it
-System 1's, not System 4's.
+- **The mesh geometry.** The vertex `N·L` field was mapped across the patch straight
+  off the built `BufferGeometry` — 33 rows, printed as ASCII. It is smooth, with large
+  coherent blobs and **no per-vertex alternation of any kind**. There is no lattice in
+  the geometry.
+- **The height field's fine relief.** Both isotropic terms (`fbm` at 0.42 and 0.34,
+  the only ungated sub-metre content on a bank) zeroed outright. Lattice unchanged.
+- **The bar roughness.** `swA`/`swB` zeroed outright. Lattice unchanged.
 
-**The lead, measured but not closed.** Mesh spacing along the wash:
+**What it is.** With the shadow map gone the dots are still dark, so they are shaded by
+their own normals. Measured in the region: dots rgb(105,59,39) against bank
+rgb(204,142,96) — **B/G 0.669 against 0.675**, the same material to three decimals, but
+half the luminance and much redder (R/G 1.79 against 1.44). Losing the warm-white sun
+while keeping the red bounce is a facet turned away from the sun.
 
-| zone | dz | dx | z-Nyquist |
-|---|---|---|---|
-| floor, z −40 to −240 | 0.420 m | 0.200 m | 0.84 m |
-| **head, z −320 to −300** | **0.615 m** | 0.200 m | **1.23 m** |
+Those normals are **fragment-stage, not geometric**. Replacing the terrain's
+`normal_fragment_maps` output with the interpolated geometric normal — `tNrmW` swapped
+for `vWNrm`, everything else untouched — removes the lattice **completely**, and the
+surface is visibly smoother, so the ablation is live. It is therefore somewhere in the
+assembly of `wN`, on a bank, and it is System 1's.
 
-The floor holds 0.42 m everywhere it was authored. The one zone that does not is the
-head extension **added in the round before the lattice was first named**, and the
-lattice sits in it. Note also that the band-limit comment above `swA` states the grid
-as "0.20 m across and 0.42 m along" and reasons about how many octaves are safe from
-those numbers — that comment is now wrong for z < −274. `swA`/`swB` are gated by
-`floorZone` so they are probably not the term, but **the general lesson stands and is
-the thing to carry forward: extending the z-table silently invalidated a band-limit
-argument recorded a hundred lines away from the table.** A sampling assumption written
-as prose next to the term it protects will not be re-checked when the sampler changes.
-Anything band-limited against mesh spacing should read the spacing, not quote it.
+**Where it is not: the bedform comb.** The obvious suspect, and wrong. Its phases were
+decorrelated (per-component warps instead of one shared `bwo`) — no change. Its band
+limit was moved from `fwidth` of the phase to the analytic footprint — no change. Then
+the gate was read, which should have come first: `bedW` is multiplied by `floorB` and
+by `(1.0 - smoothstep(0.06, 0.20, slope))`, so the term is largely **off on a bank**
+and was never live at the artefact. Both changes were reverted; the footprint band
+limit is written up in place because the reasoning behind it is sound and reusable
+even though it fixed nothing here — see the process note below.
 
-Not chased further: it is a far-field artefact at 270 m and the deadline was midday.
+**Still open**, and narrowed to: whatever perturbs `wN` on a bank, which is the
+`mix(gWN, rockWN, rockW)` blend and what feeds it. Not chased further; the budget for
+a far-field artefact at 270 m was spent.
+
+## Three process notes from chasing it
+
+**Read the gate before ablating the term.** Two renders went into the bedform comb on
+the strength of its wavelengths, when one line above it says it is multiplied by
+`floorB` and faded out by slope. A term's gate is cheaper to read than its behaviour is
+to measure.
+
+**A screen position is not a world position.** The lattice was asserted to be in the
+0.615 m head zone because it is "a bank at about 40 m" and that zone is at about that
+range. It is not: painting `vWPos.z` into `diffuseColor` as four flat bands located it
+in one render at **z between −280 and −256, where the rows are 0.48 m**. A whole
+diagnosis, an arithmetic case and a fix were built on a guessed coordinate. If a
+conclusion depends on where something is, spend the one render that measures it.
+
+**fwidth of a phase under-reports exactly where it matters.** `1.0 - smoothstep(0.22,
+0.55, fwidth(bpN))` is a finite difference of a periodic function, and it wraps: a comb
+advancing nearly one cycle per pixel differences to nearly zero, so the gate reads wide
+open precisely where the component aliases worst. Any band limit of this shape is
+strongest where there is nothing to guard against and absent where there is. Compare a
+derivative of *position* — `footMin`, which is smooth and cannot wrap — against the
+wavelength instead. Not verified as a fix for anything yet, so it is recorded in the
+comment rather than landed.
+
+**Never `sed -i` by line number in this tree.** A line-numbered revert landed a
+statement in the middle of the `footShadow` comment block because the file had shifted
+under it, and the same edit left the normal ablation in place — so an entire render was
+spent measuring a frame that still had the ablation in it, and it looked like a
+successful fix. Exact-text replacement only.
+
+## Landed: the mesh grid is a value now, not a number in a comment
+
+The lattice hunt turned up a real latent fault next to it, and that one is fixed.
+
+The band-limit reasoning above `swA` stated the grid as "0.20 m across and 0.42 m
+along" and worked out how many octaves were safe **from those two quoted numbers**.
+Extending the z-table to reach the wash head later put 0.615 m rows into the head zone,
+which silently falsified the argument. The comment was a hundred lines from the table
+and nothing connected them.
+
+`src/terrain.js` now has one definition of the grid — `X_SEG` / `Z_SEG`, with
+`buildTerrainMesh` building its axes from them — and two ways to consult it:
+
+- **`meshStepX(x)` / `meshStepZ(z)`** read the local spacing back off the built axes by
+  bisection, so a displacement term can *ask* what the sampling rate is here. Returned
+  blended with the neighbouring cell rather than raw, because the raw gap is a staircase
+  and anything scaling an amplitude by it would step at one row — a dead straight line
+  across the wash, which is the artefact the graded axis exists to avoid.
+- **`gridK(lambda, d)`** fades a term as its finest octave approaches the local Nyquist.
+  The window is 1.8–2.6 samples per wavelength, not 2.0–3.0, deliberately: the floor was
+  authored against 0.42 × 0.20 m and some of it sits near the limit on purpose, so a
+  window starting at 2.0 would pull amplitude out of a near field that is measured good.
+  Verified as an exact no-op from z −40 to −240 and biting only past −256.
+- **`assertBandLimits()`** covers what cannot be faded without undoing measured work —
+  `swA`/`swB` are elongated ten to one *by design* to sit just inside the across-channel
+  spacing. It throws at mesh build with the actual samples-per-wavelength and the actual
+  spacing. **Verified to fire**: coarsening the dense x segment to 0.30 m produces
+  `swA bar roughness: 1.46 samples/wavelength across (dx 0.301 m)`. A check that has
+  never been seen to fail is not known to work — that is the byte-identical gate above,
+  one hour later.
+
+No rows were added, so the triangle count is unchanged at 966k, which matters with the
+frame already over its ceiling. `hf/lf` across the four far framings before and after:
+0.54→0.55, 0.52→0.55, 0.56→0.56, 0.57→0.57.
+
+**The reusable lesson: a sampling argument that quotes a constant from elsewhere in the
+file is a landmine, and it goes off in a framing nobody is looking at.** Anything
+band-limited against mesh spacing should read the spacing rather than quote it.
 
 ## Noted, not investigated: the ground floor's drifting grad/L denominator
 

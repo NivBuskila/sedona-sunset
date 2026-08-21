@@ -63,6 +63,121 @@ export const BED_T = 4.6;
    stratigraphy look machined. */
 const resistOf = (i) => smoothstep(0.30, 0.72, 0.5 + 0.5 * Math.sin(i * 2.399 + 1.7));
 
+/* ── the sampling grid, as a value rather than as a number in a comment ─────
+ *
+ * These two tables are the single definition of where the mesh puts its rows
+ * and columns. `buildTerrainMesh` builds its axes from them and `meshStepX` /
+ * `meshStepZ` below read the built axes back, so any displacement term that
+ * needs to know the sampling rate can *ask* instead of quoting a figure.
+ *
+ * This exists because of a real defect. The band-limit reasoning above `swA`
+ * stated the grid as "0.20 m across and 0.42 m along" and worked out how many
+ * octaves were safe from those two numbers. Extending the z-table to reach the
+ * wash head later put 0.615 m rows into the head zone, which quietly falsified
+ * that reasoning — the comment was a hundred lines from the table and nothing
+ * connected them. The isotropic fine-relief term whose finest octave sits at
+ * 1.17 m was safe against the floor's 0.84 m Nyquist and aliased against the
+ * head's 1.23 m, and it came back as a diamond lattice of dark facets on a bank
+ * at 270 m that took a day to attribute.
+ *
+ * The general rule, which is the reusable part: **a sampling argument that
+ * quotes a constant from elsewhere in the file is a landmine, and it goes off
+ * in a framing nobody is looking at.** Read the spacing.
+ */
+const X_SEG = [[-52, -30, 0.32], [-30, -17, 0.26], [-17, 17, 0.20],
+               [17, 30, 0.26], [30, 52, 0.32]];
+const Z_SEG = [[-404, -320, 0.86], [-320, -280, 0.62],
+               [-280, -256, 0.48], [-256, 14, 0.42]];
+const X_AXIS = axis(X_SEG, -1600, 1600, 1.12);
+const Z_AXIS = axis(Z_SEG, -1900, 220, 1.14);
+
+/**
+ * Local spacing of a sorted axis at `v`, by bisection on the axis itself.
+ *
+ * Blended with the neighbouring cell rather than returned raw. The raw gap is a
+ * staircase — it jumps 0.48 to 0.62 at one row — and anything that scales an
+ * amplitude by it would step at that row, which is a dead straight line across
+ * the wash and the exact artefact the graded axis exists to avoid. Blending by
+ * distance from the cell centre makes the spacing continuous: both sides of a
+ * boundary agree on the mean of the two gaps.
+ */
+function stepOf(ax, v) {
+  const n = ax.length - 1;
+  if (v <= ax[0]) return ax[1] - ax[0];
+  if (v >= ax[n]) return ax[n] - ax[n - 1];
+  let lo = 0, hi = n;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (ax[m] > v) hi = m; else lo = m; }
+  const g = ax[hi] - ax[lo];
+  const t = (v - ax[lo]) / g - 0.5;
+  const j = t < 0 ? lo - 1 : hi + 1;
+  if (j < 0 || j > n) return g;
+  const gn = t < 0 ? ax[lo] - ax[j] : ax[j] - ax[hi];
+  return g + (gn - g) * Math.abs(t);
+}
+export const meshStepX = (x) => stepOf(X_AXIS, x);
+/* Three taps over about two metres. The z axis is the graded one, and one cell
+   of blending is not quite enough to keep a 0.48-to-0.86 transition from
+   reading as a ramp across the channel. */
+export const meshStepZ = (z) =>
+  (stepOf(Z_AXIS, z - 1.1) + stepOf(Z_AXIS, z) + stepOf(Z_AXIS, z + 1.1)) / 3;
+
+/* Finest wavelength an fbm of this base frequency and octave count contains,
+   given the lacunarity fbm() actually uses. */
+const LAC = 2.03;
+const fineLambda = (freq, oct) => 1 / (freq * Math.pow(LAC, oct - 1));
+
+/**
+ * Attenuation for a displacement term whose finest octave is `lambda` metres,
+ * sampled by a grid of spacing `d`. One at three samples per wavelength and
+ * above, zero at two, which is Nyquist and the point the term stops being
+ * relief and starts being per-vertex speckle.
+ *
+ * The window is deliberately 1.8–2.6 rather than 2.0–3.0. Everything on the
+ * floor was authored and verified against 0.42 × 0.20 m rows, and some of it
+ * sits close to the limit on purpose; a window starting at 2.0 would pull
+ * amplitude out of the near field, which is measured good and is not what is
+ * broken. 1.8–2.6 is a no-op at the authored spacing and bites only where the
+ * grid is coarser than the term was written for.
+ */
+const gridK = (lambda, d) => smoothstep(1.8, 2.6, lambda / d);
+
+/**
+ * Terms that are authored hard against the grid on purpose and cannot be faded
+ * without undoing measured work — the bar roughness is deliberately elongated
+ * ten to one so it sits just inside the across-channel spacing, and that is the
+ * whole design of it. They get a boot check instead of a gate: if anyone
+ * coarsens the axis under them, this says so with the numbers rather than
+ * letting it come back as a lattice in a framing nobody is looking at.
+ */
+const BAND_LIMITED = [
+  { name: 'swA bar roughness', fx: 1.12, fz: 0.115, oct: 2 },
+  { name: 'swB swale crease',  fx: 0.80, fz: 0.082, oct: 2 },
+];
+
+/* Scoped to the dense core of each axis, which is where these terms are meant
+   to be read: the 0.20 m x segment they were written against, and the full
+   authored z run out to the head. Beyond the core the axis expands
+   geometrically and nothing is claimed about it. */
+function assertBandLimits() {
+  let dx = 0, dz = 0;
+  for (let i = 1; i < X_AXIS.length; i++)
+    if (X_AXIS[i] > -17 && X_AXIS[i - 1] < 17) dx = Math.max(dx, X_AXIS[i] - X_AXIS[i - 1]);
+  for (let i = 1; i < Z_AXIS.length; i++)
+    if (Z_AXIS[i] > -404 && Z_AXIS[i - 1] < 14) dz = Math.max(dz, Z_AXIS[i] - Z_AXIS[i - 1]);
+  const bad = [];
+  for (const t of BAND_LIMITED) {
+    const rx = fineLambda(t.fx, t.oct) / dx, rz = fineLambda(t.fz, t.oct) / dz;
+    if (rx < 2 || rz < 2) bad.push(
+      `  ${t.name}: ${rx.toFixed(2)} samples/wavelength across (dx ${dx.toFixed(3)} m), ` +
+      `${rz.toFixed(2)} along (dz ${dz.toFixed(3)} m)`);
+  }
+  if (bad.length) throw new Error(
+    'terrain: displacement term is now below the mesh Nyquist and will alias as a ' +
+    'regular lattice of facets.\n' + bad.join('\n') +
+    '\nEither restore the spacing in X_SEG / Z_SEG, drop an octave from the term, ' +
+    'or move it behind gridK() so it fades with the local grid.');
+}
+
 /* ── height field ──────────────────────────────────────────────────────── */
 
 export class Terrain {
@@ -769,15 +884,23 @@ export class Terrain {
        amplitude the eye can see, reads as dune — rounded, continuously
        differentiable swells. The mid-scale relief on a wash floor is carried by
        the stepped bar margins above, which have hard risers. */
+    /* These two terms are isotropic and ungated by `floorZone`, so unlike the
+       bar roughness they run on the banks and up into the head, where the rows
+       are 0.615 m rather than 0.42 m. Rather than quote either figure, ask the
+       axis what the spacing is here and fade each term as its finest octave
+       approaches that grid's Nyquist. On the floor both ratios sit above the
+       window and this is exactly a no-op; in the head zone the 0.42-frequency
+       term's finest octave falls to 1.9 samples per wavelength and is removed,
+       which is the diamond lattice. See `gridK` for why the window is 1.8–2.6
+       and not 2.0–3.0. */
+    const dGrid = Math.max(meshStepX(x), meshStepZ(z));
+    const k114 = gridK(fineLambda(0.42, 2), dGrid);
+    const k115 = gridK(fineLambda(0.34, 2), dGrid);
     h += (1 - ramp) * flat * (coarse * (0.34 * fbm(x * 0.036, z * 0.036, 3, 109)
                                       + 0.18 * fbm(x * 0.105, z * 0.105, 3, 111))
                             + 0.150 * fbm(x * 0.255, z * 0.255, 2, 113)
-                            + 0.085 * fbm(x * 0.42, z * 0.42, 2, 114)
-                            /* The floor of this term sits above three metres of
-                               wavelength. Below that the grid cannot carry it and
-                               it comes back as per-vertex speckle, not as grain —
-                               grain at that scale is the normal map's job. */
-                            + 0.030 * fbm(x * 0.34, z * 0.34, 2, 115))
+                            + 0.085 * k114 * fbm(x * 0.42, z * 0.42, 2, 114)
+                            + 0.030 * k115 * fbm(x * 0.34, z * 0.34, 2, 115))
        /* Held down hard on the wall ramp. Sixty centimetres of relief at a
           two-metre wavelength on a slope this steep, under a sun this low, is a
           field of blown crests and black troughs — the wall's texture stops being
@@ -945,8 +1068,7 @@ export function buildTerrainMesh(terrain, material) {
      0.34 at a single column leaves a crease along that column — a dead straight
      line in world space, and the one thing a landscape never contains is a dead
      straight line. */
-  const xs = axis([[-52, -30, 0.32], [-30, -17, 0.26], [-17, 17, 0.20],
-                   [17, 30, 0.26], [30, 52, 0.32]], -1600, 1600, 1.12);
+  const xs = X_AXIS;
   /* The dense zone has to reach the end of the *walk*, which it did not. It
      stopped at -256 while the path runs to -320 and the number keys jump the
      player anywhere along it, so the last fifth of the walk was rendered by the
@@ -962,8 +1084,8 @@ export function buildTerrainMesh(terrain, material) {
      ratio above 1.32 — the same reason the x axis is graded, since a jump in
      spacing leaves a crease along one row, and a dead straight line across the
      wash is the thing this whole file exists to avoid. */
-  const zs = axis([[-404, -320, 0.86], [-320, -280, 0.62],
-                   [-280, -256, 0.48], [-256, 14, 0.42]], -1900, 220, 1.14);
+  const zs = Z_AXIS;
+  assertBandLimits();
 
   const nx = xs.length, nz = zs.length;
   const count = nx * nz;
@@ -1975,7 +2097,19 @@ if (bedW > 0.004) {
   float bp3 = (dot(wxz, bd3) + bwo) / bl3 + 0.62;
   float bp4 = (dot(wxz, bd4) + bwo) / bl4 + 0.19;
   /* Same band limit bsin uses, kept per-term so each wavelength dies on its own
-     schedule rather than the shortest one taking the rest with it. */
+     schedule rather than the shortest one taking the rest with it.
+
+     Worth knowing before anyone tunes this: fwidth of a *phase* is a finite
+     difference of a periodic function, and it under-reports once the phase
+     advances more than half a cycle per pixel, because the difference wraps. A
+     comb at nearly one cycle per pixel differences to nearly zero, so the gate
+     reads wide open exactly where the component is aliasing worst. Replacing
+     these four with a footprint test — 1.0 - smoothstep(0.28, 0.55, footMin/blN),
+     which is a derivative of position and cannot wrap — is almost certainly the
+     more correct form. It was written, rendered and reverted only because it
+     changed nothing about the artefact being chased at the time and this term
+     is measured good; it is a real improvement waiting for someone with a
+     budget to verify it against the midground metrics. */
   float bk1 = 1.0 - smoothstep(0.22, 0.55, fwidth(bp1));
   float bk2 = 1.0 - smoothstep(0.22, 0.55, fwidth(bp2));
   float bk3 = 1.0 - smoothstep(0.22, 0.55, fwidth(bp3));
