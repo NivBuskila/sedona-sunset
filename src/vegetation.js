@@ -508,8 +508,13 @@ export function planVegetation(path, terrain, rocks) {
       const sz = 0.8 + rr() * 1.9;
       const dark = 0.72 + rr() * 0.5;
       const target = du < CARD_RANGE ? mid : far;
+      /* Sink with the instance rather than by a fixed 0.12 m. A constant sink is
+         a *shrinking* one in the geometry's own units — 0.12 of a unit-height
+         tuft but 0.03 of a four-metre one — so the biggest and most visible
+         plants were the least firmly seated. Proportional keeps the ground line
+         at the same place up the tuft whatever the scale. */
       target.push({
-        x: p3.x, y: p3.y - 0.12, z: p3.z, rot: rr() * TAU,
+        x: p3.x, y: p3.y - 0.10 * sz, z: p3.z, rot: rr() * TAU,
         sx: sz * (0.8 + rr() * 0.4), sy: sz * (0.9 + rr() * 0.7), sz: sz * (0.8 + rr() * 0.4),
         r: dark, g: dark, b: dark,
       });
@@ -639,13 +644,34 @@ export function buildVegetation(path, terrain, rocks) {
 
   /* ── mid-distance junipers on the terraces and lower slopes ──────────────
      Close enough that a blob would read as a blob, far enough that a real tree
-     is not affordable: seven foliage cards on the same texture as the hero. */
+     is not affordable: nine foliage cards on the same texture as the hero. */
+  /* `cardTuft` grows each card *upward* from the `cy` it is given — `py = cy +
+     hh * sy` with `sy` in {0, 1} — so `cy` is the card's foot and not its
+     centre. This tier used to pass `cy = 0.06 + r() * 0.46`, which put its
+     lowest vertex at local y 0.074 and left the tuft with no geometry at all at
+     or below its own origin. Against a 0.12 m seat sink that is fine on the
+     smallest instances and hovers on every large one: 0.06 m of air at sy 2.5,
+     0.18 m at sy 4.0, with the bulk of the seven cards a metre higher again.
+     Read at the wall foot, where the rock behind is in shadow, that is foliage
+     floating over a black gap — a juniper with a severed trunk. The near shrub
+     tier passes `cy = 0` and seats correctly, which is why it never showed this.
+     So the lowest ring now starts *below* the origin and buries into whatever
+     the instance stands on, the way the shrub does. */
   const midGeo = addSun(addWhite(cardGeometry((arr) => {
     const r = rng(2002);
-    for (let i = 0; i < 7; i++) {
-      const a = i / 7 * TAU;
-      cardTuft(Math.cos(a) * 0.17, 0.06 + r() * 0.46, Math.sin(a) * 0.17,
-               0.70, 0.60, 1, r, arr, 2, 2);
+    for (let i = 0; i < 9; i++) {
+      const a = i / 9 * TAU + r() * 0.42;
+      /* Four of the nine are skirt: wider, splayed further out, and rooted
+         under the seat so the ground line cuts across them instead of passing
+         beneath them. On a bench that is not level the uphill side buries
+         deeper and the downhill side still reaches, which is what the extra
+         radius buys. */
+      const skirt = i < 4;
+      const rad = skirt ? 0.21 + r() * 0.11 : 0.17;
+      cardTuft(Math.cos(a) * rad,
+               skirt ? -0.20 - r() * 0.12 : 0.03 + r() * 0.40,
+               Math.sin(a) * rad,
+               skirt ? 0.84 : 0.70, skirt ? 0.76 : 0.60, 1, r, arr, 2, 2);
     }
   })));
   const midMat = makeFoliageMaterial(foliageTex());
