@@ -188,7 +188,16 @@ const show = (label, L) => {
    the wash floor's mixed sand and oxide dirt. */
 const ROCK = [0.335, 0.152, 0.082];
 const SAND = [0.335, 0.212, 0.140];
-const cosAz = Math.abs(Math.sin(atmos.SUN_AZ)) * Math.cos(atmos.SUN_EL);
+/* The cosine the beam actually lands on the wall the `wall_lit` viewpoint looks
+   at. This used to be |sin(azimuth)|, on the assumption that the wall runs along
+   the corridor and the corridor runs along -Z. Neither is true: tools/sunpos.mjs
+   reads the camera matrices straight out of the page and the wash's heading at
+   d = 46 is -7.5 degrees, so the right-hand wall's inward normal bears -97.5 and
+   the cosine is -sin(azimuth + 7.5). At the azimuth this was first set to that is
+   0.03 rather than the 0.18 the idealised formula claimed — a factor of six, and
+   it is the difference between a lit wall and a wall lit only by the sky. */
+const WASH_HEADING = -7.5 * Math.PI / 180;
+const cosAz = Math.max(0, -Math.sin(atmos.SUN_AZ - WASH_HEADING)) * Math.cos(atmos.SUN_EL);
 const refl = (alb, E) => alb.map((a, k) => a * E[k] * SCALE / Math.PI);
 const beam = (k, c) => s[k] * c;
 

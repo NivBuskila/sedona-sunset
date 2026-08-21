@@ -303,8 +303,6 @@ export function buildSky() {
  * measured at the handoff and reported — and the constraint is that it must be
  * added to the scene second, so that it lands at shadow index 1.
  */
-export const SHADOW_HALF = 34;      // kept for compatibility; no longer used
-
 /* Light-space extents, and both are asymmetric because the region that needs
    shadowing is not centred on the player in either axis.
    y is vertical tilted back by the solar elevation: +y is up, and -y runs away
@@ -312,14 +310,18 @@ export const SHADOW_HALF = 34;      // kept for compatibility; no longer used
    admits a 58 m wall top standing beside the player and -66 reaches 480 m of
    floor up-canyon, which is past where the haze closes in.
    x is horizontal and perpendicular to the sun's azimuth — and since the sun is
-   thirteen degrees off the corridor, a point 300 m up the wash is displaced 67 m
-   along x as well. That is why the x range is offset rather than centred: the
-   corridor leans across it.
+   eighteen degrees off the corridor, a point 300 m up the wash is displaced 93 m
+   along x as well. That is why the x range is offset rather than
+   centred: the corridor leans across it, and a symmetric box would waste half
+   its texels on the side the wash never reaches.
    NEAR is sized for the gravel. 36 m across a 2048 map is 17.6 mm a texel, which
    is the figure System 1 established as the point where a 50 mm pebble casts a
-   shadow at all. It is a quarter of the fill cost of a 4096 map, and measurably
-   nothing is gained above it. */
-const FAR_BOX = { xLo: -118, xHi: 72, yLo: -66, yHi: 58 };
+   shadow at all. It was 4096 for two rounds and dropped to 2048 on render cost
+   rather than on a measurement that the extra resolution bought nothing — worth
+   saying plainly, since everything else here was decided by measurement. What is
+   measured is the cost: the pair of cascades at 4096 and 2048 is a third more
+   shadow fill than the single 4096 map they replace, not twice as much. */
+const FAR_BOX = { xLo: -130, xHi: 78, yLo: -66, yHi: 58 };
 const NEAR_BOX = { xLo: -20, xHi: 16, yLo: -9, yHi: 22 };
 /* The light sits far enough up-sun that a wall top 500 m up the corridor is
    still in front of the near plane. Depth is cheap: an orthographic camera is
@@ -430,7 +432,7 @@ patchShadowChunk();
 
 export function buildLights() {
   /* The beam. Colour is the spectral transmittance at air mass 6.86 through
-     8,000 m of Rayleigh, 0.055 of aerosol and 300 DU of ozone, integrated
+     8,000 m of Rayleigh, 0.032 of aerosol and 300 DU of ozone, integrated
      against the CIE observer — 3,890 K, which is where published measurements
      of direct sun at eight degrees sit. The saturation that comes out of that
      is 0.42 encoded, between the provisional rig's 0.34 and the 0.68 that made
@@ -458,9 +460,11 @@ export function buildLights() {
   /* The fill: the SH9 irradiance of sky, wash floor and opposite wall. This is
      the term the brief calls hemispherical skylight and bounce, and it is one
      object rather than three because they are one integral. An upward-facing
-     surface gets 0.031 of irradiance at hue 215 — the blue-violet dome. A
-     downward-facing one gets 0.019 at hue 22 — the wash floor throwing warm
-     light back up under every overhang. Neither was chosen; both fall out of
+     surface gets 0.030 of irradiance at hue 215 — the blue-violet dome. A face
+     turned away from the sun gets 0.030 at hue 230, which is where the violet in
+     the shadows comes from and it comes from the sky rather than from a tint. A
+     downward-facing one gets 0.012 at hue 23 — the wash floor throwing warm light
+     back up under every overhang. None of the three was chosen; they fall out of
      where the energy in this sky actually is. */
   const probe = new THREE.LightProbe(A.sh.clone(), 1);
   probe.sh.scale(SCALE);

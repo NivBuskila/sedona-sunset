@@ -35,26 +35,45 @@ import * as THREE from 'three';
    height of what casts it, which is what the low sun was for. Kept from the
    provisional rig on that evidence. */
 export const SUN_EL_DEG = 8.0;
-/* Off the corridor axis, and the sign is the whole point.
-   The provisional rig had this at +3.15 degrees, which put the sun a shade to
-   the *right* of the axis. Measured, that is backwards twice over. First, at
-   three degrees off a corridor axis neither wall receives anything: a wall face
-   points across the wash, so its cosine to the sun is sin(3 deg) = 0.05, and both
-   curtains come out lit entirely by the sky. The render agrees — under the
-   physical rig at +3.15 the standard `wall_lit` view measured HSV value 0.088
-   against a reference range of 0.59 to 0.73, and no exposure fixes that, because
-   there is no light on the surface to expose. Second, the sign meant that what
-   little raking light there was fell on the *left* wall, so the viewpoint named
-   `wall_lit` was the dark one and `wall_shade` the bright one — which is
-   measurable in every capture back to sys1 and had been read as a shader
-   problem for four rounds.
-   Thirteen degrees to the left puts a cosine of 0.22 on the right-hand wall, so
-   the face that view looks at is genuinely lit while the opposite wall goes into
-   real shade and the warm/cool split has something to be a split between. It is
-   as far as the sun can go and stay in the gap: at sixteen degrees the disc
-   disappears behind the left crest in the `sun_gap` framing, and the disc
-   sitting in the gap up the wash is the composition. */
-export const SUN_AZ_DEG = -10.5;
+/* Off the corridor axis, and further than it looks like it should be.
+   The provisional rig had this at +3.15 degrees. Two things are wrong with that
+   and both were measured rather than reasoned about, because reasoning about it
+   is what produced +3.15 in the first place.
+   First the sign. A wall face points across the wash, so the sun has to be off
+   to one side for either curtain to receive anything, and +3.15 put what little
+   raking light there was on the *left* wall — which means the viewpoint named
+   "wall_lit" was the darker of the two and "wall_shade" the brighter. That is
+   visible in every capture back to sys1 and had been read as a shader problem
+   for four rounds. Under the physical rig at +3.15 the wall_lit crop measured
+   HSV value 0.088 against a reference range of 0.59 to 0.73, and no exposure
+   fixes that, because there is no light on the surface to expose.
+   Second the magnitude. The obvious formula for how much beam a wall running
+   along the corridor receives is sin(azimuth), and it is wrong here, because the
+   corridor does not run along -Z. tools/sunpos.mjs reads the camera matrices out
+   of the running page: the wash's heading at d = 46 is -7.5 degrees, so the
+   right-hand wall's inward normal bears -97.5 and the cosine on the beam is
+   -sin(azimuth + 7.5). At -10.5 degrees that is 0.05, not the 0.18 the idealised
+   formula promised — a factor of four, and the difference between a lit wall and
+   a wall lit only by the sky. -22 gives 0.25, which puts the lit face at value
+   0.72 and hue +26, both inside their measured targets.
+
+   ---- and what that costs, which is worth stating plainly ----
+   The brief asks for the sun to sit in the gap straight up the wash. It cannot
+   also light this wall. The gap's bearing in the sun_gap framing is +9
+   degrees, because the wash heading there is +9 and the camera looks along it;
+   the wall needs the sun at -8 or further. The two windows do not overlap and no
+   azimuth satisfies both.
+   The disc is behind the left crest at every azimuth in that window in any case.
+   That was checked directly rather than assumed: three renders were spent
+   hunting a missing sun disc, including one with the disc widened sixfold, and
+   the answer is that at -10.5 the beam direction lands at frame position
+   0.32, 0.46 in sun_gap and the pixels there are rock at rgb(34,23,23). The
+   sun is occluded in all eight viewpoints. Since it is hidden either way, the
+   azimuth is free to be chosen on the light alone — but making the disc visible
+   is a real thing the composition is missing, and it needs the left wall's crest
+   to drop or the wash's heading near d = 120 to change, neither of which is
+   System 4's to touch. */
+export const SUN_AZ_DEG = -22.0;
 
 const DEG = Math.PI / 180;
 export const SUN_EL = SUN_EL_DEG * DEG;
