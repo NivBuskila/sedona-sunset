@@ -430,12 +430,21 @@ export function planVegetation(path, terrain, rocks) {
     const c = path.posAt(s);
     const qq = path.atZ(c.z, q);
     for (let side = 0; side < 2; side++) {
-      const u = (side ? -1 : 1) * (4.2 + rand() * 6.6);
+      /* Inner edge at 2.6 m rather than 4.2. `wash_low` looks down at three or
+         four metres of channel floor and came back with one grass tuft in the
+         whole frame: correct geomorphology, since the active channel is scoured
+         annually and holds nothing, but it reads as sterile because the band that
+         does hold plants was placed outside the frame. Real washes carry the line
+         right up to the cut bank, which is a metre or two out, not four. */
+      const u = (side ? -1 : 1) * (2.6 + rand() * 8.2);
       const x = c.x + Math.cos(qq.th) * u + (rand() - 0.5) * 1.8;
       const z = c.z + Math.sin(qq.th) * u + (rand() - 0.5) * 1.8;
       const f = terrain.facies(x, z, path.atZ(z, q2));
-      /* Off the scoured channel and out of the active pan. */
-      if (f.pan > 0.30) continue;
+      /* Off the scoured channel and out of the active pan. Relaxed from 0.30:
+         the pan field grades rather than steps, so a hard cut at 0.30 was pushing
+         the whole line back to where the terrace begins and leaving the cut bank
+         itself — the wettest ground in the section — bare. */
+      if (f.pan > 0.48) continue;
       const bank = clamp(f.terr * 0.85 + f.bar * 0.55, 0, 1) * (1 - f.pan);
       if (bank < 0.20) continue;
       if (rand() > bank * 0.42) continue;
@@ -487,7 +496,14 @@ export function planVegetation(path, terrain, rocks) {
       /* Higher is drier and more exposed. */
       const alt = 1 - smoothstep(14, 48, p3.y);
       const cl = clusterField(p3.x, p3.z);
-      const pAcc = shelf * (0.18 + 0.82 * cl) * (0.25 + 0.75 * alt) * 0.125;
+      /* 0.075 rather than the 0.125 this round started with. The count is not
+         stable against other systems' work: the same rate returned 647 bench
+         plants against System 2's rock at the start of the round and 1525 after
+         its terrace change landed, because this harvests candidate points off
+         their meshes. A rate is the wrong thing to tune blind, so this is set to
+         land near a thousand — comfortably more than the 438 the critique called
+         absent, and short of the closed woodland that 1525 would read as. */
+      const pAcc = shelf * (0.18 + 0.82 * cl) * (0.25 + 0.75 * alt) * 0.075;
       if (rr() > pAcc) continue;
       const sz = 0.8 + rr() * 1.9;
       const dark = 0.72 + rr() * 0.5;

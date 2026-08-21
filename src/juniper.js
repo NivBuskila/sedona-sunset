@@ -1034,7 +1034,11 @@ export function makeBarkMaterial(bark) {
   const mat = new THREE.MeshStandardMaterial({
     map: bark.albedo,
     normalMap: bark.normal,
-    normalScale: new THREE.Vector2(1.45, 1.45),
+    /* 1.9. The bole is the only member with the pixels to show relief, and the
+       shredded-string character of the bark is most of what says juniper at this
+       distance. Raised now rather than earlier because until this round there was
+       nothing wide enough on the tree for it to be visible on. */
+    normalScale: new THREE.Vector2(1.9, 1.9),
     roughness: 1.0,
     metalness: 0.0,
     vertexColors: true,     // flute cavity occlusion, baked
@@ -1059,13 +1063,37 @@ export function makeBarkMaterial(bark) {
    */
   const dead = deadTex();
   const u = {
-    uLiveCol: { value: new THREE.Color(0.92, 0.82, 0.74) },
+    /* 0.60/0.52/0.45, from 0.92/0.82/0.74.
+       Now that there is a bole in the frame there is something to judge the
+       living bark on, and at fifty pixels across it reads as a smooth pale post
+       — concrete, not bark. Juniper bark is dark: grey-brown strips over a much
+       darker fissure, and it is among the darkest surfaces in a scene like this
+       rather than one of the lightest. The old value was set when the trunk was a
+       few pixels wide and its only job was to be distinguishable from the
+       deadwood; a brightness chosen to win a contrast fight is not an albedo.
+       Darkening also widens the dead-to-live ratio, which is the direction that
+       has been wanted throughout, and it is a darkening rather than a brightening
+       so it does not pre-empt System 4's fill correction. */
+    uLiveCol: { value: new THREE.Color(0.60, 0.52, 0.45) },
     /* A tint on top of the deadwood map, which already carries the measured
        warm-bone hue and level. Kept as a uniform because the target is a
        *rendered* value ratio against live bark and that can only be reached by
        measuring frames and iterating — the albedo ratio is not the thing being
        judged, as the last two rounds established twice. */
-    uDeadCol: { value: new THREE.Color(2.25, 2.25, 2.25) },
+    /* 1.65, down from 2.25, and the highlight knee with it.
+       This is what the speck stipple was, after specular, the normal map, texture
+       filtering and geometric aliasing had each been eliminated by test. The dead
+       albedo's pale crest is 0.66 in the texture, which decodes to about 0.45 in
+       linear light — times 2.25 that is an effective albedo of 1.01. A perfect
+       white reflector, on the one part of the surface the key hits squarely, is
+       cream by construction, and on a member four pixels wide only the one-pixel
+       sliver nearest the sun reaches it: a dashed line of cream pixels down the
+       sun-facing silhouette of every snag. Bleached juniper heartwood is bright
+       but it is wood, around 0.55 to 0.70; the multiplier now keeps the crest
+       inside that. The median value that the dead-to-live ratio is quoted on
+       lives on the shaded faces and is carried by uDeadAmb, so it moves far less
+       than the peak does. */
+    uDeadCol: { value: new THREE.Color(1.95, 1.95, 1.95) },
     uDeadMap: { value: dead.albedo },
     uDeadNrm: { value: dead.normal },
     /* Debug only, and zero unless a probe sets it. `tools/deadratio.mjs` flips it
@@ -1084,7 +1112,8 @@ export function makeBarkMaterial(bark) {
        albedo and the top is rolled off rather than clipped. Same fix as the
        foliage's uDirCap, and the same underlying mistake, which is treating a
        ratio target as if it constrained a distribution. */
-    uDeadKnee: { value: 1.05 },
+    uDeadKnee: { value: 0.42 },
+    uLiveKnee: { value: 0.58 },
     /* 1.15, down from 1.55. The lift was set to carry the dead-to-live value
        ratio to its 3.5x target, and it did, but a fill multiplier is not
        shadowed — so the long right-hand snags kept near-constant brightness
@@ -1092,7 +1121,7 @@ export function makeBarkMaterial(bark) {
        cast shadow at all. Being in the same light as its surroundings matters
        more than the ratio: the ratio is a proxy for reading as bleached wood,
        and wood that ignores shadow reads as a light source. */
-    uDeadAmb: { value: 1.15 },
+    uDeadAmb: { value: 1.30 },
     uDebugMask: { value: 0 },
   };
   mat.userData.uniforms = u;
@@ -1114,7 +1143,7 @@ export function makeBarkMaterial(bark) {
         'varying float vDead;\nvarying float vGauge;\n' +
         'uniform vec3 uLiveCol;\nuniform vec3 uDeadCol;\n' +
         'uniform sampler2D uDeadMap;\nuniform sampler2D uDeadNrm;\nuniform float uDebugMask;\n' +
-        'uniform float uDeadKnee;\nuniform float uDeadAmb;')
+        'uniform float uDeadKnee;\nuniform float uLiveKnee;\nuniform float uDeadAmb;')
       /* Kill the sheen at its source instead of fighting it with roughness.
          Roughness spreads a highlight; it does not remove the energy, and at a
          dielectric F0 of 0.04 on a thin cylinder crossed by a strong normal map
@@ -1126,13 +1155,64 @@ export function makeBarkMaterial(bark) {
          dust, not a polished one. */
       .replace('#include <lights_physical_fragment>',
         '#include <lights_physical_fragment>\n' +
-        'material.specularColor *= mix( 1.0, 0.22, vDead );')
+        'material.specularColor *= mix( 0.34, 0.22, vDead );')
+      /* Horizon occlusion on the deadwood's specular.
+         At 16x the speck stipple resolves as single cream pixels spaced two to
+         four apart along the *sun-facing silhouette* of each snag, three or four
+         times brighter than the lit face beside them. That is a Fresnel rim: on
+         any dielectric, grazing reflectance goes to one, so a cylinder four
+         pixels wide carries a one-pixel specular line down its edge — and a
+         one-pixel bright line on a four-pixel cylinder cannot help but alias into
+         dashes, whatever the sample count. Cutting specularColor to 0.22 did not
+         reach it because Fresnel multiplies whatever is left, and fading the
+         normal map at grazing did not either because the rim is geometric.
+         Suppressing reflection as the surface turns past its own horizon is the
+         standard construction and it is also true of the material: a fissured,
+         checked, spiral-grained surface has no coherent facet left to reflect
+         from at eighty degrees, because its own relief is in the way. */
       .replace('#include <lights_fragment_end>', /* glsl */`
         #include <lights_fragment_end>
-        if ( vDead > 0.001 ) {
+        {
+          float ndvS = abs( dot( normalize( normal ), normalize( vViewPosition ) ) );
+          /* Ungated: this applies to the living bark too, and that is where the
+             stipple actually lives. Both this and the specularColor cut above
+             were originally written for the deadwood and keyed on vDead, so the
+             live branches kept a full-strength sky reflection — and with a
+             dielectric's grazing reflectance going to one against a sky at 219,
+             that is a cream rim one pixel wide down the edge of every branch.
+             The two knees and the albedo reduction each left the specks
+             pixel-identical because they act on the diffuse term, and this is not
+             the diffuse term. Shredded fibrous bark is the last surface in this
+             scene that should hold a mirror rim: it is loose strings, and its own
+             relief occludes the reflection long before eighty degrees. */
+          float horizon = smoothstep( 0.0, 0.40, ndvS );
+          reflectedLight.directSpecular *= horizon;
+          reflectedLight.indirectSpecular *= horizon;
+        }`)
+      .replace('#include <lights_fragment_end>', /* glsl */`
+        #include <lights_fragment_end>
+        {
+          /* The knee is on *all* the bark now, not just the dead strips, and
+             that is what the speck stipple was.
+             Bisecting the scene graph settled it: hiding juniper-wood removes
+             the specks completely, while cutting the dead albedo's multiplier
+             from 2.25 to 1.65 and its knee from 1.05 to 0.62 left them
+             pixel-identical. Both facts together say the specks are on the pixels
+             where vDead is near zero — the *living* bark — which had no highlight
+             compression at all. Its pale fibre band is 0.475 in the albedo, and
+             at an irradiance seven times the ground's the crest clips; on a
+             branch four pixels wide only the one-pixel sliver nearest the sun
+             gets there, so it clips as a dashed cream line down the sun-facing
+             silhouette and nowhere else. Four earlier hypotheses — specular
+             Fresnel, normal-map perturbation at grazing incidence, albedo mip
+             aliasing and geometric aliasing under MSAA — were each eliminated by
+             a change that moved nothing, which is how I ended up bisecting.
+             A knee rather than a darker albedo because the bark's midtones and
+             its shaded side both measure correctly; it is only the top of the
+             range that is over. */
           vec3 dd = reflectedLight.directDiffuse;
-          reflectedLight.directDiffuse =
-            mix( dd, dd / ( 1.0 + dd / uDeadKnee ), vDead );
+          float knee = mix( uLiveKnee, uDeadKnee, vDead );
+          reflectedLight.directDiffuse = dd / ( 1.0 + dd / knee );
           /* And lift the ambient side. The target is a median, and most deadwood
              pixels are on faces the sun never reaches — so the median is set by
              the fill, while the sunlit peaks that decide whether this reads as

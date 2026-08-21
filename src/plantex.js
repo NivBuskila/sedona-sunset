@@ -351,7 +351,18 @@ export function makeDeadwood(size = 512) {
      *albedo* anyway; its contrast is relief, which is what the normal map is
      for. The highlight rolloff that keeps the rest of it off the ceiling is in
      `makeBarkMaterial`. */
-  const LEVEL_PALE = 0.660;               // sun-bleached crest of the grain
+  /* 0.540, from 0.660. Measured rather than guessed this time: over the 88x41
+     crop that carries the worst of the speck stipple, dropping uDeadCol from
+     2.25 to 1.65 and the knee from 1.05 to 0.62 took the specks from 39 pixels
+     at mean L=143 to 27 at L=128, while adding a knee to the *living* bark and
+     ungating the specular cut both changed the region by exactly zero pixels.
+     So the population is dead wood, and it is the diffuse term, and it is the top
+     of the albedo range — the crest — and not the specular rim or the live bark.
+     Narrowing the crest rather than scaling the whole level is the shape of fix
+     the measurement asks for: DARK and MID are untouched, so the median value
+     that the dead-to-live ratio is quoted on barely moves while the peak that
+     clips to cream comes down by a fifth. */
+  const LEVEL_PALE = 0.540;               // sun-bleached crest of the grain
 
   for (let i = 0; i < N; i++) {
     const x = i % size, y = i / size | 0;
