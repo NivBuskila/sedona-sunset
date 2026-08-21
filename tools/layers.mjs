@@ -62,7 +62,7 @@ for (let i = 0; i < argv.length; i++) {
 function isSky(r, g, b) {
   const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
   const s = mx ? (mx - mn) / mx : 0;
-  return mx > 218 && s < 0.20;
+  return mx > 200 && s < 0.22;
 }
 
 function bandStats(img, x0, x1, y0, y1) {
