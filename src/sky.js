@@ -519,6 +519,16 @@ export function makeShadowRig(sun, sunNear) {
  * fine map cannot see because it is outside the fine frustum cannot punch a
  * hole in the coarse map's shadow.
  */
+/* #hardshadow drops back to three's fixed one-texel kernel while leaving
+   everything else about the build alone. It exists because the penumbra change
+   could not otherwise be attributed: the capture before it and the capture
+   after it also straddle System 5's shaft fix, which brightened shaded rock by
+   itself, so a before/after pair across the two measures the sum of two edits
+   and can convict either. With this, both halves of the pair come from the same
+   tree in the same minute. */
+const HARD_SHADOW = /(^|[#&])hardshadow(\b|$|&)/.test(
+  (typeof location !== 'undefined' ? location.hash || '' : '').toLowerCase());
+
 let patched = false;
 export function patchShadowChunk() {
   if (patched) return;
@@ -574,7 +584,7 @@ export function patchShadowChunk() {
   }
 
   #if defined( SHADOWMAP_TYPE_PCF_SOFT )
-  #define SUN_PCSS 1
+  ${HARD_SHADOW ? '/* #hardshadow: PCSS off */' : '#define SUN_PCSS 1'}
 
   /* ---- a penumbra the size of the sun ----
    * The sun is a disc half a degree across, not a point, so a shadow edge is a
@@ -666,7 +676,7 @@ export function patchShadowChunk() {
     return sqrt( ( float( i ) + 0.5 ) / float( n ) ) * vec2( cos( a ), sin( a ) );
   }
 
-  float sunSoftShadow( sampler2D map, vec2 mapSize, float intensity, float bias, vec4 coord ) {
+  float sunSoftShadow( sampler2D map, vec2 mapSize, float intensity, float bias, float radius, vec4 coord ) {
     vec3 p = coord.xyz / coord.w;
     if ( p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0 ) return 1.0;
 
@@ -692,24 +702,48 @@ export function patchShadowChunk() {
     }
     if ( cnt < 0.5 ) return 1.0;
 
-    float pen = clamp( ( p.z - sum / cnt ) * ${DEPTH_RANGE.toFixed(1)} * SUN_TAN,
-      1.5 * texelM, maxPen );
-    float r = 0.5 * pen;
-    int n = int( clamp( r / texelM * 1.2, 8.0, 28.0 ) );
-    float s = 0.0;
-    for ( int i = 0; i < 28; i ++ ) {
-      if ( i >= n ) break;
-      vec2 o = sunSpiral( i, n, rot ) * r * uvPerM;
-      float d = unpackRGBAToDepth( texture2D( map, p.xy + o ) );
-      s += step( p.z + bias + sunSlope( g, o, mapSize ), d );
+    float pen = min( ( p.z - sum / cnt ) * ${DEPTH_RANGE.toFixed(1)} * SUN_TAN, maxPen );
+
+    /* Below a few texels, hand it back to three's kernel. A packed depth map
+       cannot be bilinear-filtered — three sets NearestFilter, and it has to,
+       since interpolating four packed bytes is meaningless — so three's PCF_SOFT
+       emulates the interpolation in the shader with those mix() calls on the
+       fractional texel position. A nearest-sampled disc cannot match that at
+       one texel: eight taps give eight levels and they land blocky.
+       Measured, and this is why the split is here rather than a tidier single
+       kernel. Running the disc all the way down to contact cost +0.063 of lit
+       rock saturation and +0.033 of V, with the region's median falling as its
+       bright tail clipped — the rock's own micro-relief self-shadowing had gone
+       binary, so the brightest 40% of a lit window got brighter and more
+       saturated while everything else got darker. Ablated against #hardshadow
+       in the same tree, so that figure is this kernel's and not the concurrent
+       shaft fix landing next to it. Contact shadows are a baseline this project
+       has already tuned; the penumbra work has no business touching them. */
+    float wide = smoothstep( 3.0, 7.0, pen / texelM );
+    float sNarrow = 0.0, sWide = 0.0;
+    if ( wide < 1.0 ) {
+      sNarrow = getShadowCascade( map, mapSize, intensity,
+        bias - rpBias( p, mapSize, radius ), radius, coord );
     }
-    return mix( 1.0, s / float( n ), intensity );
+    if ( wide > 0.0 ) {
+      float r = 0.5 * pen;
+      int n = int( clamp( r / texelM * 1.2, 8.0, 28.0 ) );
+      float s = 0.0;
+      for ( int i = 0; i < 28; i ++ ) {
+        if ( i >= n ) break;
+        vec2 o = sunSpiral( i, n, rot ) * r * uvPerM;
+        float d = unpackRGBAToDepth( texture2D( map, p.xy + o ) );
+        s += step( p.z + bias + sunSlope( g, o, mapSize ), d );
+      }
+      sWide = mix( 1.0, s / float( n ), intensity );
+    }
+    return mix( sNarrow, sWide, wide );
   }
   #endif
 
   float getShadow( sampler2D shadowMap, vec2 shadowMapSize, float shadowIntensity, float shadowBias, float shadowRadius, vec4 shadowCoord ) {
     #ifdef SUN_PCSS
-      float s = sunSoftShadow( shadowMap, shadowMapSize, shadowIntensity, shadowBias, shadowCoord );
+      float s = sunSoftShadow( shadowMap, shadowMapSize, shadowIntensity, shadowBias, shadowRadius, shadowCoord );
     #else
       float b = shadowBias - rpBias( shadowCoord.xyz / shadowCoord.w, shadowMapSize, shadowRadius );
       float s = getShadowCascade( shadowMap, shadowMapSize, shadowIntensity, b, shadowRadius, shadowCoord );
@@ -724,7 +758,7 @@ export function patchShadowChunk() {
         DirectionalLightShadow n = directionalLightShadows[ 1 ];
         #ifdef SUN_PCSS
           float sn = sunSoftShadow( directionalShadowMap[ 1 ], n.shadowMapSize,
-            n.shadowIntensity, n.shadowBias, nc );
+            n.shadowIntensity, n.shadowBias, n.shadowRadius, nc );
         #else
           float bn = n.shadowBias - rpBias( np, n.shadowMapSize, n.shadowRadius );
           float sn = getShadowCascade( directionalShadowMap[ 1 ], n.shadowMapSize,
