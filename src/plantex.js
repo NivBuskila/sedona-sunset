@@ -293,10 +293,48 @@ export function makeDeadwood(size = 512) {
      chroma of its own, so the albedo has to sit below the target rather than on
      it. Hue is unchanged at 25-27 degrees, which measured 28.2 on the frame
      against a target of 27 and is the one number here that is already right. */
-  const HUE = [1.0, 0.918, 0.858];        // hue 25.4 deg, sat 0.142
-  const LEVEL_DARK = 0.115;               // deep in a fissure
-  const LEVEL_MID = 0.470;
-  const LEVEL_PALE = 0.900;               // sun-bleached crest of the grain
+  /* Saturation back up to 0.160 after 0.108 measured hue 337 on the frame —
+     magenta. At that chroma the albedo is nearly neutral, so it faithfully
+     reports whatever the environment's cast is, and this scene's grade has a
+     magenta component. Holding a stated hue against a coloured light needs the
+     albedo to have enough chroma of its own to dominate; that is the opposite of
+     what the earlier reduction assumed, and it is why the rendered saturation
+     ends up above the reference figure. Hue is the ranked defect here and
+     saturation is not, so the trade goes that way. */
+  /* Hue 41 in the albedo, to land near 27 on the frame. Not a fudge: the stems
+     measured 8.5 degrees at an albedo of 24, because a broad pale surface tucked
+     under a crown in front of a red sandstone wall is lit substantially by red
+     bounce, and the tone map pulls what is left toward the key. The twigs, which
+     are small and see less of the wall, measured 21.6 from the same albedo. The
+     stated target is a figure on the render, so the albedo is set to hit it
+     there. */
+  const HUE = [1.0, 0.905, 0.700];        // hue 41.0 deg, sat 0.300
+  /* Levels chosen so that level * HUE.r * the blotch's 1.14 ceiling stays under
+     1.0. Above that the texture's own clamp bites the red channel first, which
+     both flattens the value range and *changes the hue* — the brightest crests
+     desaturate toward white while the rest do not. Brightness belongs in
+     uDeadCol, which is applied in linear light in the shader where there is no
+     ceiling until the tone map. */
+  /* And a *narrow* band, 0.42 to 0.66 rather than 0.22 to 0.88.
+     The wide band was the source of the bright bead stipple along every snag,
+     which survived three rounds of roughness changes and then survived killing
+     the specular outright — because it was never specular. It is albedo speckle:
+     a dead twig is about one pixel wide at eighteen metres, its texture is
+     sampled at roughly one texel-cluster per pixel, and a 4:1 albedo range
+     produces a bright dot wherever a grain crest lands on the lit side. Weathered
+     wood does not have a 4:1 albedo range anyway. Its contrast is relief, which
+     is what the normal map carries and what survives the mip chain honestly. */
+  const LEVEL_DARK = 0.420;               // deep in a fissure
+  const LEVEL_MID = 0.560;
+  /* 0.70, down from 0.90. Times the tint and the blotch that reached 1.36, and a
+     sunlit snag went to white — the round-one failure again, arrived at from the
+     other direction. The median was correct at the time (3.33x, hue 27.2) which
+     is exactly why a median is not enough: the distribution's top was clipping
+     while its middle measured on target. Weathered wood is not high-contrast in
+     *albedo* anyway; its contrast is relief, which is what the normal map is
+     for. The highlight rolloff that keeps the rest of it off the ceiling is in
+     `makeBarkMaterial`. */
+  const LEVEL_PALE = 0.660;               // sun-bleached crest of the grain
 
   for (let i = 0; i < N; i++) {
     const x = i % size, y = i / size | 0;
@@ -311,7 +349,7 @@ export function makeDeadwood(size = 512) {
       ? mix(LEVEL_DARK, LEVEL_MID, clamp(t * 2, 0, 1))
       : mix(LEVEL_MID, LEVEL_PALE, clamp(t * 2 - 1, 0, 1));
     for (let k = 0; k < 3; k++) {
-      const c = lvl * HUE[k] * (0.86 + 0.28 * blotch);
+      const c = lvl * HUE[k] * (0.94 + 0.12 * blotch);
       alb[i * 4 + k] = clamp(Math.pow(clamp(c, 0, 1), 1 / 2.2), 0, 1) * 255;
     }
     /* Alpha carries the inverse fissure mask, so the shader can keep the deepest
@@ -641,7 +679,19 @@ export function makeFoliage(size = 512) {
          once the card is on screen — and the count carries the coverage that the
          width used to. */
       const bx = ox + cell * 0.5, by = oy + cell * 0.95;
-      const nCord = 26 + (rand() * 9 | 0);
+      /* Fifteen-ish cords, not thirty-odd, and started along a spread base rather
+         than all from one point.
+         The first whipcord version drew thirty from a common origin, which is
+         nearer to life and looked right in the atlas — and still rendered as
+         leaves. The reason is downsampling: a card in the hero's crown gets about
+         sixty screen pixels for a 256-texel cell, so a 2.5-texel cord and a
+         2-texel gap both land inside the same pixel and average to solid. Only
+         gaps of ten texels or more survive a 4:1 reduction, so the cords have to
+         be fewer and further apart than the plant's own anatomy — the usual
+         bargain when a texel is coarser than the feature. The granularity that
+         survives is the beaded outline of each cord and the count of cords across
+         the card, and both of those do read. */
+      const nCord = 13 + (rand() * 5 | 0);
       for (let pass = 0; pass < 2; pass++) {
         const cols = pass === 0 ? deadCols : liveCols;
         const scale = pass === 0 ? 0.84 : 1.0;
@@ -653,12 +703,16 @@ export function makeFoliage(size = 512) {
           /* Fanned within a cone, with the density biased to the middle so the
              bundle has a spine without having a rib. */
           const u = (k + rand()) / nC;
-          const spread = (u - 0.5) * 1.22 * (0.55 + 0.45 * Math.abs(u - 0.5) * 2);
-          const a = -Math.PI / 2 + spread + (rand() - 0.5) * 0.20;
-          whipcord(ctx, bx + (rand() - 0.5) * cell * 0.16,
-                   by - rand() * cell * 0.22,
-                   a, cell * (0.44 + rand() * 0.30) * scale,
-                   cell * 0.0105 * scale, 1, rand, cols);
+          const spread = (u - 0.5) * 1.30;
+          const a = -Math.PI / 2 + spread + (rand() - 0.5) * 0.14;
+          /* Staggered along the spray's own axis, so there is no single point
+             where every cord converges. That convergence was a solid wedge at the
+             foot of the cell taking up a third of it, and a solid wedge with a
+             spiky edge is precisely what reads as a lobed leaf. */
+          whipcord(ctx, bx + (u - 0.5) * cell * 0.34 + (rand() - 0.5) * cell * 0.07,
+                   by - (0.06 + rand() * 0.34) * cell,
+                   a, cell * (0.40 + rand() * 0.26) * scale,
+                   cell * 0.0130 * scale, 1, rand, cols);
         }
       }
 

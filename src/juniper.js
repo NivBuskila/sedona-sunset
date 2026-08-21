@@ -184,6 +184,7 @@ function limbGeometry(pts, radii, seg, prof, twistRate, s0, flute, deadBase = 0,
   const pos = new Float32Array(vcount * 3);
   const uv = new Float32Array(vcount * 2);
   const dead = new Float32Array(vcount);
+  const gauge = new Float32Array(vcount);
   const vcol = new Float32Array(vcount * 3);
   const uRep = Math.max(1, Math.round(TAU * radii[0] / BARK_TILE));
   const o = { r: 0, dead: 0 };
@@ -215,6 +216,16 @@ function limbGeometry(pts, radii, seg, prof, twistRate, s0, flute, deadBase = 0,
       uv[k * 2] = j / seg * uRep;
       uv[k * 2 + 1] = (s0 + si) / BARK_TILE;
       dead[k] = Math.max(deadBase, o.dead * stripScale);
+      /* The limb's radius here, carried to the shader.
+         Deadwood relief is a feature of *size*: spiral grain, fissures a
+         centimetre deep and transverse checking belong to a thirty-centimetre
+         bole, and a one-centimetre dead twig is a smooth grey rod with none of
+         them. Applying the bole's normal map at full strength to every twig put a
+         tight highlight on each of the eight facets of a sub-pixel cylinder, and
+         the crown rendered with a line of bright beads down every snag — the
+         "sparkler" again, arriving this time through the normal map rather than
+         through the dead-strip mask. */
+      gauge[k] = radii[i];
       /* Cavity occlusion in the flutes, baked. Without it the trunk is invisible
          whenever it is not in direct sun: the fill in this scene is a broad sky
          dome, a smooth lobed cylinder under a dome shades almost uniformly, and
@@ -252,6 +263,7 @@ function limbGeometry(pts, radii, seg, prof, twistRate, s0, flute, deadBase = 0,
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   g.setAttribute('aDead', new THREE.BufferAttribute(dead, 1));
+  g.setAttribute('aGauge', new THREE.BufferAttribute(gauge, 1));
   g.setAttribute('color', new THREE.BufferAttribute(vcol, 3));
   /* The ring layout, so a probe can recover girth from the vertices without the
      builder having to record it separately. Dropped by mergeGeometries, which is
@@ -497,8 +509,19 @@ export function buildTree(seed) {
       let dn = deadness;
       if (dn < 0.5) {
         const inStrip = depth === 0 ? prof.deadAt(k.az + twistRate * k.s, k.s) : 0;
+        /* Rising with depth was backwards, and it is what made the deadwood read
+           as galvanised wire however well its albedo measured. A thin bright rod
+           against dark rock is judged as a line, not as a surface: no hue and no
+           value will save it, and a crown full of them is a lattice with high
+           perimeter and almost no area. Real strip-bark deadwood is mostly
+           *broad* — bleached flutes running up a bole and out along heavy limbs,
+           wide enough to show grain and fissure.
+           So the probability now falls with depth instead of rising. Because
+           surface area goes as radius times length, the dead *fraction* barely
+           moves while the number of wiry members drops by most of itself. */
+        const twigFall = [1, 1, 0.55, 0.30, 0.18][depth];
         const pDead = depth === 0 ? (inStrip > 0.45 ? 0.9 : 0.03)
-                    : 0.05 + 0.22 * expo + 0.02 * depth;
+                    : (0.06 + 0.30 * expo) * twigFall;
         dn = rand() < pDead ? 1 : 0;
       }
       const cr0 = r1 * (k.tip ? 0.92 : 0.62) * (0.85 + rand() * 0.3);
@@ -605,6 +628,9 @@ export function buildTree(seed) {
       const laz = i / nLead * TAU + rand() * 0.8 + az;
       const lout = new THREE.Vector3(Math.cos(laz), 0, Math.sin(laz));
       const inStrip = sprof.deadAt(laz + twist * 1.2 * len, len);
+      /* Left at 0.30: these are the heavy limbs off a stem fork, and broad
+         bleached wood is exactly what belongs here. It is the *twigs* further out
+         that were too often dead; see `pDead` in `grow`. */
       const dn = st.dead ? 1 : (inStrip > 0.35 || rand() < 0.30) ? 1 : 0;
       const spread = (dn ? 0.74 : 0.58) + rand() * 0.34;
       const ldir = tipTan.clone().multiplyScalar(Math.cos(spread))
@@ -894,7 +920,7 @@ export function makeBarkMaterial(bark) {
        *rendered* value ratio against live bark and that can only be reached by
        measuring frames and iterating — the albedo ratio is not the thing being
        judged, as the last two rounds established twice. */
-    uDeadCol: { value: new THREE.Color(1.72, 1.72, 1.72) },
+    uDeadCol: { value: new THREE.Color(2.25, 2.25, 2.25) },
     uDeadMap: { value: dead.albedo },
     uDeadNrm: { value: dead.normal },
     /* Debug only, and zero unless a probe sets it. `tools/deadratio.mjs` flips it
@@ -903,6 +929,17 @@ export function makeBarkMaterial(bark) {
        which pixels are which. The target for this material is a ratio of rendered
        values and it has been missed twice by measuring the albedo ratio instead;
        one branch in a debug path is a cheap way to stop making that mistake. */
+    /* Highlight rolloff on the deadwood's direct term only.
+       This material has a genuine conflict in it: the target is a *median*
+       rendered value three and a half times the living bark's, and the bark is
+       largely in shade while the snags are the most exposed thing on the tree. An
+       albedo high enough to hit the median puts every sunlit snag over the
+       ceiling, and they render as white wires — which is what happened, twice,
+       from opposite directions. A knee resolves it: the median is set by the
+       albedo and the top is rolled off rather than clipped. Same fix as the
+       foliage's uDirCap, and the same underlying mistake, which is treating a
+       ratio target as if it constrained a distribution. */
+    uDeadKnee: { value: 1.60 },
     uDebugMask: { value: 0 },
   };
   mat.userData.uniforms = u;
@@ -910,13 +947,40 @@ export function makeBarkMaterial(bark) {
     Object.assign(sh.uniforms, u);
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>',
-        '#include <common>\nattribute float aDead;\nvarying float vDead;')
+        '#include <common>\nattribute float aDead;\nvarying float vDead;\n' +
+        'attribute float aGauge;\nvarying float vGauge;')
       .replace('#include <begin_vertex>',
-        '#include <begin_vertex>\nvDead = aDead;');
+        '#include <begin_vertex>\nvDead = aDead;\n' +
+        /* Zero on a twig, one on a stem. 0.02 to 0.11 m radius, so the transition
+           sits between the branches that carry foliage and the ones that carry
+           the tree's weight — which is also where the change in surface character
+           happens on a real one. */
+        'vGauge = smoothstep( 0.020, 0.110, aGauge );');
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\n' +
-        'varying float vDead;\nuniform vec3 uLiveCol;\nuniform vec3 uDeadCol;\n' +
-        'uniform sampler2D uDeadMap;\nuniform sampler2D uDeadNrm;\nuniform float uDebugMask;')
+        'varying float vDead;\nvarying float vGauge;\n' +
+        'uniform vec3 uLiveCol;\nuniform vec3 uDeadCol;\n' +
+        'uniform sampler2D uDeadMap;\nuniform sampler2D uDeadNrm;\nuniform float uDebugMask;\n' +
+        'uniform float uDeadKnee;')
+      /* Kill the sheen at its source instead of fighting it with roughness.
+         Roughness spreads a highlight; it does not remove the energy, and at a
+         dielectric F0 of 0.04 on a thin cylinder crossed by a strong normal map
+         what survives is a line of bright beads down every snag — evenly spaced,
+         because the spacing is the radial segment count. Roughness was moved from
+         0.40 to 0.62 to 0.94 across three rounds against exactly this and the
+         beads outlived all of it. Weathered heartwood is in any case one of the
+         least specular surfaces in a desert: a dry open cell structure full of
+         dust, not a polished one. */
+      .replace('#include <lights_physical_fragment>',
+        '#include <lights_physical_fragment>\n' +
+        'material.specularColor *= mix( 1.0, 0.22, vDead );')
+      .replace('#include <lights_fragment_end>', /* glsl */`
+        #include <lights_fragment_end>
+        if ( vDead > 0.001 ) {
+          vec3 dd = reflectedLight.directDiffuse;
+          reflectedLight.directDiffuse =
+            mix( dd, dd / ( 1.0 + dd / uDeadKnee ), vDead );
+        }`)
       /* The mask is written *after* dithering, which is the last chunk in the
          fragment program, because everything between `opaque_fragment` and here
          would otherwise be applied to it: tone mapping, the sRGB encode and the
@@ -930,11 +994,24 @@ export function makeBarkMaterial(bark) {
          sky. */
       .replace('#include <dithering_fragment>',
         '#include <dithering_fragment>\n' +
-        'if ( uDebugMask > 0.5 ) gl_FragColor = vec4( vDead, 1.0 - vDead, 0.0, 1.0 );')
+        /* Blue carries the girth, because a single median over all dead pixels
+           turned out to be the wrong statistic and to have been quietly steering
+           three rounds of this. Most dead *surface area* on the tree is twigs, and
+           twigs have to stay dark — a bright twig is a wire. What a reviewer means
+           by "the deadwood" is the bleached stems. Mixing the two into one number
+           meant that darkening the twigs, which was correct, showed up as the
+           ratio falling away from target, which was misleading. */
+        'if ( uDebugMask > 0.5 ) gl_FragColor = vec4( vDead, 1.0 - vDead, vGauge, 1.0 );')
       .replace('#include <map_fragment>', /* glsl */`
         vec4 bt = texture2D( map, vMapUv );
         vec4 dt = texture2D( uDeadMap, vMapUv );
-        diffuseColor.rgb *= mix( bt.rgb * uLiveCol, dt.rgb * uDeadCol, vDead );`)
+        /* Dead twigs are darker than dead stems, and not by a little. A bleached
+           silver snag is a stem that has held its wood for decades; a dead twig
+           is a year-old grey stick that still has bark on it. Taking the stem's
+           value out to the twigs is most of what made the crown read as a bundle
+           of wires. */
+        vec3 deadC = dt.rgb * uDeadCol * mix( 0.46, 1.0, vGauge );
+        diffuseColor.rgb *= mix( bt.rgb * uLiveCol, deadC, vDead );`)
       /* Both sides rough. The contrast between them is carried by value and by
          the *character* of the relief, not by gloss — which is the correction
          this round is mostly about. */
@@ -957,7 +1034,11 @@ export function makeBarkMaterial(bark) {
                    'vec3 mapN = mix( texture2D( normalMap, vNormalMapUv ).xyz,\n' +
                    '                 texture2D( uDeadNrm, vNormalMapUv ).xyz, vDead ) * 2.0 - 1.0;')
           .replace('mapN.xy *= normalScale;',
-                   'mapN.xy *= normalScale * mix( 1.0, 1.55, vDead );'));
+                   /* 1.18 on a stem, not 1.55. Above the living bark's 1.0, which
+                      is the direction that was wrong last round and had to be
+                      corrected, but the beads scale with this and 1.55 was buying
+                      relief the silhouette could not show at eighteen metres. */
+                   'mapN.xy *= normalScale * mix( 1.0, mix( 0.30, 1.18, vGauge ), vDead );'));
   };
   mat.customProgramCacheKey = () => 'juniper-bark';
   return mat;

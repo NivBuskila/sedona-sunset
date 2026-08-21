@@ -131,18 +131,20 @@ await run({ width: W, height: H, waitReady: false }, async ({ page }) => {
       return cx.getImageData(0, 0, c.width, c.height);
     };
     const L = await load(a), M = await load(b);
-    const dead = [], live = [];
+    const dead = [], deadStem = [], deadTwig = [], live = [];
     for (let i = 0; i < M.data.length; i += 4) {
-      /* Red is dead, green is live, black is nothing. Pixels near the middle are
-         the blend band along the edge of a dead strip and are thrown away rather
-         than assigned to either side. */
-      const r = M.data[i], g = M.data[i + 1];
+      /* Red is dead, green is live, blue is girth, black is nothing. Pixels near
+         the middle of the red/green split are the blend band along the edge of a
+         dead strip and are thrown away rather than assigned to either side. */
+      const r = M.data[i], g = M.data[i + 1], gauge = M.data[i + 2] / 255;
       if (r + g < 40) continue;
       const px = [L.data[i], L.data[i + 1], L.data[i + 2]];
-      if (r > g * 4) dead.push(px);
-      else if (g > r * 4) live.push(px);
+      if (r > g * 4) {
+        dead.push(px);
+        (gauge > 0.5 ? deadStem : deadTwig).push(px);
+      } else if (g > r * 4) live.push(px);
     }
-    return { dead, live };
+    return { dead, deadStem, deadTwig, live };
   }, [`data:image/png;base64,${fs.readFileSync(lit).toString('base64')}`,
       `data:image/png;base64,${fs.readFileSync(msk).toString('base64')}`]);
 
@@ -160,12 +162,16 @@ await run({ width: W, height: H, waitReady: false }, async ({ page }) => {
   };
 
   console.log(`\nrendered wood, view "${VIEW}" at ${W}x${H}, medians over pixels\n`);
-  const d = report('deadwood', stat.dead);
+  const d = report('dead all', stat.dead);
+  const ds = report('dead stem', stat.deadStem);
+  report('dead twig', stat.deadTwig);
   const l = report('live bark', stat.live);
-  if (d && l) {
-    console.log(`\nvalue ratio   ${(d.v / l.v).toFixed(2)}x        target 3.5x  (real juniper 3.57x)`);
-    console.log(`dead hue      ${d.h.toFixed(1)}          target ~27 deg, warm bone`);
-    console.log(`dead sat      ${d.s.toFixed(3)}        real juniper 0.134`);
+  if (ds && l) {
+    console.log(`\nstem ratio    ${(ds.v / l.v).toFixed(2)}x        target 3.5x  (real juniper 3.57x)`);
+    console.log(`stem hue      ${ds.h.toFixed(1)}          target ~27 deg, warm bone`);
+    console.log(`stem sat      ${ds.s.toFixed(3)}        real juniper 0.134`);
+    if (d) console.log(`(all-dead ratio ${(d.v / l.v).toFixed(2)}x — reported for continuity` +
+                       ` with earlier rounds, but the stem figure is the one being judged)`);
   }
   if (!KEEP) { fs.rmSync(lit, { force: true }); fs.rmSync(msk, { force: true }); }
 });
