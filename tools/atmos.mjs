@@ -205,7 +205,7 @@ const floorLit = show('floor, sunlit',
    at the mid-distance where their distance ramps are about half open. Kept in
    step with those two files by hand; if they diverge the shadow hue printed
    here is a fiction, which is the only thing about this tool that can rot. */
-const AIRLIGHT = [0.004, 0.009, 0.028].map(v => v * 0.65);
+const AIRLIGHT = [0, 0, 0];   // removed from terrain.js and rock.js
 show('floor, shadowed', refl(SAND, probeAt(0, 1, 0)).map((v, k) => v + AIRLIGHT[k]));
 show('  same, no airlight', refl(SAND, probeAt(0, 1, 0)));
 show('rock, shadowed + air', refl(ROCK, probeAt(-atmos.SUN_DIR.x, 0, -atmos.SUN_DIR.z))

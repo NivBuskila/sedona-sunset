@@ -54,7 +54,7 @@ export const SUN_EL_DEG = 8.0;
    as far as the sun can go and stay in the gap: at sixteen degrees the disc
    disappears behind the left crest in the `sun_gap` framing, and the disc
    sitting in the gap up the wash is the composition. */
-export const SUN_AZ_DEG = -13.0;
+export const SUN_AZ_DEG = -10.5;
 
 const DEG = Math.PI / 180;
 export const SUN_EL = SUN_EL_DEG * DEG;
@@ -545,6 +545,27 @@ export function computeAtmosphere() {
      out violet, and burying the horizon in red rock is how a previous rig ended
      up with warm grey shade and no warm/cool split at all. */
   const ROCK_ALBEDO = [0.335, 0.152, 0.082];
+  /* The floor a surface in the wash actually sees is not the one the atmosphere
+     solve used. That one is the regional average — open desert, sunlit butte
+     flanks, the wash where it is lit — and it is the right thing to bounce back
+     into the sky. What is under a rock face *here* is the wash floor, and at
+     this sun angle the left wall's shadow covers nearly all of it: the shadow of
+     a 40 m wall reaches 1.6 wall-heights across the corridor, which is wider
+     than the corridor. Using the regional figure for the local bounce inflates
+     the upward light by nearly a factor of two, and that lands squarely on the
+     shadow-to-sunlit ratio, which is the measurement this system is judged on.
+     Roughly a third of what a surface down here sees is still catching sun —
+     bank crests, the mid-channel bars, the reach up-canyon past the shadow
+     line — so that is the fraction the beam is admitted at. */
+  const FLOOR_SUNLIT = 0.32;
+  const localGround = groundSpec.length ? [0, 0, 0] : [0, 0, 0];
+  {
+    const shaded = new Float64Array(NLAM);
+    for (let k = 0; k < NLAM; k++) {
+      shaded[k] = albedoAt(LAM[k]) * (FLOOR_SUNLIT * SUN_SPEC[k] * sy + irrH[k]) / Math.PI;
+    }
+    specToRGB(shaded, localGround);
+  }
   /* How much of the sky a surface down in the wash cannot see. The first
      estimate was 0.30 up to fifteen degrees, on the reasoning that this is a
      broad wash and not a slot canyon, and it was far too generous: from the
@@ -556,8 +577,8 @@ export function computeAtmosphere() {
      the sky is not a free lunch either way: it takes blue out and puts red
      back, which is most of why shade here reads as warm-dark rather than as a
      blue hole. */
-  const COVER_MAX = 0.58;          // fraction of the horizon that is rock
-  const COVER_TOP = 0.62;          // sin of the elevation it thins out at (~38 deg)
+  const COVER_MAX = 0.46;          // fraction of the horizon that is rock
+  const COVER_TOP = 0.52;          // sin of the elevation it thins out at (~31 deg)
   const sunH = [SUN_DIR.x, 0, SUN_DIR.z];
   { const l = Math.hypot(sunH[0], sunH[2]); sunH[0] /= l; sunH[2] /= l; }
   /* Sky irradiance on a vertical, needed before the wall term can be evaluated;
@@ -631,7 +652,7 @@ export function computeAtmosphere() {
         for (let k = 0; k < 3; k++) eSkyH[k] += (k === 0 ? sky0 : k === 1 ? sky1 : sky2) * cH * dw;
 
         const cov = coverAt(d3);
-        if (d3[1] < 0) { env[0] = groundRGB[0]; env[1] = groundRGB[1]; env[2] = groundRGB[2]; }
+        if (d3[1] < 0) { env[0] = localGround[0]; env[1] = localGround[1]; env[2] = localGround[2]; }
         else if (cov > 0) {
           wallRadiance(d3, wall);
           env[0] = sky0 + (wall[0] - sky0) * cov;

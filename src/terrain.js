@@ -1368,50 +1368,31 @@ export function makeTerrainMaterial(tex) {
       .replace('#include <aomap_fragment>', /* glsl */`
       reflectedLight.indirectDiffuse *= tAO;
 
-      /* Airlight, added rather than multiplied. This is the fix for "shadow is
-         just a darker version of lit", which has now been raised by three
-         critics running, and the reason every previous attempt failed is that
-         they were all made by tinting a light source.
-
-         Measured on the sys1h floor, shadow sits at 31% of sunlit — the right
-         luminance — but its colour is rgb(59,24,21): blue is the *lowest*
-         channel. No amount of blue in the hemisphere light can change that,
-         because reflected light is the product of illuminant and albedo, and
-         this dirt has a blue albedo near 0.1. Multiply a lilac sky by that and
-         essentially no blue comes back.
-
-         Real shadowed ground photographs violet for a reason that is not
-         reflection at all: Rayleigh-scattered sunlight in the air *between* the
-         surface and the camera, which adds to the image independently of what
-         the surface is made of. So it has to be added here, outside the albedo
-         product, or it cannot appear. Scaled by view distance because that is
-         how much air is in the path, and confined to shadow because in sunlight
-         it is three orders of magnitude below the direct term and only serves to
-         wash the frame out — which is exactly the milky veil that came back as a
-         regression the last two times this was attempted. */
-      float airM = 1.0 - gShadow;
-      float airD = smoothstep(1.5, 46.0, length(vWPos - cameraPosition));
-      /* Weighted toward blue rather than made brighter. Measured, the first pass
-         moved shadow from rgb(65,26,21) to rgb(67,31,30) — it had neutralised the
-         red cast but stopped exactly at grey, because the term was nearly
-         achromatic. The luminance is already right: shadow sits at 34% of sunlit
-         against the 15-25% a shaded face should read, so there is no room to add
-         energy, only to redistribute it. Roughly the same total, most of it in
-         blue, which is what takes the shadow past neutral into violet. */
-      /* Rescaled hard by System 4, and downward. This is a radiance in absolute
-         scene units added outside the albedo product, so unlike everything else
-         in the shader it does not follow the lights — and it was carrying far
-         more than its share. It exists because the provisional fill was a warm
-         grey that left shadows red-dominant with no route to blue; the probe
-         that replaced it delivers genuinely cool skylight on upward faces, so
-         the shadowed floor is already a neutral mauve before this term is added
-         at all. Left at its old weight against the new radiance it put an
-         additive blue three times the surface's own reflectance on the floor and
-         turned the whole wash lavender, which is what the first two captures of
-         this rig showed. At a third of the original figure it does what it was
-         for: a distance-dependent violet lift on shade, and nothing else. */
-      reflectedLight.indirectDiffuse +=
-        vec3(0.004, 0.009, 0.028) * airM * (0.30 + 0.70 * airD) * tAO;`);
+      /* ---- there used to be an additive shadow airlight here; System 4 ----
+         System 1 added it, and its reasoning was sound at the time: measured on
+         the sys1h floor, shadow sat at the right luminance but at rgb(59,24,21),
+         with blue the *lowest* channel, and no amount of blue in a hemisphere
+         light can change that, because reflected light is the product of
+         illuminant and albedo and this dirt has a blue albedo near 0.1. So a
+         Rayleigh term was added outside the albedo product, where it could put a
+         cool cast on a surface that had no way to reflect one.
+         That was right about the old rig and is wrong about this one: the light
+         probe carries the sky's
+         own spherical-harmonic irradiance, so an upward-facing surface in shadow
+         now receives 0.023, 0.030, 0.042 — blue-dominant, from the sky that is
+         actually above it — and comes out a cool neutral without help.
+         Keeping the term on top of that was measurably harmful. Its channel
+         ratio is roughly 1 : 2 : 7, and CONTRACT.md's own diagnostic is that a
+         magenta cast shows as blue at or above green: measured on the last
+         capture the shadowed wash floor ran B/G 1.03 and the floor underfoot
+         1.13, against 0.32 to 0.90 in real golden-hour photographs. It was
+         pushing exactly the defect the hue work has been chasing for four
+         rounds, on the only surfaces with enough blue albedo to take it.
+         Genuine distance airlight has not been lost. scene.fog is an exponential
+         airlight over the whole frame and its colour is now the measured mean
+         radiance of the sky's own horizon band, which is warm and runs B/G 0.70
+         — a real term with the real colour, rather than a shadow-only constant
+         with a Rayleigh spectrum that no light in this scene has. */`);
   };
   mat.customProgramCacheKey = () => 'sedona-terrain-v3';
   return mat;

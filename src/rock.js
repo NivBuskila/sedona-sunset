@@ -1991,30 +1991,15 @@ export function makeRockMaterial(tex, detail = 1.0) {
         'normal = normalize((viewMatrix * vec4(tNrmW, 0.0)).xyz);')
       .replace('#include <aomap_fragment>', /* glsl */`
       reflectedLight.indirectDiffuse *= tAO;
-      /* Rayleigh airlight in shadow, added outside the albedo product for the
-         reason terrain.js records: a shadowed red surface cannot reflect a blue it
-         has no blue albedo to reflect, and the violet in a photograph of one is
-         scattered light in the air between the rock and the lens. On a wall this
-         matters more than on the floor, because a canyon wall in shade is the
-         largest single area of shadow in the frame.
-         The magnitude matters more here than the direction did. At the first
-         setting there was a floor under it that applied at two metres, and on a
-         near-black surface — a varnish plate — an additive blue larger than the
-         surface's own reflectance turns the darkest thing in the frame into the
-         bluest, which is how the varnish streaks came back lilac. Airlight is the
-         light scattered in the *column of air* between the rock and the lens, so
-         at arm's length there is none of it, and the floor is gone. */
-      float airM = 1.0 - gShadow;
-      float airD = smoothstep(4.0, 200.0, length(vWPos - cameraPosition));
-      /* Rescaled hard by System 4, along with terrain.js's twin, and downward —
-         see the note there. In short: this is the one term in the shader that is
-         in absolute scene units rather than following the lights, it was sized
-         against a fill that had no blue in it, and the light probe that replaced
-         that fill supplies the cool from the sky itself. At this weight the term
-         still puts violet into distant shade, which is real Rayleigh airlight,
-         without dyeing the near field. */
-      reflectedLight.indirectDiffuse +=
-        vec3(0.004, 0.009, 0.028) * airM * (0.10 + 0.90 * airD) * tAO;`);
+      /* The additive Rayleigh shadow airlight that used to sit here is gone;
+         see the long note at the same
+         point in terrain.js. Short version: it was sized against a fill with no
+         blue in it, the light probe that replaced that fill takes its cool
+         directly from the sky, and the term's 1 : 2 : 7 channel ratio was
+         pushing measured B/G above 1.0 on every shadowed surface with enough
+         blue albedo to show it — which is CONTRACT.md's own signature for the
+         magenta cast. Distance airlight is scene.fog's job and scene.fog now has
+         the sky's own colour. */`);
   };
   return mat;
 }
