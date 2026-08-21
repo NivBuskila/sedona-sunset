@@ -96,13 +96,10 @@ export const POST_DEFAULTS = {
      shadows cool, the lit faces do not move. */
   splitPivot: 0.12,
   vibrance: 0.10,            // low-saturation pixels only; zero above sat 0.60
-  /* Chroma-preserving, pivoted at 0.18 display-linear. Both of those are
-     corrections. A per-channel pivoted contrast is a saturation multiplier in
-     disguise — at 1.025 it moved lit rock from 0.604 to 0.690, four times the
-     entire rest of the grade — and a pivot of 0.42 in display-linear is not
-     middle grey, it is two stops above it, so it darkened almost the whole
-     frame. */
-  contrast: 1.03, contrastPivot: 0.18,
+  /* Chroma-preserving, and applied after the sRGB encode with the pivot at
+     encoded middle grey. See the shader for why both of those are corrections
+     rather than choices. */
+  contrast: 1.03, contrastPivot: 0.5,
 
   /* Defocus. A physical thin-lens CoC, so the shape of the falloff is not a
      free parameter: 24 mm at f/8 focused at 12 m on a 24 mm-high sensor. That
@@ -204,6 +201,32 @@ void main() {
 
 const COMMON = /* glsl */`
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+
+/* Non-finite guard, and it is not defensive programming — it fixed a visible
+ * defect. The first capture through this chain had a hard-edged black rectangle
+ * across the sky of the wash_mid view that was absent with the chain switched
+ * off, and the mechanism is worth recording because any later pass will hit it
+ * too.
+ *
+ * The scene buffer is RGBA16F, so a radiance above 65504 arrives as +Inf. A
+ * tone curve does not care: ACES clamps, and Inf comes out white, which is why
+ * nothing upstream had ever noticed. A *bright pass* does care, because its
+ * soft knee divides by the luminance — Inf/Inf is NaN. NaN then propagates
+ * through both separable blur passes, and since a blur is a sum, one poisoned
+ * texel poisons every texel within the kernel: the horizontal pass smears it
+ * into a line and the vertical pass turns that line into a rectangle. The hard
+ * edges are the kernel's support, which is exactly why it did not look like a
+ * shading artefact.
+ *
+ * A test of x >= 0.0 is false for NaN and for negatives, which is all this
+ * needs in
+ * GLSL ES 1.00 — isnan() is a 3.0 builtin and this material compiles as 1.00.
+ */
+vec3 sane(vec3 c) {
+  return vec3(c.r >= 0.0 ? min(c.r, 60000.0) : 0.0,
+              c.g >= 0.0 ? min(c.g, 60000.0) : 0.0,
+              c.b >= 0.0 ? min(c.b, 60000.0) : 0.0);
+}
 `;
 
 function fullscreenMesh(mat) {
@@ -235,6 +258,13 @@ export function createPost({ renderer, camera, atmo, sun }) {
   const P = { ...POST_DEFAULTS };
   P.grain = num('grain', P.grain);
   P.gradeAmount = num('grade', P.gradeAmount);
+  /* A multiplier on the three flare gains, for one specific job: the sun in
+     this scene is below the butte skyline from every standard viewpoint, so it
+     is always partly or wholly occluded and the ghosts correctly never fire.
+     That is the effect working, and it is also indistinguishable from the
+     effect being broken. `#flare=8` makes the geometry visible so it can be
+     checked once, rather than shipping a path nothing has ever exercised. */
+  P.flareScale = num('flare', 1);
   const disabled = /(^|[#&])nopost(\b|$|&)/.test(hash);
 
   const plate = grainPlate(256);
@@ -308,7 +338,7 @@ void main() {
   c += texture2D(tSrc, vUv + uTexel * vec2( 1.0, -1.0)).rgb;
   c += texture2D(tSrc, vUv + uTexel * vec2(-1.0,  1.0)).rgb;
   c += texture2D(tSrc, vUv + uTexel * vec2( 1.0,  1.0)).rgb;
-  c *= 0.25;
+  c = sane(c * 0.25);
 
   /* Soft knee, so a surface drifting across the threshold as the light changes
      fades in rather than switching on. */
@@ -593,7 +623,7 @@ void main() {
   vec2 rel = (vUv - 0.5) * vec2(uAspect, 1.0);
   float rN = length(rel) / length(vec2(uAspect, 1.0) * 0.5);
 
-  vec3 c = texture2D(tScene, vUv).rgb;
+  vec3 c = sane(texture2D(tScene, vUv).rgb);
 
 #if DOF_TAPS > 0
   float coc = cocPx(vUv);
@@ -633,7 +663,7 @@ void main() {
   }
 
 #if USE_BLOOM
-  c += texture2D(tBloom, vUv).rgb * uBloom;
+  c += sane(texture2D(tBloom, vUv).rgb) * uBloom;
 #endif
 
   /* Vignette, applied in linear radiance because that is what it is: light the
@@ -668,18 +698,30 @@ void main() {
     float ly = luma(o);
     o = mix(vec3(ly), o, 1.0 + g);
 
-    /* Contrast on luminance alone. A uniform scale of all three channels leaves
-       HSV saturation and hue exactly where they were, which is the only form of
-       this term that can be applied to a frame whose rock colour is a measured
-       gate — the per-channel version moved lit rock's saturation by 0.086. */
-    float k = mix(1.0, uContrast, uGrade);
-    float l2 = luma(o);
-    float t2 = clamp((l2 - uContrastPivot) * k + uContrastPivot, 0.0, 1.0);
-    o = clamp(o * (l2 > 1e-4 ? t2 / l2 : 1.0), 0.0, 1.0);
   }
 
   gl_FragColor = vec4(o, 1.0);
   #include <colorspace_fragment>
+
+  /* Contrast, after the encode and on luminance alone. Both of those are
+     corrections that were measured rather than reasoned.
+     Luminance alone, because a uniform scale of all three channels leaves HSV
+     saturation and hue exactly where they were, and the per-channel version of
+     this term moved lit rock's saturation by 0.086 — four times the whole rest
+     of the grade.
+     After the encode, because a pivoted contrast in *linear* light is far more
+     aggressive in the shadows than it looks: at a pivot of 0.18 and a gain of
+     1.03 a shadow sitting at 0.02 linear comes out 24% darker, and the measured
+     symptom was wall_lit midwall dropping from L 0.143 to 0.113 for a term
+     that is supposed to be imperceptible. In the encoded domain, which is where
+     a photographer's contrast slider lives, the same gain moves that shadow by
+     7%. */
+  if (uGrade > 0.0) {
+    float k = mix(1.0, uContrast, uGrade);
+    float le = luma(gl_FragColor.rgb);
+    float te = clamp((le - uContrastPivot) * k + uContrastPivot, 0.0, 1.0);
+    gl_FragColor.rgb = clamp(gl_FragColor.rgb * (le > 1e-4 ? te / le : 1.0), 0.0, 1.0);
+  }
 
   /* ── grain, after the encode ──────────────────────────────────────────────
    *
@@ -746,6 +788,11 @@ void main() {
 
   const lastInfo = { calls: 0, triangles: 0 };
   let haveSceneInfo = false;
+  /* Where the flare thinks the sun is, for tools/_p7cap.mjs. "Is the flare
+     doing anything" is otherwise unanswerable from a PNG in which the sun is
+     behind a butte — and it is behind a butte in most of the standard set,
+     which is the scene working as designed rather than the effect failing. */
+  const lastSun = { x: 0.5, y: 0.5, on: 0, facing: 0 };
 
   /* ── grain clock ───────────────────────────────────────────────────────── */
 
@@ -888,6 +935,7 @@ void main() {
         const out = Math.hypot(ox, oy) / 0.33;
         on = Math.max(0, 1 - out) * Math.min(1, (facing - 0.02) / 0.10);
       }
+      lastSun.x = sx; lastSun.y = sy; lastSun.on = on; lastSun.facing = facing;
       const flu = flareMat.uniforms;
       flu.tBloom.value = loA.texture;
       flu.uTexel.value.set(1 / lw, 1 / lh);
@@ -895,9 +943,9 @@ void main() {
       flu.uSun.value.set(sx, sy);
       flu.uSunOn.value = on;
       flu.uBase.value = P.bloomGain;
-      flu.uGhost.value = P.ghostGain;
-      flu.uVeil.value = P.veilGain;
-      flu.uStreak.value = P.streakGain;
+      flu.uGhost.value = P.ghostGain * P.flareScale;
+      flu.uVeil.value = P.veilGain * P.flareScale;
+      flu.uStreak.value = P.streakGain * P.flareScale;
       draw(flareMat, loB);
 
       fu.tBloom.value = loB.texture;
@@ -962,6 +1010,7 @@ void main() {
         };
       },
       get grain() { return { phase: grainPhase, frozen }; },
+      get sun() { return { ...lastSun }; },
       sunDir: [sunDir.x, sunDir.y, sunDir.z],
     },
   };

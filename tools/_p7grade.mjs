@@ -38,7 +38,7 @@ const D = {
   splitPivot: 0.12,
   vibrance: 0.10,
   contrast: 1.03,
-  contrastPivot: 0.18,
+  contrastPivot: 0.5,
   vignette: 0.20,
 };
 
@@ -90,16 +90,17 @@ function grade(lin, rN) {
   const g = D.vibrance * (1 - smoothstep(0.25, 0.60, sat));
   const ly = luma(o);
   o = o.map((x) => ly + (x - ly) * (1 + g));
-  /* Chroma-preserving: a uniform scale leaves HSV saturation and hue exactly
-     where they were. A pivoted contrast applied per channel does not — measured
-     on this crop, 1.025 per channel moved lit rock from 0.604 to 0.690 and the
-     hue by 1.7 degrees, which is a larger colour change than the entire rest of
-     the grade put together and was not what the term was for. */
-  const l2 = luma(o);
-  const t2 = Math.min(1, Math.max(0, (l2 - D.contrastPivot) * D.contrast + D.contrastPivot));
-  const k2 = l2 > 1e-4 ? t2 / l2 : 1;
-  o = o.map((x) => Math.min(1, Math.max(0, x * k2)));
-  return o.map((x) => x <= 0.0031308 ? x * 12.92 : 1.055 * Math.pow(x, 1 / 2.4) - 0.055);
+  let e = o.map((x) => x <= 0.0031308 ? x * 12.92 : 1.055 * Math.pow(x, 1 / 2.4) - 0.055);
+  /* Chroma-preserving, and after the encode. A uniform scale of all three
+     channels leaves HSV saturation and hue exactly where they were; a pivoted
+     contrast applied per channel does not, and at 1.025 it moved lit rock from
+     0.604 to 0.690. In linear light the same term is savage in the shadows —
+     it took `wall_lit` midwall from L 0.143 to 0.113 — so it runs in the
+     encoded domain, where a photographer's contrast slider lives. */
+  const le = luma(e);
+  const te = Math.min(1, Math.max(0, (le - D.contrastPivot) * D.contrast + D.contrastPivot));
+  const ke = le > 1e-4 ? te / le : 1;
+  return e.map((x) => Math.min(1, Math.max(0, x * ke)));
 }
 
 function hueOf(c) {

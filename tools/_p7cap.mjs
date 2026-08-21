@@ -63,11 +63,19 @@ await run({ width: W, height: H, waitReady: false, hash }, async ({ page, errs }
     await capture(page, file);
     const st = await page.evaluate(() => {
       const g = window.__game;
-      return { fps: +(g.fps || 0).toFixed(1), info: g.info() };
+      const p = g._post && g._post._diag;
+      return {
+        fps: +(g.fps || 0).toFixed(1), info: g.info(),
+        sun: p ? p.sun : null, grain: p ? p.grain : null,
+        targets: p ? p.targets : null,
+      };
     });
     results.push({ view: v.name, ...st });
+    const s = st.sun;
     console.log(`  ${v.name.padEnd(11)} calls=${String(st.info.calls).padStart(4)} ` +
-                `tris=${(st.info.triangles / 1000).toFixed(0)}k`);
+                `tris=${(st.info.triangles / 1000).toFixed(0)}k` +
+                (s ? `  sun uv ${s.x.toFixed(2)},${s.y.toFixed(2)} on ${s.on.toFixed(2)}` +
+                     `  grain ${st.grain.phase}` : ''));
   }
   fs.writeFileSync(path.join(shotsDir, `${tag}.json`),
     JSON.stringify({ hash, results, logs: [...new Set(errs)] }, null, 2));
