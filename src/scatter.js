@@ -979,6 +979,10 @@ export function buildScatter(terrain, tex) {
     const buckets = geoms.map(() => []);
     const rand = rng(90210 + ci * 7717);
     let placed = 0, guard = 0;
+    /* Where this class sits on the grain-size scale, 0 for granules and 1 for
+       the half-metre blocks. Used by the sorting below, which needs to know
+       which end of a sorted patch a class belongs at. */
+    const gRank = clamp(Math.log(cl.rMax / 0.010) / Math.log(0.50 / 0.010), 0, 1);
 
     while (placed < cl.count && guard++ < cl.count * 60) {
       const s = S0 + rand() * (S1 - S0);
@@ -993,7 +997,39 @@ export function buildScatter(terrain, tex) {
       const fc = terrain.facies(x, z, q);
       /* slumped block zone: just below the lip of a cut bank */
       fc.slump = fc.f.bendOut * Math.max(0, 1 - Math.abs(fc.f.av - fc.f.wt + 0.9) / 1.8);
-      const w = cl.weight(fc);
+      /* ---- what the last flood left, as opposed to what a generator leaves ----
+       * The facies model above already varies *how many* clasts land here: a lag
+       * band carries several times the density of swept ground. What it does not
+       * vary is *which* clasts, and that is the surviving half of the critique —
+       * "a real wash floor is sorted by the last flood and this one is scattered
+       * by a random number generator". Every patch was drawing from the same size
+       * distribution, so granules, pebbles and cobbles were interleaved
+       * everywhere at their global proportions. Real bedload does not do that.
+       * Falling water loses competence as it spreads and slows, so it drops its
+       * coarse fraction first and its fine fraction last, and what it leaves is a
+       * mosaic of patches each of which is narrow in size and different from its
+       * neighbour: an armoured gravel bar with almost no sand showing, a sand lens
+       * beside it with almost no gravel in it, a stringer of cobbles down a
+       * former thread.
+       *
+       * The field is built in (s, u) — arclength down the wash and offset across
+       * it — which the placement loop already has, so it is in the flow frame for
+       * free and needs no rotation. Eighteen metres along by three across, which
+       * is the aspect of a real bar and the reason the patches read as deposited
+       * by something flowing rather than as blobs.
+       *
+       * It redistributes rather than thins. The loop runs until `cl.count` is
+       * placed, and the gain is mean-one by construction, so a coarse class keeps
+       * every instance it had and simply gathers them onto the bars instead of
+       * spreading them over the sand. */
+      const sortU = clamp(0.5 + 1.55 * (fbm(s * 0.055, u * 0.34, 3, 5501) * 0.70
+                                      + fbm(s * 0.145, u * 0.62, 2, 5507) * 0.30),
+                          0, 1);
+      /* Sharpened, because a bar has a margin. Left as raw fBm the patches shade
+         into one another and the result is a slow drift in mean grain size, which
+         is not what sorting looks like — sorting looks like a boundary. */
+      const patch = sortU * sortU * (3 - 2 * sortU);
+      const w = cl.weight(fc) * (1 + 0.92 * (2 * gRank - 1) * (2 * patch - 1));
       if (w <= 0.004 || rand() > clamp(w, 0, 1)) continue;
 
       const y = terrain.heightAtQ(x, z, q);
@@ -1011,7 +1047,13 @@ export function buildScatter(terrain, tex) {
          burial was applied at all. */
       const grad = Math.hypot(hx, hz) / (2 * e);
 
-      let rad = cl.rMin + Math.pow(rand(), cl.sizeP || 1.7) * (cl.rMax - cl.rMin);
+      /* And the same sorting within the class, at half the strength. Gathering
+         the coarse classes onto the bars is most of the effect, but a bar whose
+         own gravel still spans the class's full range is only half sorted — the
+         local spread has to narrow too, or the patch reads as a denser version of
+         the same mixture rather than as a different deposit. */
+      const uSz = clamp(rand() + (patch - 0.5) * 0.50, 0, 1);
+      let rad = cl.rMin + Math.pow(uSz, cl.sizeP || 1.7) * (cl.rMax - cl.rMin);
       if (cl.taper) rad *= 0.40 + 0.60 * (1 - fc.talPos);
 
       /* ---- lithology by size, and by what it is sitting in ----
