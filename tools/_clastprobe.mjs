@@ -105,10 +105,18 @@ const pM = pyramid(cl.arm.image.data, CS);
 const pG = pyramid(grit.image.data, 256);
 
 const SC = arg('sc', 17.0);          // cycles per metre, derived above
-const GLOCK = arg('glock', 0.85);
-const GN = arg('gn', 0.85);          // grit normal weight
-const GT = arg('gt', 1.55);          // grit tone weight
-const GC = arg('gc', 2.6);           // grit cavity weight
+/* The shipped weights. Note what this probe cannot see: it rewarded gn 0.85
+   with hf/lf 0.68, and in the render gn 0.85 came out as high-contrast polka
+   dots, because a grazing sun turns a large tangent slope into a binary lit/
+   unlit decision and a binary field has a superb one-pixel gradient. The probe
+   measures amplitude in the right band; it does not measure whether the band is
+   filled with grain or with dots. Read `sd` alongside `grad` and distrust any
+   setting whose sd runs far past the surface it is meant to resemble. */
+const GLOCK = arg('glock', 1.0);
+const GN = arg('gn', 0.25);          // grit normal weight
+const GT = arg('gt', 1.30);          // grit tone weight
+const GC = arg('gc', 1.70);          // grit cavity weight
+const GBIAS = arg('gbias', 0.93);    // mean micro-shadow
 const GR_MEAN = 0.427, GA_MEAN = 0.934;
 
 /* Sun eight degrees up, forty off the facet normal: a grazing key on an
@@ -155,7 +163,7 @@ function probe(mpp) {
 
     const ndl = Math.max(0, Nx * sl[0] + Ny * sl[1] + Nz * sl[2]);
     const tone = kG ? 1 + (gr[0] - GR_MEAN) * GT : 1;
-    const cav = kG ? 1 - Math.max(-0.35, Math.min(0.62, (GA_MEAN - gr[3]) * GC)) : 1;
+    const cav = kG ? Math.max(0.34, Math.min(1.10, GBIAS - (GA_MEAN - gr[3]) * GC)) : 1;
 
     /* Sun plus a sky/bounce fill, matching the render's rough proportion. */
     /* Exposed so the facet lands mid-grey. The first run of this probe had the

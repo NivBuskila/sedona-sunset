@@ -683,8 +683,18 @@ export function buildScatter(terrain, tex) {
         float cFoot = max(cfX, cfY);
         normal = normalize(mix(nGeoC, normal, 0.14 + 0.86 * (1.0 - smoothstep(0.0011, 0.006, cFoot))));
 
-        float cFootG = sqrt(max(cfX, 4e-4) * max(cfY, 4e-4));
-        float gLodC = log2(cFootG * 256.0 * 0.85);
+        /* Locked to the *short* axis of the footprint, not to its geometric
+           mean. The terrain locks to the mean because its pixels are grazing
+           everywhere and it needed the layer to survive the long axis; a clast
+           takes the opposite trade, because the first attempt here used the mean
+           and put the grain two to four pixels across, which does not read as
+           grain — it reads as polka dots, and it was worse than the flat facet
+           it replaced. The short axis puts about one texel per pixel across the
+           view, which is the band the eye is judging. The floor is the map's own
+           anisotropic filtering: this never asks for a ratio steeper than six,
+           against the eight the texture is built with. */
+        float cFootG = max(min(cfX, cfY), max(cfX, cfY) / 6.0);
+        float gLodC = log2(max(cFootG, 2.5e-4) * 256.0);
         float gFlC = floor(gLodC);
         float gScC = exp2(-gFlC);
         vec3 nWc = normalize((vec4(nGeoC, 0.0) * viewMatrix).xyz);
@@ -695,13 +705,25 @@ export function buildScatter(terrain, tex) {
         gUVc = mod(gUVc + vec2(5.3, 21.7), 256.0);
         vec4 grC = mix(texture2D(uGrit, gUVc * gScC),
                        texture2D(uGrit, gUVc * gScC * 0.5), gLodC - gFlC);
-        cTone = 1.0 + (grC.r - 0.427) * 1.45;
-        cCav  = clamp(0.88 - (0.934 - grC.a) * 2.4, 0.24, 1.12);
+        cTone = 1.0 + (grC.r - 0.427) * 1.30;
+        cCav  = clamp(0.93 - (0.934 - grC.a) * 1.70, 0.34, 1.10);
 
+        /* The normal is deliberately the *smallest* of the three terms, which is
+           the opposite of how the first attempt was weighted and is the whole
+           lesson from it. At eight degrees of sun elevation a tangent slope of
+           0.8 — which is what the layer's full authored amplitude comes to — is
+           enough to swing a grain from fully lit to fully shadowed, so the grain
+           field came out binary: bright dots on black, a pebble-dash render
+           rather than stone. The offline probe rewarded that, because a binary
+           field has an excellent one-pixel gradient. Amplitude is not structure.
+           At 0.25 the grains modulate the shading instead of switching it, and
+           tone and cavity carry most of the signal, which is also the right
+           division: at this sun angle it is self-shadowing rather than facet
+           orientation that a granular surface mostly expresses. */
         vec3 tAx = abs(nWc.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
         vec3 tT = normalize(cross(tAx, nWc));
         vec3 tB = cross(nWc, tT);
-        vec2 g2 = (grC.gb - 0.5) * (1.60 * (1.0 - vFarN));
+        vec2 g2 = (grC.gb - 0.5) * (0.50 * (1.0 - vFarN));
         vec3 gWc = normalize(nWc + tT * g2.x + tB * g2.y);
         normal = normalize(normal + (viewMatrix * vec4(gWc - nWc, 0.0)).xyz);
 
