@@ -384,7 +384,7 @@ void main() {
      roughly what a 2-micron mineral grain does and is why dust is a nuisance
      in front of a low sun and invisible behind you. */
   float ph = min(20.0, aHG(0.62, vPhase) / aHG(0.62, 0.0));
-  float amp = 0.013 * (0.16 + ph);
+  float amp = 0.032 * (0.16 + ph);
   vec3 c = uTint * amp * vA * s;
   gl_FragColor = vec4(c, 1.0);
   #include <tonemapping_fragment>
@@ -753,7 +753,7 @@ class Shimmer {
         tNoise: { value: this.noise },
         uT: { value: 0 },
         uRes: { value: new THREE.Vector2(1, 1) },
-        uAmp: { value: 2.0 },
+        uAmp: { value: 3.0 },
         uCam: { value: new THREE.Vector3() },
         uGroundY: { value: 0 },
         uInvVP: { value: new THREE.Matrix4() },
@@ -902,7 +902,7 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
   const ground = bakeGround(terrain, path);
   const bakeMs = performance.now() - t0;
 
-  const dust = buildDust(26000, sunDir, sunTint);
+  const dust = buildDust(34000, sunDir, sunTint);
   const salt = [
     buildSaltation(24000, SALT_NEAR, 0x5a17d, ground, sunTint),
     buildSaltation(17000, SALT_FAR, 0x2c91b, ground, sunTint),
@@ -1071,6 +1071,9 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
       cut(dust, dustF);
       for (const l of salt) cut(l, saltF);
     },
+    /* The composite material, for the shimmer diagnostic in tools/_a5shim.mjs
+       and for whatever System 7's chain wants to do with the amplitude. */
+    _shimmerMaterial: shimmer.mat,
     _diag: {
       bakeMs,
       sunDir: [sunDir.x, sunDir.y, sunDir.z],
