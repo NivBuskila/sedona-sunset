@@ -99,11 +99,38 @@ the light rig before rebalancing colour.
 Three systems reference the wind and they must agree. Ownership is split so nobody has to
 guess:
 
-- **Direction** is `WIND`, exported from `src/juniper.js` — (0.94, 0.34) normalised, the
-  direction the wind blows *toward*. It runs across the wash rather than along it, chosen
-  so the hero juniper's lean reads in its framing.
+There are **two** winds, and conflating them is what caused the mess below.
+
+- **Tonight's wind** — heading **0.12 rad, blowing down-wash** — drives everything that
+  moves or was recently deposited: the audio gust bed, the visible saltation, and the sand
+  drifted against clasts. A wash between walls channels air *along* itself, so along-wash is
+  also the physically right default, and it is what the saltation and the up-wash grain
+  piles already assume.
+- **The prevailing wind** — roughly across the wash — is a *different quantity* and only the
+  juniper uses it. A tree's lean records decades of prevailing weather, not this evening's
+  breeze, so it legitimately differs from tonight's wind and should not be reconciled with
+  it. `src/juniper.js` should export it as `PREVAILING`, not `WIND`, so the distinction is
+  visible at the call site.
+
+**This was broken and is being fixed.** `src/atmosphere.js` and `src/audio.js` each held a
+private `WIND_HEADING = 0.12` while `src/juniper.js` exported `WIND` as (0.94, 0.34) — and
+an earlier arbitration of mine wrongly made the juniper's value authoritative for everything,
+which sent the drifted sand across the wash while the blowing sand and the sound went along
+it. Nobody was importing anybody. A shared constant that three files each define privately
+is not shared.
 - **Timing and strength** belong to the audio system: `window.__game.audio.wind` for
   current state, `windAt(t)` analytic for any time, `gusts(from, to)` for the schedule.
+  **Heading lives there too.** `src/terrain.js` now takes the drifted sand's direction
+  from `audio.api.windAt`, called once at boot from `main.js` via `syncWind`, and keeps
+  only a fallback constant for a material built before the audio exists.
+
+  A note for anyone else importing it: `windAt` returns the *instantaneous* heading, which
+  wanders 0.26 rad either side of the mean and turns another 0.35 with each gust. That is
+  right for anything moving and wrong for anything deposited — a drift of sand records
+  where the wind has been for the last hour, and reading the live value would also make it
+  change between two captures of the same frame. `syncWind` averages the direction vector
+  over one full period of the slow wander (2π/0.021 = 299 s), which cancels that term
+  exactly. **Deposits take the integral; motion takes the instant.**
 
 So the sand you see moving, the sand drifted against the upstream face of clasts, the lean
 of the tree, and the wind you hear are one system. Anything that needs a different wind
@@ -439,8 +466,31 @@ Not forgiven, only deferred. Revisit these after System 4 and System 7.
   clean. There is now a broad flat fillet lens centred on each scoured clast,
   mostly below the surface, a shade darker and damper because the fines at a
   stone's foot sit in its shadow and hold moisture. Median burial is up from 0.64
-  to 0.74 of the clast's half-thickness. Still open: none of this is *excavated*
-  geometry, only added, so there is no true scour hollow anywhere.
+  to 0.74 of the clast's half-thickness.
+
+  **Real excavation now exists, for boulders only, in `sys1p`.** `Terrain.addScour`
+  registers a hollow and `heightAtQ` folds it in, so the player walks in them and
+  every clast, fillet, tail and collar stone placed after a boulder sits on the
+  dug bed. The shape is the one an obstacle in alluvium produces: a horseshoe open
+  downstream, deepest on the upstream shoulders and the flanks, zero directly
+  under the stone because the stone is *supported* there — which is also why it
+  needs no cooperation from the seating code. Depth is 0.42 of the stone's radius
+  and the lifted sediment reappears as a low mound in the lee.
+
+  Boulders only, and that is the grid rather than a preference: the mesh is 0.20 m
+  in x but **0.42 m in z**, so a hollow has to be a couple of metres across before
+  it can be expressed at all. A 0.46 m boulder gives one 2.4 m across, which is
+  five z-columns; a cobble's would be two, which is a dimple. Below that size the
+  fillet and the burial remain the model, and they are the right model.
+
+  Note that the mesh is built before the clasts exist, so `applyScour(mesh,
+  terrain)` re-levels it afterwards — one add per vertex of the same pure term
+  `heightAt` reports, so the two cannot drift apart. And note that adding this
+  changes the *whole* clast layout: placement rejects candidates on slope, slope
+  now differs near boulders, and one changed accept/reject re-randomises
+  everything downstream in the RNG stream. Object-by-object before/after crops
+  are therefore impossible across this change; region statistics still compare,
+  because the floor is statistically homogeneous.
 - **Flow sorting** — density contrast raised hard in `sys1n`; the terms were
   already right and were mixed with too much constant. A lag band with a stringer
   through it now carries several times the density of the swept ground a metre
@@ -454,11 +504,20 @@ Not forgiven, only deferred. Revisit these after System 4 and System 7.
   against. Imbrication holds at 0.72–0.84 but scatters ±32° rather than ±20°.
 - **Aeolian sand** — put in, in `sys1n`, now that WIND is shared. Sand banks on
   the *lee* face only, between slopes of about 0.03 and 0.175, so it stops dead
-  at the crest line where the windward face begins and cannot ice a bank. Note
-  the wind is **not** actually shared yet: `src/atmosphere.js` and `src/audio.js`
-  both use a private `WIND_HEADING = 0.12`, which is almost along the wash, while
-  `WIND` in `src/juniper.js` is (0.94, 0.34), almost across it. The drifted sand
-  now agrees with the tree; it does not agree with the blowing sand or the sound.
+  at the crest line where the windward face begins and cannot ice a bank.
+
+  **Now on tonight's wind, imported from the audio, in `sys1p`** — see "One weather
+  system". Two bugs came out of that revert. The first is the arbitration: pointed
+  at the juniper's across-wash `WIND` the drift went across the channel while the
+  saltation and the sound went along it. The second was hiding underneath and is
+  worse: the lee test was `dot(gN.xz, wind)` and for a height field the normal is
+  (-dh/dx, 1, -dh/dz), so `gN.xz` is *uphill*. Every drift it placed was on the
+  **windward** face. It survived a round because the direction was wrong too, and
+  sand in the wrong place looks like sand in the wrong place either way. Now that
+  the wind runs along the wash the deposit is much smaller — the cut banks face
+  across the channel and are neither windward nor lee, so it lands on the
+  downstream faces of transverse features only. That is the correct answer and it
+  is a lot less sand than the across-wash guess it replaces.
 - **Ripples** — wavelength now scales with flow depth through a new `aFlow` vertex
   attribute (three fixed trains crossfaded, since frequency cannot vary
   continuously without the phase drifting), with a beat partner for crest
@@ -478,16 +537,36 @@ Not forgiven, only deferred. Revisit these after System 4 and System 7.
 - **Mud-crack plate relief** — the *relief* is still near-field only, on purpose;
   see the derivative-bump trap above. The curl reaches the mid distance as a tone.
 - No talus cone as a discrete landform.
-- **The pale-boulder problem is not solved.** A large pale clast reads as poured
-  concrete, and four separate attacks moved a near-field one from rgb(162,132,102)
-  to (152,119,89) against a bed near (120,85,62): a size-scaled pull toward a dark
-  dusty local tone, a dust factor of 0.80, a boulder-only lithology mix with the
-  pale end deleted, and a bevel push that makes almost every requested point a
-  hull facet. It is better and it is still the loudest object in the `ground`
-  framing. The remaining cause is probably not colour at all but that a 40 cm
-  solid presents facets the size of a table top with no micro-shadow, no cavity
-  variation and none of the terrain's grain, while the bed beside it has all
-  three — the clast material is simply a poorer surface than the ground material.
+- **The pale boulders: the clast material was the problem, not its pigment.** Four
+  colour attacks had moved a near-field one from rgb(162,132,102) to (152,119,89)
+  against a bed near (120,85,62) and it was still the loudest object in `ground`.
+  Stopping and measuring the *surface* settled it. `tools/_clastprobe.mjs` shades
+  one clast facet out of the real maps through a real mip pyramid, the way
+  `wallprobe.mjs` does for rock: mean one-pixel gradient **0.0201 at 1.5 mm per
+  pixel falling to 0.0028 at 35 mm**, a sevenfold collapse, with hf/lf 0.55 near
+  and *above 1.0* far — a map mipped down to noise around its own mean. Identical
+  signature to the rock walls, identical cure: the grit layer, no content below a
+  fourteenth of its own tile and therefore no scale of its own, sampled at
+  whatever scale the pixel footprint asks for. Same probe after: **0.032 to 0.033
+  and flat across distance, hf/lf 0.62–0.77.**
+
+  Four mechanisms out of one texture fetch, and the critique named three of them.
+  A tone stipple. Crevice occlusion on *direct and indirect alike* — an aoMap-style
+  indirect multiply is the conventional place for it and it is wrong here, because
+  at eight degrees of sun elevation the direct term is most of the light and a
+  crevice that only darkens the sky contribution leaves the sunlit grain as flat
+  as it was. A small tangent-space normal. And dust on the sky-facing facets only,
+  weighted by instance size: a slab has lain in one attitude for decades and
+  collects a film of whatever the wash is made of on every face the sky can see,
+  which is why real desert talus has red tops and pale sides, while a pebble is
+  turned over by every flood and keeps its own lithology.
+
+  **Still open, and it is now a lithology question rather than a surface one.** The
+  loudest object in `p1c_ground` is a `slab`/`block` plate on the talus apron at
+  V 0.702, hue 24.6°, B/G 0.655, against bed at V 0.524, hue 20.3°, B/G 0.608 — so
+  a third brighter than its bed. Those classes draw from `CDF_B`, the buff
+  sandstone mix, and pale Coconino talus below a Coconino wall is correct geology.
+  If it is still wrong at that value then the *mix* is wrong, not the material.
 - Shadow ambient is warm grey and red-dominant — needs a hemispherical skylight term so
   shadows go cool/violet. **System 4 owns this.**
 - **Ground `hf/lf` regressed when the new lighting landed** and needs re-checking once
@@ -643,10 +722,57 @@ sends work confidently in the wrong direction. Three real examples:
   saturation. **Round-trip an instrument on real data before using it.** A one-line
   assertion would have caught this.
 
+- `tools/_clastprobe.mjs`, first run, put every pixel of the facet at 0.95 in encoded
+  sRGB, where the curve is nearly flat and every gradient it existed to measure was
+  compressed fivefold. **A probe with a free exposure has to be exposed.** Check the
+  reported mean before reading anything else it says.
+
 Two habits follow. Have a measurement report its own noise floor so a reader can see
 whether a result clears it. And when a statistic is aggregated over a whole take, ask what
 fraction of that take it is actually describing: a full-duration band RMS is dominated by
 the loud 15% and says nothing about the quiet 85%, which in an ambience *is the piece*.
+
+### Amplitude is not structure, and `hf/lf` cannot tell them apart
+
+`_clastprobe.mjs` was exposed correctly, round-tripped, and still recommended a setting
+that came out of the render as high-contrast polka dots. The grit layer's normal channel
+at its full authored amplitude is a tangent slope near 0.8; at eight degrees of sun
+elevation that is enough to swing a grain from fully lit to fully shadowed, so the grain
+field goes *binary*. A binary field has an excellent one-pixel gradient and a very good
+hf/lf, and it looks like pebble-dash render. The metric was measuring the right band and
+saying nothing about what was in it.
+
+The fix was to weight the three channels the other way round — normal smallest at 0.25,
+tone and cavity carrying the signal — which is also the physically right division, because
+at a grazing sun a granular surface expresses itself mostly through self-shadowing rather
+than through facet orientation. **Read `sd` next to `grad`** and distrust any setting
+whose contrast runs far past the surface it is meant to resemble.
+
+Second lesson from the same change, and a cheaper one: it also had the grit locked to the
+*geometric mean* of the anisotropic footprint, which is what `terrain.js` does, and copying
+that put the grain two to four pixels across. Two to four pixels is not grain at any
+amplitude. The terrain locks to the mean because its pixels are grazing everywhere and it
+needs the layer to survive the long axis; a clast should lock to the **short** axis, one
+texel per pixel across the view, and let the texture's own anisotropic filtering — 8:1
+here — cover the long one.
+
+### Three's vertex chunks do not run in the order you inject them
+
+`scatter.js`'s level-of-detail block computed the projected pixel radius in its
+`begin_vertex` injection and consumed it in its `color_vertex` injection. But three's
+vertex `main()` is `uv_vertex`, `color_vertex`, six normal chunks, *then* `begin_vertex` —
+so the colour convergence was reading `vFar` a whole chunk before anything assigned it.
+An unwritten varying is undefined, this driver hands back zero, and the effect is that the
+distance colour fade the code documents at length **had never once run**. The geometry cull
+and the normal flattening were fine, because those sit at or after `begin_vertex`, which is
+why the gravel hash still went away and nothing pointed at this.
+
+Nothing measured it either, and nothing would have: the term it disabled was a *reduction*
+in midground variance, so its absence looks like a scene with slightly more variance than
+intended, which is not a defect anyone reports. **When injecting into `onBeforeCompile`,
+check the chunk order in the three build rather than assuming the order they appear in the
+material's documentation.** One grep settles it:
+`node -e "const s=require('fs').readFileSync('node_modules/three/build/three.module.js','utf8');const i=s.indexOf('#define STANDARD');console.log(s.slice(s.indexOf('void main()',i),i+900))"`
 
 ### A process note worth keeping
 
