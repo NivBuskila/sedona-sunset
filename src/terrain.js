@@ -320,10 +320,17 @@ export class Terrain {
        The floor here was 0.10, which is small but never zero, so every square
        metre of apron got a background sprinkle and the lobes were a modulation on
        top of an even field rather than the whole story. At 0.02 the ground
-       between heaps is genuinely swept. The lobes are also larger — a 25 m
+       between heaps is genuinely swept.
+       The peak came *down* from 1.65 at the same time, and it has to: the
+       placement test clamps the weight to one, so a peak well above one means
+       every candidate inside a lobe is accepted, and sharpening the field without
+       lowering its peak just funnels the same total count into a smaller area.
+       The first attempt did exactly that and put a pile of blocks in the near
+       field denser than the even sprinkle it replaced.
+       The lobes are also larger — a 25 m
        wavelength rather than 18 — because a rockfall lobe is the debris of one
        event off one gully, and there are not that many gullies. */
-    const pile = 0.02 + 1.80 * smoothstep(0.50, 0.86, 0.5 + 0.5 *
+    const pile = 0.02 + 1.15 * smoothstep(0.50, 0.86, 0.5 + 0.5 *
       fbm(x * 0.040, z * 0.040, 3, 271));
 
     return { chan, bar, terr, tal, talPos, sheet, bare, lag, string, pan, pile, f };

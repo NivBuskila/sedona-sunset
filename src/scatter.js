@@ -381,7 +381,13 @@ const CLASSES = [
     weight: (fc) => (fc.terr * 0.95 + fc.tal * 0.35) * (1 - fc.bare * 0.5) * (1 - fc.pan),
   },
   {
-    name: 'block', kind: 'angular', variants: 4, count: 2600, uMax: 34,
+    /* Count cut by a third at the same time as `pile` was sharpened. Those two
+       changes have to move together — concentrating the same number of blocks
+       into fewer lobes makes the lobes denser, and a dense heap of half-metre
+       blocks in the near field is a worse object than an even sprinkle. Fewer
+       blocks in tighter heaps is an apron; the same blocks in tighter heaps is a
+       builder's yard. */
+    name: 'block', kind: 'angular', variants: 4, count: 1700, uMax: 34,
     /* Not equant. At flat 1.0 the hull of a jittered cube is a cube, and a
        half-metre cube sitting on open ground at twenty metres does not read as
        fallen sandstone, it reads as a crate. Bedded rock breaks into slabs. */
@@ -407,7 +413,7 @@ const CLASSES = [
        what makes a metre of rock look like rock: a spall surface stepped by the
        bedding it broke along catches a low sun in a dozen slightly different
        planes, not one. */
-    name: 'slab', kind: 'angular', variants: 4, count: 220, uMax: 34,
+    name: 'slab', kind: 'angular', variants: 4, count: 150, uMax: 34,
     rMin: 0.200, rMax: 0.350, sizeP: 2.2, squat: true,
     flat: 0.62, bevel: 34, maxSlope: 0.50, shadow: true,
     imbricate: 0, sink: [0.50, 0.90], lith: CDF_B, collar: 5, tint: 0.78,
@@ -517,7 +523,8 @@ export function buildScatter(terrain, tex) {
     Object.assign(shader.uniforms, mat.userData.uniforms);
 
     shader.vertexShader = ('uniform float uVpH;\nuniform vec3 uFarCol;\n' +
-      'varying float vFar;\nvarying float vFarN;\nvarying vec3 vSeat;\n' + shader.vertexShader)
+      'varying float vFar;\nvarying float vFarN;\nvarying vec3 vSeat;\n' +
+      'varying float vMeso;\nattribute float aDust;\n' + shader.vertexShader)
       /* ---- constant texel density across three orders of size ----
          The hull UVs are per-face box projections normalised into the unit square,
          so every facet gets exactly one tile of the surface map however large the
@@ -619,34 +626,28 @@ export function buildScatter(terrain, tex) {
         vec3 iW = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
         float pat = 0.5 + 0.25 * sin(iW.x * 0.213 + iW.z * 0.131)
                         + 0.25 * sin(iW.z * 0.087 - iW.x * 0.052 + 2.1);
-        /* Read before the distance mix: this is the instance's own lithology, and
-           the far colour is the population mean, which every instance shares. */
-        float lithL = dot(vColor, vec3(0.2126, 0.7152, 0.0722));
         vec3 far = uFarCol * mix(vec3(0.90, 0.97, 1.09), vec3(1.11, 1.00, 0.87), pat);
         vColor = mix(vColor, far, vFar);
-        /* The seat direction, with a per-instance dust weight smuggled in as its
-           length so this costs no second varying. A pebble is turned over by
-           every flood and stays the colour of its own lithology; a slab has lain
-           in the same attitude for decades and its sky-facing faces carry a film
-           of whatever the wash is made of. So the weight is a function of size,
-           which is the closest thing available to residence time.
-           And of *paleness*, which is the correction this round. Fresh Coconino is
-           off-white; Coconino that has been lying in a wash weathers to a duller,
-           browner buff and carries the same red film as everything else around it.
-           A pale lithology therefore takes several times the dust of a dark one at
-           the same size, which turns a bright plate into a pale warm buff block
-           without touching the palette — the palette is a requested Sedona
-           signature and is not the thing that was wrong. */
-        float dustW = (0.55 + 2.55 * smoothstep(0.30, 0.50, lithL))
-                    * smoothstep(0.09, 0.28, iRad);
+        /* The seat direction, with the per-instance dust weight smuggled in as its
+           length so this costs no second varying. A pebble is turned over by every
+           flood and stays the colour of its own lithology; a slab has lain in the
+           same attitude for decades and its sky-facing faces carry a film of
+           whatever the wash is made of, and Coconino that has lain in a wash
+           weathers to a duller browner buff than the fresh rock. The weight is
+           computed in emit(), where the lithology index is known exactly — see the
+           note there for why deriving it from vColor here did not work. */
         vSeat = normalize(normalMatrix * mat3(instanceMatrix) * vec3(0.0, 1.0, 0.0))
-              * (1.0 + dustW);
+              * (1.0 + aDust);
+        /* Size on its own, kept separate from the dust weight above because that
+           one deliberately conflates size with paleness and this one must not.
+           See the sky-occlusion note in the fragment shader for what it is for. */
+        vMeso = smoothstep(0.07, 0.26, iRad);
       `);
 
     shader.fragmentShader = ('varying float vFar;\nvarying float vFarN;\n' +
-      'varying vec3 vSeat;\nuniform vec3 uSunDir;\nuniform sampler2D uGrit;\n' +
-      'float cTone = 1.0;\nfloat cCav = 1.0;\nfloat cDust = 0.0;\n' + shader.fragmentShader)
-      /* ---- two different fades, and only one of them existed ----
+      'varying vec3 vSeat;\nvarying float vMeso;\n' +
+      'uniform vec3 uSunDir;\nuniform sampler2D uGrit;\n' +
+      'float cTone = 1.0;\nfloat cCav = 1.0;\nfloat cDust = 0.0;\n' + shader.fragmentShader)      /* ---- two different fades, and only one of them existed ----
        * vFarN handles the *instance* shrinking below a pixel, which is the
        * gravel-hash problem. It says nothing about the surface map's own feature
        * size, and that is a separate failure with its own symptom: the clast
@@ -782,7 +783,39 @@ export function buildScatter(terrain, tex) {
            and patchy — you see the rock through it — so past about two thirds the
            block stops being dusty Coconino and becomes a lump of bed, which
            deletes the lithology instead of weathering it. */
-        cDust = smoothstep(0.34, 0.90, nWc.y) * min(0.66, 0.42 * dustK);
+        /* ---- and the orientation gate had to open a long way ----
+         * This asked for nWc.y above 0.34 before any film accumulated and did not
+         * saturate until 0.90, which is a facet within twenty-five degrees of
+         * horizontal. Almost nothing on a talus block is: the plates that read as
+         * bright card in the ground framing present faces tilted sixty degrees
+         * from vertical, nWc.y near 0.5, so they were collecting a fifth of the
+         * weight the class was authored with. The dust weight measured correct at
+         * the instance and arrived at the pixel divided by five, which is why
+         * three successive increases to it changed almost nothing.
+         *
+         * Widening the gate then found the rest of the story, and it needed the
+         * value of cDust rendered directly to the screen rather than another guess:
+         * on the plate that reads worst, cDust measured 0.31, and inverting the
+         * tone curve and the gate puts that facet's normal at nWc.y ≈ 0.15. The
+         * faces that read as bright card are not sky-facing at all — they are
+         * *steeply dipping* faces that happen to point at the sun, which at eight
+         * degrees of elevation is very nearly the brightest thing a facet can do.
+         * That is why the two previous increases to the dust weight changed the
+         * pixel by one part in two hundred: they were both saturating against a
+         * cap the orientation term then multiplied down to a third.
+         *
+         * So there is a floor now as well as a ramp. A near-vertical sandstone
+         * face in a wash is not clean either — dust arrives on it by splash and by
+         * runoff and stays in the pore space, which is what desert varnish and
+         * runoff staining are — but it carries perhaps a third of what a bench
+         * face collects, not none. The ramp above that is still the settling term.
+         *
+         * Capped rather than allowed to run to one. A dust film in a wash is thin
+         * and patchy — you see the rock through it — so past about four fifths the
+         * block stops being dusty Coconino and becomes a lump of bed, which
+         * deletes the lithology instead of weathering it. */
+        cDust = (0.34 + 0.66 * smoothstep(-0.12, 0.52, nWc.y))
+              * min(0.80, 0.42 * dustK);
 
         normal = normalize(mix(normal, seatC, vFarN * 0.92));
       `)
@@ -815,6 +848,41 @@ export function buildScatter(terrain, tex) {
         reflectedLight.indirectDiffuse *= cCav;
         reflectedLight.directSpecular *= cCav;
         reflectedLight.indirectSpecular *= cCav;
+
+        /* ---- the sky lobe a clast in a pile does not actually see ----
+         * This is the term that four rounds of pigment work were substituting
+         * for, and finding it took inverting the question: after the dust film
+         * had pulled a pale block's albedo to (0.226, 0.141, 0.100) — within a
+         * few hundredths of the bed's own — it was *still* rendering at 1.43x the
+         * bed's luminance. Albedo cannot explain that, because albedo scales sun
+         * and sky together and the ratio survives. What was left was the fill.
+         *
+         * terrain.js multiplies its indirect diffuse by tAO, which runs 0.34 to
+         * 1.0 and sits around 0.8 on open floor. The clast material had no
+         * equivalent at all — only cCav, which is grain-scale and averages one.
+         * So every clast in the scene was taking the full unoccluded sky dome
+         * while the bed one centimetre away took four fifths of it, and at eight
+         * degrees of sun elevation the dome is most of the light on an up-facing
+         * facet. That is a systematic 25% over-fill on the one class of object
+         * that is *more* occluded than the ground, not less: a block in a
+         * rockfall lobe is wedged among other blocks, and the ones that are not
+         * are still sunk to the shoulders in the bed.
+         *
+         * Scaled by instance size rather than applied flat, because the physics
+         * is about neighbours: a granule lies on open bed and sees the dome a
+         * grain of the bed sees, while a half-metre block sees a horizon of other
+         * half-metre blocks. Uniform over the facet rather than keyed to its
+         * normal, deliberately — the honest model of a pile is that the top
+         * facets are open and the low ones are shut, and nothing in the shader
+         * knows which is which, so a directional guess would be decoration.
+         *
+         * It also explains the *hue* complaint, which pigment never could: the
+         * dome is the blue-violet part of the light budget, so an over-filled
+         * facet is desaturated as well as bright, and a desaturated warm surface
+         * beside a saturated red one reads as grey card however dark it is. */
+        float mesoAO = mix(1.0, 0.58, vMeso);
+        reflectedLight.indirectDiffuse *= mesoAO;
+        reflectedLight.indirectSpecular *= mesoAO;
       `)
       /* ---- the blue chips were here ----
        * This was an additive Rayleigh-spectrum constant, vec3(0.012, 0.024,
@@ -959,8 +1027,15 @@ export function buildScatter(terrain, tex) {
        * the wall, and how far a block leaves the wall scales with how far it fell:
        * the coarse pale fraction belongs at the apron **toe**, which is talPos 0,
        * not distributed up the ramp. And rockfall is an event, so it arrives in
-       * the same lobes `pile` already describes rather than as a sprinkle. Between
-       * them these two reject about four in five pale coarse draws.
+       * the same lobes `pile` already describes rather than as a sprinkle.
+       *
+       * The constant started at 0.60 and is 0.22, which is a large move made on
+       * evidence rather than taste. At 0.60 the survival rate where the rule says
+       * pale blocks *belong* — the toe, inside a lobe — was still 60%, and the
+       * fixed ground viewpoint happens to stand on a toe lobe, so concentrating
+       * them physically correctly delivered them all into the one framing that was
+       * already complaining. Redistribution is not thinning. At 0.22 the density
+       * is about one in five where they belong and one in thirty elsewhere.
        *
        * The survivors are then pushed *up* in size. That is the point rather than
        * a side effect: what the eye reads as Sedona is a few big conspicuous pale
@@ -968,9 +1043,26 @@ export function buildScatter(terrain, tex) {
        * total pale area, concentrated. */
       const lithL = 0.2126 * LITH[lith][0] + 0.7152 * LITH[lith][1] + 0.0722 * LITH[lith][2];
       if (lithL > 0.40 && rad > 0.14) {
-        if (rand() > (1 - fc.talPos * 0.85) * Math.min(1, fc.pile) * 0.60) continue;
-        rad = rad + (cl.rMax - rad) * 0.45;
+        /* And the rejection gets harder with size, which is the same competence
+           argument the file already makes for boulders, stopped short of deleting
+           the lithology. The requested signature is "the big off-white boulders
+           sitting incongruously on the red soil" — a *few* of them — and the
+           defect is a paving stone at arm's length. Both are satisfied by making
+           the largest pale draws the rarest rather than by capping the size: a
+           0.15 m pale block survives about three times in ten where it belongs, a
+           0.34 m one about once in twenty-five. Rockfall frequency and flood
+           competence both fall steeply with block size, so does this. */
+        const rk = clamp((rad - 0.14) / 0.20, 0, 1);
+        if (rand() > (1 - fc.talPos * 0.85) * Math.min(1, fc.pile)
+                   * (0.30 - 0.26 * rk)) continue;
       }
+      /* No size push here, and that is a reversal within the round. Pushing the
+         surviving pale draws up toward rMax was meant to give "a few big
+         conspicuous blocks", and what it gave was a heap of same-sized paving
+         stones in the near field of `ground` — worse than what it replaced,
+         because uniform *and* large is the shape of a stack of pallets. The
+         thinning belongs in the placement gate above; the size distribution was
+         already right. */
 
       emit(cl, buckets[placed % cl.variants], x, y, z, rad, lith, rand, th, nrm, bankF);
       placed++;
@@ -1216,9 +1308,22 @@ export function buildScatter(terrain, tex) {
        quarter of a metre the pale lithologies are pulled toward the local matrix
        in proportion to how far past that they are. Nothing changes at pebble
        scale, where the polychrome scatter belongs. */
+    /* ---- and why this is now weak, having been strengthened twice ----
+       This is the pigment lever, and four rounds established that it does not
+       work: it moved a near-field boulder from 162 to 152 against a bed at 120
+       and it was still the loudest object in the frame. Worse, it was actively
+       in the way. Pulling every pale draw two thirds of the way to a dark red
+       collapsed the *luminance separation between lithologies*, which is the only
+       per-instance signal the shader's dust term has to work with — so the film,
+       which is the mechanism that actually looks like a dust film because it acts
+       on sky-facing facets only, was firing at almost zero on exactly the clasts
+       it was built for. A uniform pull toward red and an oriented film are not
+       additive; the first one hides the second. Cut to about a quarter, enough to
+       take the top off the extreme pale draws at large size, and the film does
+       the rest. */
     const paleL = 0.2126 * L[0] + 0.7152 * L[1] + 0.0722 * L[2];
     if (paleL > 0.34 && rad > 0.09) {
-      const k = clamp((rad - 0.09) / 0.14, 0, 1) * clamp((paleL - 0.34) / 0.16, 0, 1) * 0.80;
+      const k = clamp((rad - 0.09) / 0.14, 0, 1) * clamp((paleL - 0.34) / 0.16, 0, 1) * 0.22;
       /* Toward a *darker* dusty local tone, not toward MATRIX_COL. Mixing toward
          the matrix was the obvious thing and it did nothing measurable, for a
          reason worth recording: the matrix and buff sandstone have almost the
@@ -1280,7 +1385,25 @@ export function buildScatter(terrain, tex) {
     const asp = cl.aspect || [0.88, 1.18];
     const ea = Math.pow(rand(), 1.35);
     const ex = asp[0] + ea * (asp[1] - asp[0]);
+    /* ---- the dust weight, computed here rather than in the shader ----
+     * It was derived in the vertex shader from the instance colour's luminance,
+     * and that was wrong twice over for the same reason: what arrives there is
+     * the lithology times the class dust factor times the per-instance jitter
+     * times the albedo floor times whatever paleCut did, so the threshold had to
+     * be guessed against a distribution nobody had measured. Both guesses missed.
+     * The first put the gate entirely above the population and the term did
+     * nothing at all; the second landed on its lower shoulder and delivered a
+     * third of the intended film to a Coconino block — which is why the plates
+     * came back buff after being nominally dusted at three quarters.
+     *
+     * Here the lithology index is in hand, so the weight is exact and reads as
+     * what it is: how pale the *rock* is, times how long it has plausibly lain
+     * still, for which instance size is the available proxy. One float per
+     * instance, which is cheaper than the varying it replaces was to get wrong. */
+    const resid = clamp((rad - 0.075) / 0.16, 0, 1);
+    const dustW = resid * (0.30 + 2.85 * clamp((paleL - 0.33) / 0.19, 0, 1));
     bucket.push({
+      dust: dustW,
       x, y: y - sink, z,
       q: quat.clone(),
       sx: rad * ex,
@@ -1292,6 +1415,7 @@ export function buildScatter(terrain, tex) {
 
   function makeMesh(geom, material, list, name, shadow) {
     const im = new THREE.InstancedMesh(geom, material, list.length);
+    const dust = new Float32Array(list.length);
     im.castShadow = shadow;
     im.receiveShadow = true;
     im.name = name;
@@ -1303,7 +1427,9 @@ export function buildScatter(terrain, tex) {
       im.setMatrixAt(i, obj.matrix);
       col.setRGB(o.r, o.g, o.b);
       im.setColorAt(i, col);
+      dust[i] = o.dust || 0;
     });
+    geom.setAttribute('aDust', new THREE.InstancedBufferAttribute(dust, 1));
     im.instanceMatrix.needsUpdate = true;
     if (im.instanceColor) im.instanceColor.needsUpdate = true;
     im.computeBoundingSphere();
