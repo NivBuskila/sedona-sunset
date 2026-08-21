@@ -322,7 +322,10 @@ function transients(x, sr, riseDb = 6, minGap = 0.22) {
  *  · `abovePct`   how much of the timeline is audible at all, against a fixed
  *                 absolute floor rather than against the piece's own bed. A
  *                 relative threshold would call any bed continuous, including
- *                 an inaudible one.
+ *                 an inaudible one. Reported at -45 dBFS, which is the level
+ *                 the piece is being judged against, and at -55 as well: a bed
+ *                 that clears the lower one and not the higher is technically
+ *                 present and still reads as an empty room.
  *  · `activePct`  how much of the timeline lies inside a discrete event. This is
  *                 "something is happening", as distinct from "something is on".
  *  · `longestGap` the longest stretch with nothing but bed. One long gap does
@@ -336,9 +339,16 @@ function transients(x, sr, riseDb = 6, minGap = 0.22) {
  *                 twenty-seven, and was described as creepy.
  */
 function continuity(wl, W, sr, evs, seconds, pc) {
-  const FLOOR = -55;
-  let above = 0;
-  for (let i = 0; i < wl.length; i++) if (wl[i] > FLOOR) above++;
+  /* Two thresholds, because the brief names one and the ear cares about the
+     other. -45 dBFS is the number the piece is being judged against, so it is
+     reported whatever it says. -55 catches the case where the bed sits in the
+     band between them: present, but only just, and still reading as a room with
+     nothing in it. */
+  let above45 = 0, above55 = 0;
+  for (let i = 0; i < wl.length; i++) {
+    if (wl[i] > -45) above45++;
+    if (wl[i] > -55) above55++;
+  }
   /* Union of the event spans, not the sum: overlapping events are one stretch
      of "something is happening", and a soundscape busy enough to overlap would
      otherwise be scored above a hundred per cent. */
@@ -363,7 +373,8 @@ function continuity(wl, W, sr, evs, seconds, pc) {
   gaps.sort((a, b) => a - b);
   const calls = evs.filter(e => e.kind !== 'wind' && e.kind !== 'step');
   return {
-    abovePct: 100 * above / wl.length,
+    abovePct: 100 * above45 / wl.length,
+    above55Pct: 100 * above55 / wl.length,
     activePct: 100 * active / seconds,
     longestGap: gapMax,
     medianGap: gaps.length ? gaps[gaps.length >> 1] : NaN,
@@ -1599,8 +1610,8 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
      of it does not. */
   const cont = a.continuity;
   say(`── continuity ──────────────────────────────────────────`);
-  say(`  audible at all      ${f1(cont.abovePct)}% of 50 ms windows clear -55 dBFS ` +
-      `(a plausible floor at normal playback)`);
+  say(`  audible at all      ${f1(cont.abovePct)}% of 50 ms windows clear -45 dBFS, ` +
+      `${f1(cont.above55Pct)}% clear -55 dBFS`);
   say(`  something sounding  ${f1(cont.activePct)}% of the timeline is within a ` +
       `discrete event, not only bed`);
   say(`  longest bed-only    ${f2(cont.longestGap)}s   (median gap between events ` +

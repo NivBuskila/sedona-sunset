@@ -211,6 +211,11 @@ const lerp = (a, b, t) => a + (b - a) * t;
    through, which is narrow enough to be honest and wide enough that no future
    parameter can reintroduce the same failure. */
 const badWrites = { n: 0, first: null };
+/* Non-finite player positions handed to this module. Distinct from `badWrites`
+   on purpose: this one says another system's state went bad, that one says this
+   module nearly wrote it to a parameter. Keeping them apart is the difference
+   between "audio is broken" and "audio absorbed somebody else's bug". */
+const badInput = { n: 0 };
 
 function ramp(param, value, t) {
   if (!Number.isFinite(value) || !Number.isFinite(t)) {
@@ -740,6 +745,22 @@ export class Soundscape {
        hundred hertz. Modulating with narrowband *noise* at that rate rather than
        with a sine is the whole trick — a sine there sounds like a fax machine,
        because it gives the roughness a pitch. */
+    /* A soft clip for the roughness modulators. Two reasons it is needed rather
+       than nice to have. A narrow bandpass passes a small fraction of a noise
+       source's amplitude — a hundred-hertz-wide slice of a full-scale signal
+       comes out at a few per cent — so reaching a modulation depth worth hearing
+       takes a gain of ten or twenty, and at that gain the occasional peak would
+       drive the depth well past one and invert the carrier. Clipping the control
+       signal bounds it without flattening the middle of its range, which is
+       where the roughness actually lives. */
+    const clipCurve = new Float32Array(1024);
+    for (let i = 0; i < 1024; i++) clipCurve[i] = Math.tanh(3 * (i / 511.5 - 1));
+    const softClip = () => {
+      const ws = ctx.createWaveShaper();
+      ws.curve = clipCurve; ws.oversample = 'none';
+      return ws;
+    };
+
     this.cicada = [];
     for (const [fc, q, pan, rough] of [[4300, 1.5, -0.55, 168], [5600, 1.3, 0.6, 196],
       [6600, 1.7, -0.25, 212]]) {
@@ -747,12 +768,11 @@ export class Soundscape {
       const bp = bq('bandpass', fc, q);
       const bp2 = bq('bandpass', fc * 0.72, 2.0);
       src.connect(bp); src.connect(bp2);
-      const am = g(0.66);
+      const am = g(0.62);
       bp.connect(am); bp2.connect(g(0.45)).connect(am);
-      const rn = bq('bandpass', rough, 2.4);
+      const rn = bq('bandpass', rough, 1.4);
       (fc > 5000 ? wh2R : whL).connect(rn);
-      const rd = g(0.34);
-      rn.connect(rd).connect(am.gain);
+      rn.connect(g(14)).connect(softClip()).connect(g(0.38)).connect(am.gain);
       const lvl = g(0);
       am.connect(lvl).connect(sp(pan)).connect(this.insects);
       this.cicada.push({ lvl, base: 1 });
@@ -1786,7 +1806,7 @@ export class Soundscape {
    */
   _fireBird(kind, t0, bearing, dist) {
     const r = this.erand;
-    if (kind === 'canyonwren') return this._fireWren(t0, bearing, dist);
+    if (kind === 'canyonwren') return this._fireWren(t0, bearing, dist).end;
     const v = this._birdVoice(t0);
     const f = v.osc.frequency, g = v.gain.gain;
     this._birdAt(v, t0, bearing, dist, 4 + r() * 12);
@@ -2086,8 +2106,12 @@ export class Soundscape {
        and self-healing (one good frame restores it). */
     let u = st.u;
     if (u === undefined) u = this.path ? this.path.uOf(st.x, st.z) : 0;
-    if (Number.isFinite(u)) this.prox = clamp01(Math.abs(u) / WASH_HALF);
-    else this.badPos = (this.badPos || 0) + 1;
+    /* Sanitised into the variable the rest of the frame reads, not just into
+       `prox`. `u` also picks the stereo position of the next footstep, so
+       guarding only `prox` would leave a second route to the same crash for a
+       caller that supplies `st.u` itself. */
+    if (Number.isFinite(u)) { this.uLast = u; } else { u = this.uLast || 0; this.badPos = (this.badPos || 0) + 1; }
+    this.prox = clamp01(Math.abs(u) / WASH_HALF);
 
     this._scheduleWind(now);
 
@@ -2164,7 +2188,7 @@ export function createAudio({ camera, canvas, path, seed } = {}) {
     update() {},
     api: {
       setEnabled() {}, gust() {}, coyote() {}, wren() {}, raven() {}, available: false,
-      setMode() { return 'plain'; }, mode: 'plain', badWrites: 0,
+      setMode() { return 'plain'; }, mode: 'plain', badWrites: 0, badInput: 0,
       wind: { heading: WIND_HEADING, dirX: Math.sin(WIND_HEADING), dirZ: Math.cos(WIND_HEADING), gust: 0, speed: 0, base: 0, hiss: 0, rush: 0 },
       windAt() { return { g: 0, heading: WIND_HEADING, dirX: 0, dirZ: 1, speed: 0, base: 0, bg: [0, 0, 0] }; },
       gusts() { return []; },
@@ -2226,9 +2250,42 @@ export function createAudio({ camera, canvas, path, seed } = {}) {
       return;
     }
     if (!started) { started = true; sc.schedHead = Math.max(sc.schedHead, now); }
-    stt.x = player.x; stt.z = player.z;
-    stt.speed = Math.hypot(player.vx || 0, player.vz || 0);
-    stt.dt = dt;
+    /* Validated here, at the boundary, and not further in.
+       This is where the non-finite ramp came from, and the chain is worth
+       stating because every link in it passes a NaN along silently. A NaN `z`
+       reaches `path.atZ`, which turns it into a table index and clamps it with
+       a pair of comparisons — both false for a NaN, so the clamp passes it
+       through, and `NaN|0` is 0 so the index even looks valid; the interpolation
+       then returns a non-finite centreline point, and `uOf` multiplies it out to
+       a non-finite lateral offset. A NaN `x` gets there by a second route that
+       does not involve the clamp at all. `clamp01` passes the result through for
+       the same reason atZ's clamp did, and `prox` is remembered between frames,
+       so one bad frame of player state became a permanent non-finite write into
+       a gain — every frame, at the same line, for the rest of the session.
+       Worth knowing which value does it: an infinite z is harmless, because a
+       comparison against an infinity is true and the clamp catches it. This is
+       a NaN specifically, so `Number.isFinite` is the test and not a range one.
+       Sanitising `prox` alone would only have survived that. The fix is to stop
+       the bad value entering: with a finite position going in, nothing
+       downstream can produce a non-finite one, so the two guards further in are
+       nets rather than mechanisms. Holding the last good position is right on
+       both counts — the player has not actually teleported, and one good frame
+       restores it.
+       Counted and surfaced rather than absorbed. The true origin is upstream of
+       this file and still wants fixing there; a silent recovery here is how it
+       would stop being anybody's problem. */
+    if (Number.isFinite(player.x) && Number.isFinite(player.z)) {
+      stt.x = player.x; stt.z = player.z;
+    } else {
+      badInput.n++;
+      if (badInput.n === 1) {
+        console.warn('audio: player position is not finite', player.x, player.z,
+          '- holding the last good position; the origin is upstream of audio.js');
+      }
+    }
+    const speed = Math.hypot(player.vx || 0, player.vz || 0);
+    stt.speed = Number.isFinite(speed) ? speed : 0;
+    stt.dt = Number.isFinite(dt) ? dt : 0.016;
     sc.update(now, stt);
   }
 
@@ -2293,6 +2350,12 @@ export function createAudio({ camera, canvas, path, seed } = {}) {
     get mode() { return sc.mode; },
     /** Non-finite automation writes this system has refused. Should be zero. */
     get badWrites() { return badWrites.n; },
+    /**
+     * Frames on which the player position handed to `update()` was not finite.
+     * Non-zero means another system's state is going bad; the sound survives it,
+     * but the origin is not here.
+     */
+    get badInput() { return badInput.n; },
     /** Offline render of this exact graph; see tools/audioprobe.mjs. */
     renderOffline: (opts) => renderOffline({ path, seed, ...(opts || {}) }),
     /** Offline render with every rare voice cued at a known time. */
