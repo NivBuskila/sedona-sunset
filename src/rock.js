@@ -1573,7 +1573,16 @@ vec3 ironCol = mix(uIron, mix(vec3(0.400, 0.052, 0.046), vec3(0.470, 0.108, 0.02
 /* Fresh spall faces are unweathered rock: no varnish film, no dust, and the
    pigment at full strength. A cliff with no fresh faces is a cliff nothing has
    fallen off, which is not a cliff. */
-albedo = mix(albedo, ironCol * lum, clamp(ironF * 0.88 + fresh * 0.26 * lIron, 0.0, 0.92));
+/* Ceiling down from 0.88 to 0.60. The *concept* of these bands was accepted — a
+   shadow line at the lower contact and a lit arris at the top, which is how a
+   cemented lamina actually presents — but the coverage was never revisited, and at
+   88% of a saturated hematite red the lens stops being cement in the pore space
+   and becomes a coat of paint over the top of it. On a face the sun has left, where
+   the surrounding rock falls to a tenth of its lit value and the lens does not, the
+   result reads as a plaid of bright red ribbons. Saturation has headroom to give
+   here: it was measured at the top of the real range, so taking coverage off the
+   lenses costs a little of a surplus and buys back the banded read. */
+albedo = mix(albedo, ironCol * lum, clamp(ironF * 0.60 + fresh * 0.26 * lIron, 0.0, 0.92));
 float ironBase = ironF * smoothstep(0.25, 0.92, ironSlope);
 float ironTop  = ironF * smoothstep(0.25, 0.92, -ironSlope);
 albedo *= 1.0 - ironBase * 0.26;
@@ -1698,8 +1707,14 @@ float tVarn = isTal * smoothstep(0.30, 0.85, gN.y) * (1.0 - lPale * 0.70)
             * (0.45 + 0.55 * vr.b) * (0.70 + 0.60 * gr.r) * 0.62;
 varn = max(varn, clamp(tVarn, 0.0, 0.72));
 /* Manganese concentrated in the joints, per the aperture note above. */
-varn = max(varn, clamp(jOpen * 0.46 * (1.0 - lPale * 0.55) * (0.6 + 0.6 * vr.g),
-                       0.0, 0.58));
+/* Pulled back hard from 0.46. Manganese does concentrate in a joint, but at 0.46
+   on top of the groove's own 46% albedo darkening and a doubled occlusion weight,
+   every joint in the wall became a wide dark tongue and the face acquired a set of
+   vertical black streaks to go with its horizontal ones. Three treatments of the
+   same feature compound, which is easy to forget when they are written in three
+   different places. */
+varn = max(varn, clamp(jOpen * 0.18 * (1.0 - lPale * 0.55) * (0.6 + 0.6 * vr.g),
+                       0.0, 0.34));
 albedo = mix(albedo, uVarnish * (0.62 + 0.38 * lum), varn);
 
 /* ---- dust and weathered fines on the up-facing surfaces ----
@@ -1841,7 +1856,7 @@ float ledgeShade = (1.0 - smoothstep(0.0, 1.6, y - lBot)) * (1.0 - lVert) * 0.55
 float sbUp = bedResist(sbI + 1.0, lIdx);
 float sbLip = smoothstep(0.80, 1.0, sbT) * smoothstep(0.54, 0.74, sbUp);
 tAO = clamp(rkAO * (0.72 + 0.34 * (1.0 - cav)) - ledgeShade * 0.5 - sbLip * 0.30
-            - joint * 0.62 - ironBase * 0.22, 0.18, 1.0);
+            - joint * 0.42 - ironBase * 0.22, 0.18, 1.0);
 /* The grit's crevice occlusion, unfiltered by distance: it is a tone, it is
    scale-locked to the footprint, and it is what keeps the material present at
    the range where every normal in the shader has already faded out. */
@@ -1979,13 +1994,15 @@ export function makeRockMaterial(tex, detail = 1.0) {
          at arm's length there is none of it, and the floor is gone. */
       float airM = 1.0 - gShadow;
       float airD = smoothstep(4.0, 200.0, length(vWPos - cameraPosition));
-      /* Rescaled by System 4 along with terrain.js's twin: this is a radiance in
-         absolute scene units added outside the albedo product, so it is the one
-         term in the shader that does not follow the lights, and the physical rig
-         moved the frame's radiance by 2.0. The ratio between the channels — the
-         part System 2 measured — is untouched. */
+      /* Rescaled hard by System 4, along with terrain.js's twin, and downward —
+         see the note there. In short: this is the one term in the shader that is
+         in absolute scene units rather than following the lights, it was sized
+         against a fill that had no blue in it, and the light probe that replaced
+         that fill supplies the cool from the sky itself. At this weight the term
+         still puts violet into distant shade, which is real Rayleigh airlight,
+         without dyeing the near field. */
       reflectedLight.indirectDiffuse +=
-        vec3(0.026, 0.048, 0.144) * airM * (0.10 + 0.90 * airD) * tAO;`);
+        vec3(0.004, 0.009, 0.028) * airM * (0.10 + 0.90 * airD) * tAO;`);
   };
   return mat;
 }
