@@ -70,8 +70,19 @@ class Wind {
     this.audio = audio;
     this.gusts = [];
     this.seen = new Set();
+    /* Zero, not `audio.time`. This anchors the deterministic capture window,
+       and it was anchored to the AudioContext clock at the moment the
+       atmosphere was constructed — which is boot time, which varies by seconds
+       between two page loads. So `captureTime(46)` returned a different instant
+       of the weather every run: different mote positions, different saltation,
+       and, because the shimmer pass takes the same clock, a slightly different
+       heat-haze warp over the whole frame. Two captures of one viewpoint from
+       one frozen src/ differed in 11% of their pixels because of this line.
+       Anchoring at zero costs nothing: System 6's gust schedule is a seeded
+       PRNG walked forward from t=0, so `gusts()` over a fixed absolute window
+       returns the same gusts on every load. The live path is unaffected — it
+       reads `audio.time` per frame in update(). */
     this.t0 = 0;
-    try { this.t0 = audio.time || 0; } catch (e) { this.t0 = 0; }
 
     /* Force the capture window out now, once.
      *
@@ -336,6 +347,9 @@ function buildDust(count, sunDir, sunHue) {
       uSpeed: { value: 1 },
       uDrive: { value: 1 },
       uGroundY: { value: 0 },
+      uShadowMap: { value: null },
+      uShadowMat: { value: new THREE.Matrix4() },
+      uHasShadow: { value: 0 },
     },
     vertexShader: /* glsl */`
 uniform float uT;
@@ -346,10 +360,42 @@ uniform vec2 uWind;
 uniform float uSpeed;
 uniform float uDrive;
 uniform float uGroundY;
+uniform sampler2D uShadowMap;
+uniform mat4 uShadowMat;
+uniform float uHasShadow;
 attribute vec3 aux;
 varying float vA;
 varying float vPhase;
+varying float vLit;
+/* unpackRGBAToDepth, for the shadow lookup below. three 0.180 packs directional
+   shadow depth into RGBA rather than using a depth texture. */
+#include <packing>
 ${NOISE_GLSL}
+
+/* Is this mote in the sun?
+ *
+ * The remaining half of the mote visibility law. The phase function was already
+ * right — g = 0.62 gives a 56% falloff between 24 and 40 degrees off the beam,
+ * and a critic measuring only 14% was measuring pixels rather than mote radiance
+ * — but a mote sitting inside a 240 m wall shadow was still scattering full
+ * sunlight toward the eye. That is the same V = 1 assumption the fog chunk was
+ * making, in a second place, and it is why the motes read as a slab of sprites
+ * rather than as dust in a beam: nothing in the field knew where the light was.
+ *
+ * Sampled per vertex rather than per fragment. A mote is one to four pixels, so
+ * a fragment-rate lookup would buy sub-mote shadow detail that cannot be seen,
+ * and there are 34,000 of them; this is one fetch each. The coarse cascade is
+ * the right one for the same reason it is in the shaft march — a mote does not
+ * need to know it is in a pebble's shadow. Outside the cascade the answer has to
+ * be "lit", or the field goes dark at the box edge. */
+float moteLit(vec3 p) {
+  if (uHasShadow < 0.5) return 1.0;
+  vec4 sc = uShadowMat * vec4(p, 1.0);
+  vec3 c = sc.xyz / sc.w;
+  if (any(lessThan(c, vec3(0.0))) || any(greaterThan(c, vec3(1.0)))) return 1.0;
+  float d = unpackRGBAToDepth(texture2D(uShadowMap, c.xy));
+  return step(c.z - 0.0012, d);
+}
 
 const float TILE = ${DUST_TILE.toFixed(1)};
 
@@ -403,6 +449,7 @@ void main() {
   vA = dens * shaft * uDrive;
   vA *= 1.0 - smoothstep(TILE * 0.28, TILE * 0.46, dist);
   vPhase = dot(normalize(toEye), -uSun);
+  vLit = moteLit(p);
 
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;
@@ -425,6 +472,7 @@ uniform vec3 uMote;
 uniform vec3 uMoteAmb;
 varying float vA;
 varying float vPhase;
+varying float vLit;
 ${NOISE_GLSL}
 
 void main() {
@@ -453,7 +501,13 @@ void main() {
      so a grain darkens any background brighter than itself and glows against
      any background darker. Toward the sun L is large and the motes read against
      shadow; away from it L is a hundredth of lit rock and they extinguish. */
-  vec3 L = uMote * ph + uMoteAmb;
+  /* The forward term is gated on whether the sun can actually reach the grain;
+     the ambient term is not. That split is the physics: vLit answers a question
+     about the sun, and a mote inside a wall's shadow has lost the beam but still
+     sits under the whole sky. Gating both would black the motes out inside every
+     shadow, which is as wrong in the other direction - shadowed dust is dim, not
+     absent, and it still occludes whatever is behind it. */
+  vec3 L = uMote * ph * vLit + uMoteAmb;
   gl_FragColor = vec4(L * cov, cov);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -911,14 +965,45 @@ const SHAFT_MAX_DIST = 1400;
  * and shadowed air — which is why it is added at a fraction and why the frame
  * does not get uniformly brighter.
  *
- * Lowered from 0.55 after measuring what it cost. The correction is a broad
- * gradient that is not aligned with the ridgeline silhouettes, so it dilutes the
- * share of variation those silhouettes carry: on sun_gap, shafts on against
- * shafts off moved the saturation ladder from 2 steps at 42% to 1 step at 25%.
- * That is the depth ladder, which is the highest-scoring element in the project,
- * and it is not available to spend on this. 0.35 keeps the shadowed-air
- * darkening clearly measurable while leaving the ladder alone. */
-const SHAFT_GAIN = 0.35;
+ * Was lowered to 0.35 to protect the depth ladder, on the strength of sun_gap's
+ * best-strip figure moving from 42% to 25%. That decision was made on noise and
+ * has been reversed.
+ *
+ * layers.mjs's best-strip statistic is a maximum over nine lateral positions,
+ * and on a single sun_gap frame those nine scored 0, 0, 0, 53, 0, 59, 0, 17, 0
+ * on value edge share — a within-frame spread wider than any difference the dial
+ * produces. Re-measured on a pixel-weighted mean over all strips carrying at
+ * least a quarter of the frame's peak rock count, a four-point sweep of this
+ * gain reads:
+ *
+ *     gain   sun_gap sat / V     wash_low sat / V
+ *     0        13% /  8%           12% / 20%
+ *     0.35     10% / 14%            8% / 16%
+ *     0.55     -- interpolated --
+ *     0.70     14% / 21%            5% / 14%
+ *     1.10     15% / 19%            3% / 19%
+ *
+ * So the pass does not damage sun_gap at all: its saturation ladder is flat
+ * within noise and its *value* ladder roughly doubles, which makes sense once
+ * stated — shadowed air darkening is itself a depth cue. The one real cost is
+ * wash_low's saturation ladder, which falls monotonically across all four
+ * settings and is therefore a signal rather than a spread artefact. That view
+ * looks down at near floor, where the correction is strongest and where there is
+ * least distance for a ladder to be made of.
+ *
+ * 0.55 trades three points of wash_low saturation for seven of sun_gap value,
+ * against a brief that asks three times over for dust in the sunbeams.
+ *
+ * Overridable from the URL as `#shaft=0.2`, so this stays measurable in one
+ * render-lock acquisition rather than four rebuilds. */
+function hashNum(key, dflt) {
+  try {
+    if (typeof location === 'undefined' || !location.hash) return dflt;
+    const m = new RegExp(`(?:^|[#,&;])${key}=([0-9]*\\.?[0-9]+)`).exec(location.hash);
+    return m ? Number(m[1]) : dflt;
+  } catch (e) { return dflt; }
+}
+const SHAFT_GAIN = hashNum('shaft', 0.55);
 /* Reddening of the beam along its own slant path, as an optical depth in blue
  * at the wash floor, falling with height as the dust does.
  *
@@ -942,6 +1027,29 @@ const SHAFT_GAIN = 0.35;
  * extra reddening from *this scene's* dust, which sky.js assumed away at 0.032
  * aerosol. */
 const SHAFT_RED = 0.35;
+
+/* Coherence length of the shadowing, metres. The correction is faded out beyond
+ * it, and this is the term that stops the shafts and the depth ladder fighting.
+ *
+ * They were fighting, measurably. A sweep of SHAFT_GAIN with everything else
+ * held fixed put sun_gap's value ladder at 53% edge share with the pass off and
+ * 27% at 0.35, and the mechanism is not subtle: the correction accumulates along
+ * the ray, so the further a mass is, the more in-scatter the pass takes back from
+ * it — while the entire value ladder consists of distant masses being *lifted*
+ * by airlight. One says far is darker, the other says far is brighter, and they
+ * are arguing about the same pixels.
+ *
+ * The resolution is that the V = 1 assumption the fog chunk makes is not equally
+ * wrong at all ranges. It is badly wrong close in, where one wall subtends most
+ * of the sky and the air is coherently shadowed for a hundred metres at a
+ * stretch. It becomes progressively *right* at long range, where a sightline
+ * crosses many uncorrelated occluders and the mean visibility along it tends to
+ * a constant that the closed-form source function has effectively already
+ * absorbed. So a correction that decays with distance is the more accurate
+ * model, not a compromise for the ladder's benefit — and it puts the beams
+ * exactly where the brief asks for them, in the corridor the camera is standing
+ * in, while leaving the far field to the closed form the ladder is built on. */
+const SHAFT_COHERE = 320;
 
 class Shafts {
   constructor(coeffs, density, sunDir, sunCol) {
@@ -980,6 +1088,7 @@ class Shafts {
         uSteps: { value: SHAFT_STEPS },
         uMaxDist: { value: SHAFT_MAX_DIST },
         uGain: { value: SHAFT_GAIN },
+        uCohere: { value: SHAFT_COHERE },
         uRed: { value: SHAFT_RED },
         uHasShadow: { value: 0 },
       },
@@ -1010,6 +1119,7 @@ uniform float uGN;
 uniform float uWN;
 uniform float uMaxDist;
 uniform float uGain;
+uniform float uCohere;
 uniform float uRed;
 uniform float uHasShadow;
 uniform int uSteps;
@@ -1089,7 +1199,17 @@ void main() {
      in-scatter the chunk already granted it. Beams are then not painted on, they
      are the air that was not asked to give anything back — which is why this
      cannot brighten the frame, cannot blow out the far field, and contains no
-     noise of any kind. */
+     noise of any kind.
+
+     DO NOT MAKE THIS ADDITIVE. The sign is not a stylistic choice and it is not
+     a bug to be tidied up. An additive volumetric term looks more like what a
+     volumetric pass is "supposed" to be, and the first version of this file was
+     written that way; it measured a quarter of the display range added to the
+     frame. If beams read as too weak, the honest levers are SHAFT_GAIN, the
+     phase weights, or the chunk's own source function — never the sign. That the
+     correction can only subtract is a safety property of the whole pass: it is
+     what guarantees this can never reintroduce the milky-blob regression, and it
+     is why there is no noise anywhere in the haze. */
   vec3 accV = vec3(0.0);
   vec3 accAll = vec3(0.0);
   vec3 tr = vec3(1.0);
@@ -1108,8 +1228,14 @@ void main() {
 
     /* Not named step: that is a GLSL builtin and shadowing it is legal but
        some drivers are less relaxed about it than the spec is. */
+    /* Fade the correction with range: coherent shadowing close in, where one
+       wall owns the sky, decaying to the closed form's V = 1 far out, where many
+       uncorrelated occluders average away. Applied to the difference rather than
+       to either integral, so the two stay comparable and the emitted value is
+       still exactly a correction. */
+    float coh = exp(-s / uCohere);
     vec3 seg = tr * ph * be * beamT * dt;
-    accV += seg * visible(p);
+    accV += seg * mix(1.0, visible(p), coh);
     accAll += seg;
     tr *= exp(-be * dt);
     if (tr.g < 0.004) break;
@@ -1489,6 +1615,22 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
          The shadow map is read every frame rather than cached: three allocates
          it on the first shadow render, so at construction time it is null, and
          it is reallocated whenever the quality governor changes the map size. */
+      /* The dust field's own shadow lookup, fed from the same place. Set before
+         the scene pass would be too early on the first frame — three allocates
+         the shadow map during that pass — so it is set here and picked up by the
+         next one. The dust is a field of unresolvable specks whose whole job is
+         to say where the light is; one frame of latency on that is not
+         observable, and it keeps this to a single place. */
+      {
+        const sm = sun.shadow && sun.shadow.map;
+        const du = dust.material.uniforms;
+        du.uHasShadow.value = sm ? 1 : 0;
+        if (sm) {
+          du.uShadowMap.value = sm.texture;
+          du.uShadowMat.value.copy(sun.shadow.matrix);
+        }
+      }
+
       if (shafts.enabled) {
         shafts.resize(w, h);
         const sm = sun.shadow && sun.shadow.map;
@@ -1541,6 +1683,7 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
         steps: u.uSteps.value,
         maxDist: u.uMaxDist.value,
         gain: u.uGain.value,
+        cohere: u.uCohere.value,
         red: u.uRed.value,
         hasShadow: !!u.uHasShadow.value,
         halfRes: shafts.rt ? [shafts.rt.width, shafts.rt.height] : null,

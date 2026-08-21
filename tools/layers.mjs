@@ -211,16 +211,54 @@ for (const file of argv) {
       `     ${String(r.s.steps).padStart(2)}   ${String((r.s.edge * 100).toFixed(0)).padStart(3)}   ${r.s.mono.toFixed(2)}  |` +
       `   ${String(r.v.steps).padStart(2)}   ${String((r.v.edge * 100).toFixed(0)).padStart(3)}   ${r.v.mono.toFixed(2)}`);
   }
-  /* The frame's score is the best strip on saturation edge share, and which
-     strip that was is part of the answer. */
-  const usable = strips.filter((r) => r.n > 400);
+  /* ---- what to quote, and what not to -------------------------------------
+   *
+   * The best-strip figure has been this project's headline number for several
+   * rounds, including in figures I quoted myself, and it is the least stable
+   * statistic here. It is a maximum over nine lateral positions, so it reports
+   * the luckiest strip rather than the frame, and the luck is considerable: on
+   * one sun_gap frame the nine strips scored 0, 0, 0, 53, 0, 59, 0, 17, 0 on
+   * value edge share. Worse, the winning strip held 16,945 rock pixels against
+   * 107,131 in the widest, because a narrow strip that clips a single clean
+   * silhouette scores brilliantly on a tiny sample. The `n > 400` gate below let
+   * strips through with about fifteen pixels per band.
+   *
+   * The consequence is that differences of ten or twenty points between two
+   * builds — the size of difference that has been used to accept and reject work
+   * — are inside this statistic's own spread. So the spread is now printed, a
+   * pixel-weighted mean is printed beside it, and the gate is relative to the
+   * best-populated strip rather than absolute.
+   *
+   * Quote `weighted`. It uses every rock pixel in the frame, cannot be won by a
+   * lucky sliver, and moves for reasons that are about the picture. `best` is
+   * kept because earlier rounds are recorded in its units and removing it would
+   * silently orphan them, but it should not be used to make a decision. */
+  const maxN = strips.reduce((m, r) => Math.max(m, r.n), 0);
+  const usable = strips.filter((r) => r.n > 400 && r.n >= 0.25 * maxN);
+  const loose = strips.filter((r) => r.n > 400);
   const best = usable.slice().sort((a, b) => b.s.edge - a.s.edge)[0];
   const med = (xs) => { const v = xs.slice().sort((a, b) => a - b); return v[v.length >> 1] ?? 0; };
+  const wmean = (f) => {
+    const tot = usable.reduce((s, r) => s + r.n, 0);
+    return tot ? usable.reduce((s, r) => s + r.n * f(r), 0) / tot : 0;
+  };
+  const pc = (x) => `${(x * 100).toFixed(0)}%`;
   if (best) {
     console.log(`  best strip cx=${best.cx.toFixed(2)}   sat steps=${best.s.steps} edge=${(best.s.edge * 100).toFixed(0)}% mono=${best.s.mono.toFixed(2)}` +
       `   V steps=${best.v.steps} edge=${(best.v.edge * 100).toFixed(0)}% mono=${best.v.mono.toFixed(2)}`);
-    console.log(`  median of ${usable.length} usable strips   sat edge=${(med(usable.map((r) => r.s.edge)) * 100).toFixed(0)}%  mono=${med(usable.map((r) => r.s.mono)).toFixed(2)}` +
-      `   V edge=${(med(usable.map((r) => r.v.edge)) * 100).toFixed(0)}%  mono=${med(usable.map((r) => r.v.mono)).toFixed(2)}`);
+    console.log(`  median of ${loose.length} usable strips   sat edge=${(med(loose.map((r) => r.s.edge)) * 100).toFixed(0)}%  mono=${med(loose.map((r) => r.s.mono)).toFixed(2)}` +
+      `   V edge=${(med(loose.map((r) => r.v.edge)) * 100).toFixed(0)}%  mono=${med(loose.map((r) => r.v.mono)).toFixed(2)}`);
+    /* The spread, so a reader can see whether a difference clears it. */
+    const sp = (f) => {
+      const v = usable.map(f);
+      return `${pc(Math.min(...v))}..${pc(Math.max(...v))}`;
+    };
+    console.log(`  weighted over ${usable.length} strips >=25% of peak rock  ` +
+      `sat edge=${pc(wmean((r) => r.s.edge))} mono=${wmean((r) => r.s.mono).toFixed(2)}` +
+      `   V edge=${pc(wmean((r) => r.v.edge))} mono=${wmean((r) => r.v.mono).toFixed(2)}`);
+    console.log(`  within-frame spread across those strips  ` +
+      `sat edge ${sp((r) => r.s.edge)}   V edge ${sp((r) => r.v.edge)}` +
+      `   <- a build-to-build difference smaller than this is not a result`);
   } else {
     console.log('  no strip carried enough rock to measure');
   }
