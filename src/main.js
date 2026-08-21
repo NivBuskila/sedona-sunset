@@ -427,6 +427,8 @@ function probe() {
 /* ── loop ──────────────────────────────────────────────────────────────── */
 
 let paused = true, running = false, last = 0, fpsSmoothed = 0;
+/* Cleared the first time audio.update throws; see the frame loop. */
+let audioLive = true;
 
 function renderOnce() {
   syncCamera();
@@ -456,7 +458,28 @@ function frame(t) {
   if (!perf.beginFrame(dt)) return;
   const t0 = performance.now();
   step(dt);
-  audio.update(dt, player);
+  /* The comment beside createAudio says the sound must never be able to stop
+     the scene, and until now nothing enforced it. src/audio.js has been writing
+     a non-finite value into `eg1.gain` from _scheduleWind — `this.prox` goes
+     NaN, which is `path.uOf(player.x, player.z)` — and a throw here takes
+     atmo.update, post.update and renderOnce with it for the rest of the
+     session: the loop keeps being scheduled and keeps dying at the same line,
+     so the page stops rendering entirely while still looking alive. That is a
+     measurement hazard for every system, not just for System 6, because the
+     harness's captures come from renderOnce called directly and therefore keep
+     working, so the only symptom is that the 4-second settle and the 400 ms
+     wait stopped settling anything.
+     Reported once and then switched off, rather than swallowed: a silent catch
+     in a frame loop is how a bug lives for a month, and once per page is enough
+     for it to appear in the harness's error manifest. */
+  if (audioLive) {
+    try {
+      audio.update(dt, player);
+    } catch (e) {
+      audioLive = false;
+      console.error('audio.update threw; audio is now inert for this page', e);
+    }
+  }
   const moving = Math.hypot(player.vx, player.vz) > 0;
   atmo.update(dt, moving);
   /* Same freeze rule as the atmosphere, for the same reason: the grain phase
