@@ -1144,7 +1144,16 @@ export function buildTalus(path, terrain, material) {
     /* Rockfall is episodic and arrives down the chutes, so an apron is a run of
        heaps with swept ground between them rather than an even sprinkle. */
     const chute = smoothstep(0.40, 0.78, 0.5 + 0.5 * fbm(s * 0.075, side * 3.1, 3, 421));
-    if (rand() > chute * (0.35 + 0.75 * t)) continue;
+    /* Density used to run 0.35 at the cliff foot to 1.10 at the apron toe, which
+       is the wrong way round and is most of why the whole-scene critique found
+       "no talus at any cliff foot in any view" in a scene that has been building
+       talus all along. The size grading along the apron is right — a block that
+       bounced clear is the big one — but the *cover* is not: an apron is thickest
+       where the rock lands and thins outward into the wash, so the head is where
+       it should be continuous. Nearly flat now, leaning slightly outward, which
+       roughly doubles the blocks in the first few metres off the wall without
+       touching the grading that makes the runout read. */
+    if (rand() > chute * (0.78 + 0.28 * t)) continue;
 
     const x = p.x + nx * av, z = p.z + nz * av;
     /* Half-extent in metres. The exponent is what makes the grading: a cube root
@@ -1155,7 +1164,15 @@ export function buildTalus(path, terrain, material) {
        an apron read as sculpture placed there — a fourth power and a shorter
        toe-coarsening keep the biggest blocks at about two metres, which is the
        size that makes the junction an event without competing with the cliff. */
-    const r = (0.095 + 0.40 * Math.pow(rand(), 4.0)) * (1 + t * 1.2);
+    /* The fine floor goes from 0.095 to 0.125 of a metre of half-extent. Not a
+       taste change: the walls are framed from 40 to 90 m, where a 19 cm block
+       buried to half its height presents under two pixels and cannot read as
+       anything at all, so the fine end of the grading was being spent on cover
+       the frame could not resolve. The coarse tail is untouched — the fourth
+       power and the toe coarsening still cap the biggest blocks near two metres,
+       which is the size that makes the junction an event without competing with
+       the cliff above it. */
+    const r = (0.125 + 0.40 * Math.pow(rand(), 4.0)) * (1 + t * 1.2);
     /* Buried deeper. A talus block sitting on the ground with a clean tangent
        line between the two reads as composited into the frame; a real one has
        fines washed in around it and is half swallowed. This is the cheapest half
