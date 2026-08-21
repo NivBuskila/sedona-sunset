@@ -389,14 +389,22 @@ const rgb = (c) => `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})`;
  * not hiding anything: an additive ambient pedestal does crush saturation, but
  * there was barely any chroma there to crush. Numbers below are sRGB bytes;
  * hue/sat/val of each are checked in the report.
+ *
+ * One more correction on top of that. Hue and chroma were right at the first
+ * attempt but the *value* was carried over from the old palette, and under the
+ * corrected key the crown came out acid lime — the same chartreuse that had
+ * already been flagged on the distant cards. "Low value" in the measurements is
+ * load-bearing: juniper foliage is a dark olive with about 0.12 linear
+ * reflectance, so the sRGB value belongs near 0.35, not 0.47. Hue and
+ * saturation below are unchanged; every value is down by about a third.
  */
 const FOL = {
-  base: [112, 120, 48],     // 66.7° / 0.600 / 0.471
-  pale: [156, 161, 84],     // 63.9° / 0.478 / 0.631  — sun-bleached crest
-  dark: [70, 77, 29],       // 68.7° / 0.623 / 0.302  — shaded interior
-  bronze: [125, 93, 47],    // 35.4° / 0.624 — last year's bronzed growth
-  dead: [140, 120, 63],     // 44.4° / 0.550 — dead scale still attached
-  berry: [105, 124, 145],
+  base: [84, 89, 36],       // 66.4° / 0.596 / 0.349
+  pale: [116, 120, 60],     // 64.0° / 0.500 / 0.471  — sun-bleached crest
+  dark: [49, 54, 20],       // 67.6° / 0.630 / 0.212  — shaded interior
+  bronze: [92, 68, 35],     // 34.7° / 0.620 — last year's bronzed growth
+  dead: [107, 91, 48],      // 43.7° / 0.551 — dead scale still attached
+  berry: [82, 97, 114],
 };
 
 function shootChain(ctx, x, y, ang, len, wid, rand, cols) {
@@ -459,16 +467,19 @@ export function makeFoliage(size = 512) {
       const ox = cx * cell, oy = cy * cell;
       ctx.save();
       ctx.beginPath();
-      ctx.rect(ox + 2, oy + 2, cell - 4, cell - 4);
+      /* Matches the 0.018 UV inset the cards address these cells with, so the
+         drawn spray never reaches the margin the mip chain will smear across
+         the boundary. */
+      ctx.rect(ox + 9, oy + 9, cell - 18, cell - 18);
       ctx.clip();
 
       /* Dead and bronzed material sits *behind* the green, which is how a real
          spray looks: the interior of the clump is last year's dead scale still
          attached, with the live growth only on the outside. */
-      const deadCols = [rgb(FOL.dead), rgb(FOL.bronze), rgb([102, 84, 44])];
+      const deadCols = [rgb(FOL.dead), rgb(FOL.bronze), rgb([78, 64, 34])];
       const liveCols = [
         rgb(FOL.base), rgb(FOL.pale), rgb(FOL.dark),
-        rgb([96, 106, 42]), rgb([128, 134, 58]), rgb(FOL.bronze),
+        rgb([70, 77, 31]), rgb([95, 99, 43]), rgb(FOL.bronze),
       ];
 
       const bx = ox + cell * 0.5, by = oy + cell * 0.94;
@@ -544,7 +555,7 @@ export function makeGrass(size = 512) {
   for (let cx = 0; cx < 4; cx++) {
     const ox = cx * cell, k = kinds[cx];
     ctx.save();
-    ctx.beginPath(); ctx.rect(ox + 1, 1, cell - 2, h - 2); ctx.clip();
+    ctx.beginPath(); ctx.rect(ox + 5, 4, cell - 10, h - 8); ctx.clip();
     const n = k.n + (rand() * 8 | 0);
     for (let i = 0; i < n; i++) {
       const bx = ox + cell * (0.5 + (rand() - 0.5) * 0.20);
@@ -659,7 +670,7 @@ export function makeScrub(size = 256) {
   for (let cx = 0; cx < 2; cx++) {
     const ox = cx * cell;
     ctx.save();
-    ctx.beginPath(); ctx.rect(ox + 1, 1, cell - 2, size - 2); ctx.clip();
+    ctx.beginPath(); ctx.rect(ox + 5, 4, cell - 10, size - 8); ctx.clip();
     const stems = 7 + (rand() * 4 | 0);
     for (let s = 0; s < stems; s++) {
       const bx = ox + cell * 0.5, by = size * 0.98;

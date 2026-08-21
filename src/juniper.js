@@ -154,7 +154,8 @@ function makeProfile(seed, nLobes, nDead) {
 /* ── one limb ──────────────────────────────────────────────────────────────
  * A swept fluted tube along a polyline, with a parallel-transported frame so it
  * does not corkscrew where the spine bends. */
-function limbGeometry(pts, radii, seg, prof, twistRate, s0, flute, deadBase = 0, shred = 0) {
+function limbGeometry(pts, radii, seg, prof, twistRate, s0, flute, deadBase = 0, shred = 0,
+                      stripScale = 1) {
   const n = pts.length;
   const tan = new Array(n);
   for (let i = 0; i < n; i++) {
@@ -213,7 +214,7 @@ function limbGeometry(pts, radii, seg, prof, twistRate, s0, flute, deadBase = 0,
       pos[k * 3 + 2] = pts[i].z + nor[i].z * c * r + bin[i].z * sn * r;
       uv[k * 2] = j / seg * uRep;
       uv[k * 2 + 1] = (s0 + si) / BARK_TILE;
-      dead[k] = Math.max(deadBase, o.dead);
+      dead[k] = Math.max(deadBase, o.dead * stripScale);
       /* Cavity occlusion in the flutes, baked. Without it the trunk is invisible
          whenever it is not in direct sun: the fill in this scene is a broad sky
          dome, a smooth lobed cylinder under a dome shades almost uniformly, and
@@ -278,6 +279,15 @@ const FLUTE_BY_DEPTH = [0.48, 0.36, 0.24, 0.13, 0.07];
    collar and the stems carry it; on a two-centimetre twig a lifted string would
    be larger than the twig. */
 const SHRED_BY_DEPTH = [0.016, 0.011, 0, 0, 0];
+/* How much of the lobe profile's dead-strip mask a limb is allowed to carry.
+   A bleached strip is a *stem* feature: bark is lost from a ridge of the bole
+   and the wood beneath weathers. On a two-centimetre twig it is meaningless,
+   and letting it through was expensive — children inherit their parent's lobe
+   profile, so one dead lobe in five put a bright silver stripe down 20% of the
+   circumference of every twig in the subtree, and the crown rendered as a
+   sparkler of white needles. Individual dead branches are unaffected: their
+   deadness arrives as `deadBase`, not through the strip. */
+const STRIP_BY_DEPTH = [1.0, 0.85, 0.30, 0, 0];
 
 export function buildTree(seed) {
   const rand = rng(seed);
@@ -337,14 +347,17 @@ export function buildTree(seed) {
       const fl = floorAt(nx, nz);
       if (ny < fl) { d.y = Math.max(d.y, 0.02); d.normalize(); }
       pts.push(new THREE.Vector3(nx, Math.max(ny, fl), nz));
-      /* Dead limbs taper to a point — a snapped snag, not a rounded stub. */
-      const taper = deadness > 0.5 ? Math.pow(1 - t, 0.55) : 1;
+      /* Dead limbs taper, but to a broken stub rather than to a hair. At 0.55
+         the exponent took a snag to a needle a few millimetres across, and a
+         needle catching direct sun along its whole length is a bright wire, not
+         a branch. The floor keeps a snapped end with some width to it. */
+      const taper = deadness > 0.5 ? Math.max(0.30, Math.pow(1 - t, 0.34)) : 1;
       radii.push(mix(r0, r1, Math.pow(t, 0.78)) * mix(1, taper, deadness));
     }
 
     const seg = SEG_BY_DEPTH[depth];
     geoms.push(limbGeometry(pts, radii, seg, prof, twistRate, s0, FLUTE_BY_DEPTH[depth],
-      deadness > 0.5 ? 1 : 0, SHRED_BY_DEPTH[depth]));
+      deadness > 0.5 ? 1 : 0, SHRED_BY_DEPTH[depth], STRIP_BY_DEPTH[depth]));
 
     if (depth >= 4) {
       if (deadness < 0.5) {
@@ -650,7 +663,7 @@ function foliageGeometry(clumps, seed) {
     pa.normalize();
     pb.crossVectors(ax, pa).normalize();
 
-    const L = cl.size * (cl.interior ? 1.5 : 2.5);
+    const L = cl.size * (cl.interior ? 1.6 : 3.0);
     const nCards = Math.round(3 + cl.size * 11 + rand() * 2);
     /* The spray's own centre, for the shading normal: a point inside the fan
        rather than at its foot, so the sphere normal still curves the right way. */
@@ -660,9 +673,9 @@ function foliageGeometry(clumps, seed) {
       /* Biased toward the base, where a real fan carries most of its mass. */
       const t = Math.pow((k + rand()) / nCards, 0.72);
       /* Cone radius: widest at a third, closing to nothing at the point. */
-      const rad = cl.size * 0.80 * Math.sin(Math.PI * Math.pow(t, 0.62)) * (0.55 + 0.45 * rand());
+      const rad = cl.size * 0.68 * Math.sin(Math.PI * Math.pow(t, 0.62)) * (0.55 + 0.45 * rand());
       const roll = rand() * TAU;
-      const s = cl.size * (0.92 - 0.52 * t) * (0.78 + rand() * 0.44);
+      const s = cl.size * (0.80 - 0.50 * t) * (0.78 + rand() * 0.44);
       c.copy(cl.p)
         .addScaledVector(ax, L * t)
         .addScaledVector(pa, Math.cos(roll) * rad)
@@ -683,8 +696,14 @@ function foliageGeometry(clumps, seed) {
       const cell = (rand() * 4) | 0;
       const cu = (cell & 1) * 0.5, cv = (cell >> 1) * 0.5;
       const flip = rand() < 0.5;
-      const u0 = cu + 0.004, u1 = cu + 0.496;
-      const v0 = cv + 0.004, v1 = cv + 0.496;
+      /* Inset raised from 0.004. Two texels of margin at 512 is 0.004 in UV,
+         which is a fifth of a texel by mip 5 — so bilinear sampling straddles
+         the cell boundary and drags in the neighbour's dilated fill colour.
+         Against the sky that appears as faint pale rows at the two boundary
+         heights, which is what a reviewer saw. 0.018 stays outside half a texel
+         down to a 32-pixel mip. */
+      const u0 = cu + 0.018, u1 = cu + 0.482;
+      const v0 = cv + 0.018, v1 = cv + 0.482;
 
       for (let q = 0; q < 4; q++) {
         const sx = (q === 0 || q === 3) ? -1 : 1;
@@ -768,7 +787,12 @@ export function makeBarkMaterial(bark) {
    */
   const u = {
     uLiveCol: { value: new THREE.Color(0.92, 0.82, 0.74) },
-    uDeadCol: { value: new THREE.Color(0.760, 0.735, 0.680) },
+    /* 0.42 linear, not the 0.76 the ratio argument first suggested. Three to
+       four times the bark's value is the right target, but the bark had already
+       been darkened to widen its own contrast, and 0.76 against a sunlit key is
+       white paint: the snags rendered as blown-out wires. This sits about 2.8x
+       the live bark's mean and holds its highlight. */
+    uDeadCol: { value: new THREE.Color(0.445, 0.418, 0.374) },
   };
   mat.userData.uniforms = u;
   mat.onBeforeCompile = (sh) => {
@@ -849,9 +873,14 @@ export function makeFoliageMaterial(map) {
   });
   const u = {
     uSunDir: { value: SUN_DIR.clone() },
-    uTrans: { value: new THREE.Color(1.55, 1.22, 0.52) },
-    uTransAmt: { value: 1.55 },
-    uDirCap: { value: 0.62 },
+    /* Both cut hard — transmission from 1.55 and the knee from 0.62 — because
+       System 4's key is several times brighter than the one these were tuned
+       against. A forward-scatter term sized for an underexposed frame is a
+       yellow pedestal on a correctly exposed one, and it was a good part of why
+       the crown went lime. */
+    uTrans: { value: new THREE.Color(1.35, 1.12, 0.58) },
+    uTransAmt: { value: 0.80 },
+    uDirCap: { value: 0.50 },
   };
   mat.userData.uniforms = u;
   mat.onBeforeCompile = (sh) => {
@@ -971,8 +1000,10 @@ export function cardTuft(cx, cy, cz, w, h, nCards, rand, arr, cols = 2, rows = 1
     const ax = Math.cos(az) * w * 0.5, az2 = Math.sin(az) * w * 0.5;
     const hh = h * (0.7 + rand() * 0.6);
     const ci = (rand() * cols) | 0, ri = (rand() * rows) | 0;
-    const u0 = ci / cols + 0.004, u1 = (ci + 1) / cols - 0.004;
-    const v0 = ri / rows + 0.004, v1 = (ri + 1) / rows - 0.004;
+    /* Same boundary-bleed margin as the foliage atlas, scaled to the cell. */
+    const iu = 0.04 / cols, iv = 0.04 / rows;
+    const u0 = ci / cols + iu, u1 = (ci + 1) / cols - iu;
+    const v0 = ri / rows + iv, v1 = (ri + 1) / rows - iv;
     const ox = (rand() - 0.5) * w * 0.35, oz = (rand() - 0.5) * w * 0.35;
     for (let q = 0; q < 4; q++) {
       const sx = (q === 0 || q === 3) ? -1 : 1;
