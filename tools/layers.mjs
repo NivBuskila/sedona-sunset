@@ -38,13 +38,15 @@ import { readFileSync } from 'node:fs';
 import { decode } from './png.mjs';
 
 const argv = process.argv.slice(2);
-let strip = [0.44, 0.12];       // centre x, width, as fractions
+let strip = null;               // centre x, width, as fractions
 let boxes = null;
 let bands = 26;
+let sweep = 9;                  // how many lateral strips when none is named
 
 for (let i = 0; i < argv.length; i++) {
   if (argv[i] === '--strip') { strip = [Number(argv[i + 1]), Number(argv[i + 2])]; argv.splice(i, 3); i--; }
   else if (argv[i] === '--bands') { bands = Number(argv[i + 1]); argv.splice(i, 2); i--; }
+  else if (argv[i] === '--sweep') { sweep = Number(argv[i + 1]); argv.splice(i, 2); i--; }
   else if (argv[i] === '--boxes') {
     boxes = [];
     let j = i + 1;
@@ -118,28 +120,70 @@ for (const file of argv) {
     continue;
   }
 
-  const cx = strip[0], hw = strip[1] / 2;
-  const x0 = Math.max(0, Math.round(img.w * (cx - hw)));
-  const x1 = Math.min(img.w, Math.round(img.w * (cx + hw)));
   /* Only the upper 62% of the frame: below that the strip is looking at the
      floor a few metres away, which is not a ridgeline and not at a distance
      the haze has anything to say about. */
   const yTop = 0, yBot = Math.round(img.h * 0.62);
-  const rows = [];
-  console.log(`  strip x ${x0}..${x1}   rows ${yTop}..${yBot}   ${bands} bands`);
-  console.log('  band   y      n      sat     V      B/G');
-  const S = [], V = [];
-  for (let k = 0; k < bands; k++) {
-    const a = yTop + Math.round((yBot - yTop) * k / bands);
-    const b = yTop + Math.round((yBot - yTop) * (k + 1) / bands);
-    const st = bandStats(img, x0, x1, a, b);
-    rows.push(st);
-    S.push(st && st.n > 40 ? st.s : null);
-    V.push(st && st.n > 40 ? st.v : null);
-    console.log(`  ${String(k).padStart(4)}  ${String(a).padStart(4)} ${String(st ? st.n : 0).padStart(7)}` +
-      `  ${f(st && st.s)}  ${f(st && st.v)}  ${f(st && st.bg)}`);
+
+  /** Profile one vertical strip. */
+  function scan(cx, width) {
+    const hw = width / 2;
+    const x0 = Math.max(0, Math.round(img.w * (cx - hw)));
+    const x1 = Math.min(img.w, Math.round(img.w * (cx + hw)));
+    const rows = [], S = [], V = [];
+    for (let k = 0; k < bands; k++) {
+      const a = yTop + Math.round((yBot - yTop) * k / bands);
+      const b = yTop + Math.round((yBot - yTop) * (k + 1) / bands);
+      const st = bandStats(img, x0, x1, a, b);
+      rows.push({ a, st });
+      S.push(st && st.n > 40 ? st.s : null);
+      V.push(st && st.n > 40 ? st.v : null);
+    }
+    const n = rows.reduce((t, r) => t + (r.st ? r.st.n : 0), 0);
+    return { cx, x0, x1, rows, n, s: staircase(S), v: staircase(V) };
   }
-  const ss = staircase(S), vv = staircase(V);
-  console.log(`  saturation  steps=${ss.steps}  edge=${(ss.edge * 100).toFixed(0)}%  mono=${ss.mono.toFixed(2)}`);
-  console.log(`  value       steps=${vv.steps}  edge=${(vv.edge * 100).toFixed(0)}%  mono=${vv.mono.toFixed(2)}`);
+
+  if (strip) {
+    const r = scan(strip[0], strip[1]);
+    console.log(`  strip x ${r.x0}..${r.x1} (cx ${strip[0]})   rows ${yTop}..${yBot}   ${bands} bands`);
+    console.log('  band   y      n      sat     V      B/G');
+    for (let k = 0; k < r.rows.length; k++) {
+      const { a, st } = r.rows[k];
+      console.log(`  ${String(k).padStart(4)}  ${String(a).padStart(4)} ${String(st ? st.n : 0).padStart(7)}` +
+        `  ${f(st && st.s)}  ${f(st && st.v)}  ${f(st && st.bg)}`);
+    }
+    console.log(`  saturation  steps=${r.s.steps}  edge=${(r.s.edge * 100).toFixed(0)}%  mono=${r.s.mono.toFixed(2)}`);
+    console.log(`  value       steps=${r.v.steps}  edge=${(r.v.edge * 100).toFixed(0)}%  mono=${r.v.mono.toFixed(2)}`);
+    continue;
+  }
+
+  /* No strip named, so sweep laterally. A single fixed centre column is a
+     property of the composition, not of the haze: it scored `wash_low` at zero
+     steps purely because the ridges in that frame are off to the sides, which
+     is the same number a flat veil would earn and is the opposite conclusion.
+     Reporting every strip and naming the one quoted keeps the metric honest. */
+  const strips = [];
+  for (let i = 0; i < sweep; i++) {
+    strips.push(scan(0.10 + (0.80 * i) / (sweep - 1), 0.12));
+  }
+  console.log(`  lateral sweep, ${sweep} strips of 12% width, rows ${yTop}..${yBot}, ${bands} bands`);
+  console.log('    cx     rock px |  sat: steps edge% mono  |  V: steps edge% mono');
+  for (const r of strips) {
+    console.log(`  ${r.cx.toFixed(2)}  ${String(r.n).padStart(9)} |` +
+      `     ${String(r.s.steps).padStart(2)}   ${String((r.s.edge * 100).toFixed(0)).padStart(3)}   ${r.s.mono.toFixed(2)}  |` +
+      `   ${String(r.v.steps).padStart(2)}   ${String((r.v.edge * 100).toFixed(0)).padStart(3)}   ${r.v.mono.toFixed(2)}`);
+  }
+  /* The frame's score is the best strip on saturation edge share, and which
+     strip that was is part of the answer. */
+  const usable = strips.filter((r) => r.n > 400);
+  const best = usable.slice().sort((a, b) => b.s.edge - a.s.edge)[0];
+  const med = (xs) => { const v = xs.slice().sort((a, b) => a - b); return v[v.length >> 1] ?? 0; };
+  if (best) {
+    console.log(`  best strip cx=${best.cx.toFixed(2)}   sat steps=${best.s.steps} edge=${(best.s.edge * 100).toFixed(0)}% mono=${best.s.mono.toFixed(2)}` +
+      `   V steps=${best.v.steps} edge=${(best.v.edge * 100).toFixed(0)}% mono=${best.v.mono.toFixed(2)}`);
+    console.log(`  median of ${usable.length} usable strips   sat edge=${(med(usable.map((r) => r.s.edge)) * 100).toFixed(0)}%  mono=${med(usable.map((r) => r.s.mono)).toFixed(2)}` +
+      `   V edge=${(med(usable.map((r) => r.v.edge)) * 100).toFixed(0)}%  mono=${med(usable.map((r) => r.v.mono)).toFixed(2)}`);
+  } else {
+    console.log('  no strip carried enough rock to measure');
+  }
 }
