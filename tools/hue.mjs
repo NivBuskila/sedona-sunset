@@ -34,10 +34,15 @@
  * the crop that survives it is reported so the reader can see whether the figure
  * describes the region or a corner of it.
  *
- * --lit restricts to the brightest 30 percent of surviving pixels. The reference
- * band is measured on *sunlit* rock in photographs, and a crop of a cliff at this
- * sun angle is half self-shadowed, so the two populations have to be separated
- * before the comparison means anything. Report both.
+ * **--lit restricts to the brightest 40 percent, and every rock colour target in
+ * CONTRACT.md is stated on lit rock, so --lit is the mode that compares with
+ * them.** A crop of a cliff at this sun angle is half self-shadowed, and under a
+ * directional key those two halves are different materials to a hue statistic:
+ * the same `wall_lit` window reads +19.4 lit and +13.7 whole. A whole-window
+ * figure quoted against a lit-rock target reads as a regression that is not
+ * there, which has already cost this project a round. The fraction matches
+ * tools/sat.mjs so the two tools always describe one population. Quote the mode
+ * with the number, and report both populations when the question is contrast.
  */
 import { readFileSync } from 'node:fs';
 import { decode } from './png.mjs';
@@ -64,7 +69,12 @@ for (let i = 0; i < argv.length;) {
 }
 
 const V_FLOOR = 0.06;
-const LIT_FRACTION = 0.30;
+/* 0.40, matching tools/sat.mjs exactly. It was 0.30 here and 0.40 there, which
+   is how the same frame came to be reported at two different hues in one
+   session — +13.7 from this tool and +19.4 from that one, both correct for their
+   own population and neither comparable with the other or with a target. One
+   convention or the population mode is worse than no population mode. */
+const LIT_FRACTION = 0.40;
 
 function measure(img, [fx, fy, fw, fh]) {
   const x0 = Math.round(img.w * fx), y0 = Math.round(img.h * fy);
