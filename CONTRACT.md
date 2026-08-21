@@ -229,15 +229,78 @@ the anisotropy ratio does not exceed ten anywhere in these framings, so the
 geometric-mean lock is never stressed and needs no ratio gate. Reverted. Check that a
 change is *active* before concluding anything from the fact that it changed nothing.
 
-## Open, unowned: a regular dot lattice on the far_270 bank
+## Open, System 1's: a regular dot lattice on the far_270 bank
 
 A perfectly periodic diamond grid of dark dots, roughly 24 cm apart in world terms,
 in a band across a sunlit bank at about 40 m. Periodic, so a sampling artefact rather
-than content. **Excluded so far:** the terrain's footprint-locked grit (ablated, no
-change); System 1's clast placement, which draws `s` and `u` from the rng with no
-grid; and the post chain, since the ungraded `--hash nopost` control shows it too.
-The spacing is close to the terrain mesh's row spacing in that zone, so per-vertex
-shading or shadow-map acne on the mesh grid is the leading remaining candidate.
+than content.
+
+**Excluded, each by a measurement rather than an argument:**
+
+- The terrain's footprint-locked grit — ablated, no change.
+- Anisotropic filtering of that grit — the gate was byte-identical, i.e. never fired
+  (see the section above), so the ratio never exceeds ten here and nobody should
+  reach for an anisotropy explanation again.
+- Clast placement — draws `s` and `u` from the rng with no grid.
+- The post chain — the ungraded `--hash nopost` control shows the lattice too.
+- **Shadow-map acne.** `footShadow` was made to `return gRake`, dropping the shadow
+  lookup and keeping every other term. Ground luminance rose 61 → 73 of 255, so the
+  ablation was live; the lattice was **unchanged**. It is not acne, so it is not
+  System 4's depth or normal bias, and it should not be routed there.
+
+**What it is.** With the shadow map gone the dots are still dark, so they are shaded
+by their own normals. Measured in the artefact region: dots rgb(105,59,39) against
+bank rgb(204,142,96) — **B/G 0.669 against 0.675**, the same material to three
+decimal places, but half the luminance and much redder (R/G 1.79 against 1.44). Losing
+the warm-white sun and keeping the red bounce is exactly what a facet turned away from
+the sun looks like. So this is *geometry*: a regular grid of facets tilted off the
+sun, which is the mesh grid showing through the vertex normals. That makes it
+System 1's, not System 4's.
+
+**The lead, measured but not closed.** Mesh spacing along the wash:
+
+| zone | dz | dx | z-Nyquist |
+|---|---|---|---|
+| floor, z −40 to −240 | 0.420 m | 0.200 m | 0.84 m |
+| **head, z −320 to −300** | **0.615 m** | 0.200 m | **1.23 m** |
+
+The floor holds 0.42 m everywhere it was authored. The one zone that does not is the
+head extension **added in the round before the lattice was first named**, and the
+lattice sits in it. Note also that the band-limit comment above `swA` states the grid
+as "0.20 m across and 0.42 m along" and reasons about how many octaves are safe from
+those numbers — that comment is now wrong for z < −274. `swA`/`swB` are gated by
+`floorZone` so they are probably not the term, but **the general lesson stands and is
+the thing to carry forward: extending the z-table silently invalidated a band-limit
+argument recorded a hundred lines away from the table.** A sampling assumption written
+as prose next to the term it protects will not be re-checked when the sampler changes.
+Anything band-limited against mesh spacing should read the spacing, not quote it.
+
+Not chased further: it is a far-field artefact at 270 m and the deadline was midday.
+
+## Noted, not investigated: the ground floor's drifting grad/L denominator
+
+Recorded so the next person inherits the timeline instead of rediscovering it.
+
+`ground` floor `grad/L` moved **0.139 → 0.164** across the `sys1t`–`sys1u` window
+while the region's `L` mean stayed flat at **0.368 → 0.369**. Gradient moving without
+mean moving means the floor's high-frequency content changed, not its exposure.
+
+**It is not System 1's.** Every change in that window is gated to `z < −274` and
+`ground` looks at the near floor; the ungraded control reads 0.165 against the graded
+0.164, which clears System 7's dither; and the grit gate in that window was the no-op
+above.
+
+**Candidates, both from outside System 1, both landing in the same window:**
+
+- System 5 corrected its shaft march, which had been removing 55% of the radiance
+  from shaded near rock.
+- System 2 committed a texture registration warp plus a fourteen-row talus apron.
+
+Either plausibly touches the floor's high-frequency content. **Deliberately not
+investigated:** 0.164 against a 0.12–0.16 band is close enough that spending renders
+on it before the deadline was the wrong trade. This is the fourth time on this project
+a correct change has measured as nothing, or as something, because another correct
+change moved the denominator underneath it — see the process notes.
 
 ## Open, for System 2: the wash head's amphitheatre is behind a rock ledge
 
