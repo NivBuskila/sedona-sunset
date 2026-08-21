@@ -213,7 +213,81 @@ function black(im) {
   return { pct0: 100 * z / n, pctNear: 100 * (z + near) / n };
 }
 
+/* ── which dither ───────────────────────────────────────────────────────── */
+
+/* A numerical experiment rather than a capture, because the question is about a
+ * noise distribution and a synthetic ramp answers it exactly. White noise is the
+ * obvious dither and it is not the best one: it is uniform in *space* only on
+ * average, so it leaves clumps where several neighbours happen to round the same
+ * way, which is where the residual 14-pixel runs come from. Interleaved gradient
+ * noise is built for this — it distributes its values evenly over every small
+ * neighbourhood, so the same amplitude covers the gradient more uniformly and it
+ * needs less of it. The ramp here is the measured one: one code value per 14 rows,
+ * which is what the sky actually does. */
+function ign(x, y) {
+  return frac(52.9829189 * frac(0.06711056 * x + 0.00583715 * y));
+}
+function frac(v) { return v - Math.floor(v); }
+function mulberry(s) {
+  return () => { s |= 0; s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+
+function dsim(perCV) {
+  const W = 200, H = 900, base = 180;
+  const rnd = mulberry(12345);
+  const kinds = [
+    ['no dither', () => 0],
+    ['white RPDF 1', () => rnd() - 0.5],
+    ['white TPDF 1', () => rnd() + rnd() - 1],
+    ['white TPDF 1.5', () => 1.5 * (rnd() + rnd() - 1)],
+    ['IGN 1', (x, y) => ign(x, y) - 0.5],
+    ['IGN 1.5', (x, y) => 1.5 * (ign(x, y) - 0.5)],
+    ['IGN 2', (x, y) => 2.0 * (ign(x, y) - 0.5)],
+  ];
+  const out = [];
+  for (const [name, d] of kinds) {
+    let worst = 0, flat = 0, dsum = 0, n = 0, sq = 0, runsAll = [];
+    for (let x = 0; x < W; x++) {
+      let run = 1, prev = null;
+      for (let y = 0; y < H; y++) {
+        const off = d(x, y);
+        sq += off * off;
+        const v = Math.round(base - y / perCV + off);
+        if (prev !== null) {
+          const df = Math.abs(v - prev); dsum += df; n++;
+          if (df === 0) { flat++; run++; } else { runsAll.push(run); run = 1; }
+        }
+        prev = v;
+      }
+      runsAll.push(run);
+    }
+    for (const r of runsAll) if (r > worst) worst = r;
+    runsAll.sort((p, q) => p - q);
+    out.push({ name, worst, med: runsAll[runsAll.length >> 1],
+      p99: runsAll[Math.floor(runsAll.length * 0.99)],
+      step: dsum / n, flat: 100 * flat / n, rms: Math.sqrt(sq / (W * H)) });
+  }
+  return out;
+}
+
 /* ── report ─────────────────────────────────────────────────────────────── */
+
+if (a.includes('--dsim')) {
+  for (const perCV of [14, 40]) {
+    console.log(`\n  synthetic sky ramp, one code value per ${perCV} rows`);
+    console.log('  ' + 'dither'.padEnd(17) + 'worst run   p99   median   step cv   flat%   noise rms');
+    for (const r of dsim(perCV)) {
+      console.log('  ' + r.name.padEnd(17) +
+        String(r.worst).padStart(9) + String(r.p99).padStart(6) +
+        String(r.med).padStart(9) + r.step.toFixed(3).padStart(10) +
+        r.flat.toFixed(0).padStart(7) + '%' + r.rms.toFixed(3).padStart(11));
+    }
+  }
+  console.log('\n  noise rms is the price in code values. The figure to compare at equal');
+  console.log('  price is worst run: white noise clumps, interleaved gradient noise does');
+  console.log('  not, so it buys shorter runs for less amplitude.\n');
+}
 
 if (a.includes('--band')) {
   console.log('\n  sky banding: run length of one code value down a column');
