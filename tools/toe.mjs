@@ -36,16 +36,43 @@ const ri = a.indexOf('--region');
 const region = ri >= 0 ? a.slice(ri + 1, ri + 5).map(Number) : null;
 const files = a.filter((s, i) => s.endsWith('.png') && (ri < 0 || i < ri || i > ri + 4));
 
+/* The shadow-to-sunlit gate as CONTRACT.md pins it: a flat shaded face against a
+   flat sunlit face, the same window in both views, mean relative luminance off
+   the encoded PNG. Implemented here because nothing else implemented it —
+   `fillprobe --ratio` uses the darkest-40%-against-brightest-40% split, which is
+   the estimator the contract explicitly names as the *other* one and which reads
+   3x low on the same frame. Two tools reporting one gate under one name is how a
+   system gets told it has moved when it has not. */
+const GATE = [0.30, 0.24, 0.34, 0.34];
+if (a.includes('--gate')) {
+  const shade = files.find(f => f.includes('wall_shade'));
+  const lit = files.find(f => f.includes('wall_lit'));
+  if (!shade || !lit) {
+    console.error('--gate needs a wall_shade and a wall_lit capture of the same build');
+    process.exit(1);
+  }
+  const m = f => {
+    const { L } = lumaPlane(f, GATE);
+    return L.reduce((s, v) => s + v, 0) / L.length;
+  };
+  const sh = m(shade), su = m(lit);
+  const r = sh / su;
+  console.log(`shaded ${(sh * 255).toFixed(1)} cv   sunlit ${(su * 255).toFixed(1)} cv`);
+  console.log(`shadow-to-sunlit ${r.toFixed(3)}   target 0.15-0.25   ` +
+              (r <= 0.25 ? 'in band' : `over by ${(r - 0.25).toFixed(3)}`));
+  process.exit(0);
+}
+
 /* Rec.709 on the encoded values, which is what CONTRACT.md means by "mean
    relative luminance read off the sRGB-encoded PNG" — the same convention the
    shadow-to-sunlit gate is defined in, so the numbers here are comparable with
    it rather than being a second private definition. */
-function lumaPlane(file) {
+function lumaPlane(file, force) {
   const im = decode(readFileSync(file));
   const px = im.px || im.data, ch = im.ch || 4, w = im.w || im.width, h = im.h || im.height;
   const base = path.basename(file).replace('.png', '');
   const key = Object.keys(REGIONS).find(k => base.endsWith('_' + k));
-  const r = region || REGIONS[key] || [0.1, 0.1, 0.8, 0.8];
+  const r = force || region || REGIONS[key] || [0.1, 0.1, 0.8, 0.8];
   const x0 = Math.round(r[0] * w), y0 = Math.round(r[1] * h);
   const cw = Math.round(r[2] * w), chh = Math.round(r[3] * h);
   const L = new Float64Array(cw * chh);
