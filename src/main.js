@@ -15,6 +15,7 @@ import { WashPath } from './path.js';
 import { Terrain, buildTerrainMesh, makeTerrainMaterial, syncWind, applyScour } from './terrain.js';
 import { buildScatter } from './scatter.js';
 import { buildWalls, buildDistantButtes, buildTalus, makeRockMaterial } from './rock.js';
+import { buildFarRidges } from './farridge.js';
 import { buildSky, buildLights, makeShadowRig, FOG, EXPOSURE } from './sky.js';
 import { buildJuniper } from './juniper.js';
 import { buildVegetation } from './vegetation.js';
@@ -82,8 +83,14 @@ setAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
 const scene = new THREE.Scene();
 scene.fog = new THREE.FogExp2(FOG.getHex(), 0.0019);
 
+/* Far plane 9000 rather than 6000: System 2's far ridgelines reach 7.3 km, and
+   the aerial ladder they exist to feed is a statement about the *ratio* of the
+   nearest and furthest masses, so clipping the back of it defeats the purpose.
+   Nothing else in the scene notices — depth precision at a 0.06 near plane is
+   set by the near plane, and the only geometry now living between 6 and 9 km is
+   a single pale rim with nothing behind it to fight. */
 const camera = new THREE.PerspectiveCamera(
-  58, window.innerWidth / window.innerHeight, 0.06, 6000);
+  58, window.innerWidth / window.innerHeight, 0.06, 9000);
 camera.rotation.order = 'YXZ';
 
 /* ── content ───────────────────────────────────────────────────────────── */
@@ -118,6 +125,15 @@ const rocks = [
   ...buildTalus(path, terrain, rockMat),
 ];
 for (const m of rocks) scene.add(m);
+
+/* System 2's far band: four receding ridgelines from 2.3 to 7.3 km, which is
+   the geometry src/aerial.js asks for in GEOMETRY_NEEDED — the scene's deepest
+   sightline was 1450 m, and over that baseline the only way to get a legible
+   depth ladder was air thick enough to contradict a blue zenith. Its own group,
+   not in `rocks`, because it carries no rock material and the vegetation
+   scatter walks that list looking for cliffs to grow under. */
+const farRidges = buildFarRidges(terrain, path);
+scene.add(farRidges);
 
 const clasts = buildScatter(terrain, tex);
 /* The boulders dig hollows the mesh was built too early to know about. */
