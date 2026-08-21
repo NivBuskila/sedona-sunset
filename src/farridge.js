@@ -369,9 +369,16 @@ function curtain(plane, anchor, baseY, sunAz, eyes, phase) {
   let p = 0;
   for (let j = 0; j < nv - 1; j++) {
     for (let i = 0; i < NCOL - 1; i++) {
+      /* Wound so the *inward* face is the front face. The camera stands inside
+         this ring, which is the opposite of every other closed surface in the
+         project, and getting it the other way round costs nothing visible in a
+         diagnostic and everything in the frame: back-face culling removes the
+         whole band and the only symptom is that the far distance looks exactly
+         as it did before. Checked numerically in tools/_farhoriz.mjs rather
+         than by eye, because "no change" is what a working cap looks like too. */
       const a = j * NCOL + i, b = a + 1, c = a + NCOL, dd = c + 1;
-      idx[p++] = a; idx[p++] = c; idx[p++] = b;
-      idx[p++] = b; idx[p++] = c; idx[p++] = dd;
+      idx[p++] = a; idx[p++] = b; idx[p++] = c;
+      idx[p++] = b; idx[p++] = dd; idx[p++] = c;
     }
   }
 
@@ -395,6 +402,16 @@ export const FARRIDGE_DIAG = { planes: [] };
  * @returns {THREE.Group} named `farridge`, carrying `setDetail(n)` for perf.js
  */
 export function buildFarRidges(terrain, path) {
+  /* `#nofar` builds the group empty, so a handoff can be paired with a matched
+     control from the same page rather than from a revert. This band exists to
+     serve tools/layers.mjs and layers.mjs is a comparison, so the control has
+     to be one page load away or nobody will take it — and System 5 needs to
+     sweep the extinction against it, which is four loads inside one render-lock
+     acquisition. Same argument, and the same mechanism, as aerial.js's dials.
+     Absent the hash this costs one constant fold. */
+  let off = false;
+  try { off = /(?:^|[#,&;])nofar(?:$|[,&;])/.test(location.hash || ''); } catch (e) { off = false; }
+
   const a = path.posAt(110);
   const anchor = { x: a.x, z: a.z };
   const baseY = terrain.heightAt(anchor.x + 800, anchor.z - 2500);
@@ -426,7 +443,7 @@ export function buildFarRidges(terrain, path) {
   const gp = path.posAt(120);
   const gapEye = { x: gp.x, y: terrain.heightAt(gp.x, gp.z) + 1.65, z: gp.z };
 
-  for (let i = 0; i < PLANES.length; i++) {
+  for (let i = 0; i < (off ? 0 : PLANES.length); i++) {
     const fit = pickPhase(PLANES[i], anchor, baseY, gapEye);
     const g = curtain(PLANES[i], anchor, baseY, sunAz, eyes, fit.phase);
     const m = new THREE.Mesh(g, mat);

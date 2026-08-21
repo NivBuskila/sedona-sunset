@@ -125,3 +125,32 @@ for (const v of VIEWS) {
   }
 }
 console.log(`\nworst view for the disc: ${worstView} at ${worst.toFixed(2)} deg`);
+
+/* Winding. The far band is a ring the camera stands inside, so its visible face
+   is the one pointing at the axis, and if the triangles are wound the other way
+   round back-face culling deletes the entire band. That happened, and it cost a
+   render to find, because a band that is not drawn and a band that is correctly
+   capped produce the same skyline table above. Asserted here so it cannot
+   happen twice: take a triangle near the middle of each curtain, form its
+   geometric normal, and check it points back toward the anchor. */
+if (!noFar) {
+  const far = groups.find((g) => g[0] === 'far');
+  const anchor = (await import('../src/farridge.js')).FARRIDGE_DIAG.anchor;
+  let bad = 0;
+  for (const m of far[1]) {
+    const p = m.geometry.attributes.position.array;
+    const ix = m.geometry.index.array;
+    const t = 3 * ((ix.length / 3 / 2) | 0);
+    const v = [0, 1, 2].map((k) => {
+      const o = ix[t + k] * 3;
+      return [p[o], p[o + 1], p[o + 2]];
+    });
+    const e1 = v[1].map((x, k) => x - v[0][k]);
+    const e2 = v[2].map((x, k) => x - v[0][k]);
+    const n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+    const toAxis = [anchor.x - v[0][0], 0, anchor.z - v[0][2]];
+    if (n[0] * toAxis[0] + n[2] * toAxis[2] <= 0) bad++;
+  }
+  console.log(bad ? `WINDING: ${bad} curtain(s) face outward and will be culled`
+                  : 'winding: all curtains face the axis');
+}
