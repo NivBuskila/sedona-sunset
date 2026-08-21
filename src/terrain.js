@@ -792,10 +792,20 @@ export class Terrain {
    */
   _headRise(x, z) {
     if (z > -274) return 0;
-    const ramp = smoothstep(-274, -330, z);
-    const wall = smoothstep(-322, -372, z);
+    const ramp = smoothstep(-274, -336, z);
+    /* Standing far enough back to be a view rather than an obstruction. The
+       first attempt put the toe fourteen metres from where the walk ends and
+       rose forty metres over fifty, which subtends about fifty degrees: not a
+       canyon head but a wall in the face, and it filled the frame with one dark
+       mass. Set back to thirty metres and spread over sixty, the rim comes in
+       around seventeen degrees above the eye with sky over it, which is what
+       standing at the head of a wash actually looks like.
+       It is also backlit, the sun being up-wash, so the near face is in shadow
+       by construction — that is correct for this hour and is why it wants to be
+       read against sky rather than made to fill the frame. */
+    const wall = smoothstep(-340, -400, z);
     return ramp * ramp * 10.0
-         + wall * (30.0 + 12.0 * fbm(x * 0.021, z * 0.021, 3, 421)
+         + wall * (26.0 + 11.0 * fbm(x * 0.021, z * 0.021, 3, 421)
                         + 6.0 * (ridged(x * 0.034, z * 0.034, 2, 423) - 0.5));
   }
 
@@ -844,7 +854,23 @@ export function buildTerrainMesh(terrain, material) {
      straight line. */
   const xs = axis([[-52, -30, 0.32], [-30, -17, 0.26], [-17, 17, 0.20],
                    [17, 30, 0.26], [30, 52, 0.32]], -1600, 1600, 1.12);
-  const zs = axis([[-256, 14, 0.42]], -1900, 220, 1.14);
+  /* The dense zone has to reach the end of the *walk*, which it did not. It
+     stopped at -256 while the path runs to -320 and the number keys jump the
+     player anywhere along it, so the last fifth of the walk was rendered by the
+     geometric expansion tail: rows 1 m apart at -270, 3 m at -300, 6 m at -308.
+     A wash cross-section a few metres wide sampled every six metres is not a
+     wash, and what it drew instead was the two defects reported from the far
+     end — a dead straight slab across the channel at -270, which is the first
+     giant quad seen face-on, and a black wall filling the frame at -320, which
+     is the player standing inside the expansion tail with a single quad in front
+     of them. Neither was the edge of the world. The world runs to -1900; only
+     the resolution stopped.
+     Graded in three steps out to the head so no single column carries a step
+     ratio above 1.32 — the same reason the x axis is graded, since a jump in
+     spacing leaves a crease along one row, and a dead straight line across the
+     wash is the thing this whole file exists to avoid. */
+  const zs = axis([[-404, -320, 0.86], [-320, -280, 0.62],
+                   [-280, -256, 0.48], [-256, 14, 0.42]], -1900, 220, 1.14);
 
   const nx = xs.length, nz = zs.length;
   const count = nx * nz;
