@@ -92,18 +92,25 @@ await run({ width: W, height: H, waitReady: false }, async ({ page }) => {
   fs.mkdirSync(path.dirname(lit), { recursive: true });
   await capture(page, lit);
 
-  /* Flip the debug uniform and re-capture the identical frame. Post-processing
-     would smear the mask across the boundary between dead and live, so it is
-     bypassed for this pass only. */
+  /* Flip the debug uniform and re-capture the identical frame — with everything
+     except the wood hidden, the sky cleared to black and post bypassed. All
+     three matter: post would smear the mask across the boundary between dead and
+     live, and anything left visible is a second population of pixels that has to
+     be excluded by colour, which is exactly the guessing this probe exists to
+     avoid. */
   const ok = await page.evaluate(() => {
+    const g = window.__game;
     let found = 0;
-    window.__game._scene.traverse(o => {
+    g._scene.traverse(o => {
       const u = o.material && o.material.userData && o.material.userData.uniforms;
       if (u && u.uDebugMask) { u.uDebugMask.value = 1; found++; }
+      if (o.isMesh || o.isPoints || o.isLine || o.isSprite) {
+        if (o.name !== 'juniper-wood') { o.userData._wasVisible = o.visible; o.visible = false; }
+      }
     });
-    if (window.__game._post && window.__game._post.setEnabled) {
-      window.__game._post.setEnabled(false);
-    }
+    g._scene.userData._bg = g._scene.background;
+    g._scene.background = null;
+    if (g._post && g._post.setEnabled) g._post.setEnabled(false);
     return found;
   });
   if (!ok) throw new Error('no material exposed uDebugMask — is makeBarkMaterial current?');
@@ -126,16 +133,14 @@ await run({ width: W, height: H, waitReady: false }, async ({ page }) => {
     const L = await load(a), M = await load(b);
     const dead = [], live = [];
     for (let i = 0; i < M.data.length; i += 4) {
-      /* The mask pass writes the dead fraction to all three channels, and the
-         background is whatever the sky and rock render to — so a pixel only
-         counts as wood if it is a *neutral* mask value, which the sky over this
-         view is not. Mid values are the blend band along a strip edge and are
-         thrown away rather than assigned to either side. */
-      const r = M.data[i], g = M.data[i + 1], bl = M.data[i + 2];
-      if (Math.abs(r - g) > 6 || Math.abs(g - bl) > 6) continue;
+      /* Red is dead, green is live, black is nothing. Pixels near the middle are
+         the blend band along the edge of a dead strip and are thrown away rather
+         than assigned to either side. */
+      const r = M.data[i], g = M.data[i + 1];
+      if (r + g < 40) continue;
       const px = [L.data[i], L.data[i + 1], L.data[i + 2]];
-      if (r > 225) dead.push(px);
-      else if (r < 30) live.push(px);
+      if (r > g * 4) dead.push(px);
+      else if (g > r * 4) live.push(px);
     }
     return { dead, live };
   }, [`data:image/png;base64,${fs.readFileSync(lit).toString('base64')}`,

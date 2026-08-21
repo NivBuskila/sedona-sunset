@@ -34,7 +34,7 @@ export const barkTex = () => memo('bark', () => makeBark(512));
 export const deadTex = () => memo('dead', () => makeDeadwood(512));
 export const foliageTex = () => memo('fol', () => makeFoliage(512));
 export const grassTex = () => memo('grass', () => makeGrass(512));
-export const scrubTex = () => memo('scrub', () => makeScrub(256));
+export const scrubTex = () => memo('scrub', () => makeScrub(512));
 export const succTex = () => memo('succ', () => makeSucculent(256));
 
 /* ── anisotropic tiling noise ──────────────────────────────────────────────
@@ -288,7 +288,12 @@ export function makeDeadwood(size = 512) {
      *ratio* is held constant and only the level varies, which is what keeps a
      bright crest from drifting toward white and a fissure from drifting toward
      blue — the drift that made the last attempt read as metal. */
-  const HUE = [1.0, 0.876, 0.786];        // hue 27.2 deg
+  /* Saturation 0.142, down from 0.214. Measured on the rendered frame the first
+     version came out at 0.376 against a real juniper's 0.134 — the warm key adds
+     chroma of its own, so the albedo has to sit below the target rather than on
+     it. Hue is unchanged at 25-27 degrees, which measured 28.2 on the frame
+     against a target of 27 and is the one number here that is already right. */
+  const HUE = [1.0, 0.918, 0.858];        // hue 25.4 deg, sat 0.142
   const LEVEL_DARK = 0.115;               // deep in a fissure
   const LEVEL_MID = 0.470;
   const LEVEL_PALE = 0.900;               // sun-bleached crest of the grain
@@ -761,8 +766,12 @@ export function makeSucculent(size = 256) {
   const hgt = new Float32Array(N);
   /* Glaucous blue-green, and lighter than juniper — that difference is most of
      what separates a cactus from a shrub at any distance. */
-  const BASE = [0.196, 0.238, 0.163];
-  const PALEC = [0.283, 0.322, 0.236];
+  /* Deeper and bluer than the first version, which measured hue 94 and read as
+     "pale mint paddles". A glaucous prickly pear sits near hue 118 — the blue in
+     it comes from the wax bloom over a mid green, and it is a *mid* green, not a
+     pastel. Lighter than juniper still, which is the distinction that matters. */
+  const BASE = [0.150, 0.245, 0.148];
+  const PALEC = [0.245, 0.350, 0.240];
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const i = y * size + x;
@@ -790,11 +799,28 @@ export function makeSucculent(size = 256) {
         for (let k = 0; k < 3; k++) c[k] *= 1 - 0.45 * ring;
         hgt[i] += areole * 0.5;
       }
-      const spine = (1 - smoothstep(0.012, 0.05, Math.abs(fx * 0.30 + fy)))
-                  * (1 - smoothstep(0.10, 0.30, d)) * smoothstep(0.10, 0.16, d);
+      /* Spines. Longer, paler and higher contrast than the first version, which a
+         reviewer could not see at all. The reason is mip averaging: a spine two
+         texels wide at 15% contrast against the pad is gone by the second mip
+         level, and the pad is twenty pixels on screen. Surviving downsampling
+         needs amplitude, so these run to 0.34 of a lattice cell at nearly full
+         strength — which is also closer to life, where the spines on a pad are
+         half its own thickness long. */
+      const spine = (1 - smoothstep(0.014, 0.055, Math.abs(fx * 0.30 + fy)))
+                  * (1 - smoothstep(0.12, 0.34, d)) * smoothstep(0.09, 0.15, d);
       if (spine > 0) {
-        for (let k = 0; k < 3; k++) c[k] = mix(c[k], [0.52, 0.46, 0.33][k], spine * 0.85);
+        for (let k = 0; k < 3; k++) c[k] = mix(c[k], [0.74, 0.67, 0.47][k], spine * 0.95);
+        hgt[i] += spine * 0.25;
       }
+
+      /* The pad margin. The pad's own UV runs radially in u, so the rim is
+         addressable straight from the texture: a real pad has a paler, slightly
+         straw-coloured edge where the skin thins over the rib, and without it a
+         pad is a flat disc of one colour with a hard outline. On an agave blade
+         the same u is the length of the blade, and a pale tip there is also
+         right, so this does not need to be split per plant. */
+      const rim = smoothstep(0.80, 0.995, u);
+      for (let k = 0; k < 3; k++) c[k] = mix(c[k], [0.335, 0.330, 0.215][k], rim * 0.55);
 
       alb[i * 4] = clamp(Math.pow(c[0], 1 / 2.2), 0, 1) * 255;
       alb[i * 4 + 1] = clamp(Math.pow(c[1], 1 / 2.2), 0, 1) * 255;
@@ -824,41 +850,79 @@ export function makeSucculent(size = 256) {
  * Small-leaved grey-green shrub mass (rabbitbrush / snakeweed sort of thing):
  * a cloud of tiny strokes rather than a branching spray, since at the sizes
  * these are drawn the internal structure is never resolved. */
-export function makeScrub(size = 256) {
+/* Desert scrub.
+ *
+ * Rebuilt because the foreground shrub in `wall_shade` was described as "leaves
+ * that are literal rectangles with square corners on straight black stems", and
+ * all three of those were fair. A leaf was a *stroked line segment* two texels
+ * wide and seven long — which is a rectangle, and at 256 across an atlas that
+ * lands in the near field it is a rectangle you can count the corners of. A stem
+ * was a single moveTo/lineTo, so it was exactly straight. And the whole atlas was
+ * a quarter of the resolution the nearest instance of it needs.
+ *
+ * So: leaves are filled lozenges tapering to a point at the tip and a stalk at
+ * the base, stems bend, and the cell is twice the size it was.
+ */
+export function makeScrub(size = 512) {
   const { ctx } = canvas2d(size, size);
   const cell = size / 2;
   const rand = rng(90210);
+
+  /* One leaf: a filled lozenge, widest a third of the way out, tapering to a
+     point. Two quadratics, which is the cheapest closed shape that has a tip. */
+  const leaf = (x, y, ang, len, wid, fill) => {
+    const cx = Math.cos(ang), sy = Math.sin(ang);
+    const nx = -sy, ny = cx;
+    const tipX = x + cx * len, tipY = y + sy * len;
+    const mx = x + cx * len * 0.34, my = y + sy * len * 0.34;
+    ctx.fillStyle = fill;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.quadraticCurveTo(mx + nx * wid, my + ny * wid, tipX, tipY);
+    ctx.quadraticCurveTo(mx - nx * wid, my - ny * wid, x, y);
+    ctx.closePath();
+    ctx.fill();
+  };
+
   for (let cx = 0; cx < 2; cx++) {
     const ox = cx * cell;
     ctx.save();
-    ctx.beginPath(); ctx.rect(ox + 5, 4, cell - 10, size - 8); ctx.clip();
+    ctx.beginPath(); ctx.rect(ox + 9, 8, cell - 18, size - 16); ctx.clip();
     const stems = 7 + (rand() * 4 | 0);
     for (let s = 0; s < stems; s++) {
       const bx = ox + cell * 0.5, by = size * 0.98;
-      const a = -Math.PI / 2 + (rand() - 0.5) * 1.5;
-      const len = size * (0.4 + rand() * 0.42);
-      ctx.strokeStyle = 'rgb(96,84,64)';
-      ctx.lineWidth = size * 0.008;
+      let a = -Math.PI / 2 + (rand() - 0.5) * 1.5;
+      const len = size * (0.40 + rand() * 0.42);
+      /* A bent stem, walked in four steps. Woody desert scrub is all elbows and
+         a straight one is the giveaway that it was drawn with a line tool. */
+      const nSeg = 4, dl = len / nSeg;
+      const sx = [bx], sy = [by];
+      let px = bx, py = by;
+      ctx.strokeStyle = 'rgb(104,88,66)';
+      ctx.lineWidth = size * 0.007;
+      ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.moveTo(bx, by);
-      const tx = bx + Math.cos(a) * len, ty = by + Math.sin(a) * len;
-      ctx.lineTo(tx, ty);
+      ctx.moveTo(px, py);
+      for (let i = 0; i < nSeg; i++) {
+        a += (rand() - 0.5) * 0.44;
+        px += Math.cos(a) * dl; py += Math.sin(a) * dl;
+        ctx.lineTo(px, py);
+        sx.push(px); sy.push(py);
+      }
       ctx.stroke();
-      const n = 22 + (rand() * 16 | 0);
+
+      /* Leaves hung off the stem's own stations, so none of them float. */
+      const n = 26 + (rand() * 18 | 0);
       for (let i = 0; i < n; i++) {
-        const t = 0.25 + rand() * 0.8;
-        const px = bx + (tx - bx) * t + (rand() - 0.5) * size * 0.10;
-        const py = by + (ty - by) * t + (rand() - 0.5) * size * 0.10;
-        const la = a + (rand() - 0.5) * 1.4;
-        const ll = size * (0.020 + rand() * 0.028);
+        const u = 0.22 + rand() * 0.78;
+        const k = Math.min(nSeg - 1, Math.floor(u * nSeg));
+        const f = u * nSeg - k;
+        const lx = sx[k] + (sx[k + 1] - sx[k]) * f + (rand() - 0.5) * size * 0.030;
+        const ly = sy[k] + (sy[k + 1] - sy[k]) * f + (rand() - 0.5) * size * 0.030;
+        const la = Math.atan2(sy[k + 1] - sy[k], sx[k + 1] - sx[k]) + (rand() - 0.5) * 1.5;
         const g = 0.5 + rand() * 0.5;
-        ctx.strokeStyle = `rgb(${(78 + g * 46) | 0},${(88 + g * 44) | 0},${(66 + g * 34) | 0})`;
-        ctx.lineWidth = size * (0.007 + rand() * 0.005);
-        ctx.lineCap = 'round';
-        ctx.beginPath();
-        ctx.moveTo(px, py);
-        ctx.lineTo(px + Math.cos(la) * ll, py + Math.sin(la) * ll);
-        ctx.stroke();
+        leaf(lx, ly, la, size * (0.024 + rand() * 0.030), size * (0.005 + rand() * 0.005),
+             `rgb(${(78 + g * 46) | 0},${(88 + g * 44) | 0},${(66 + g * 34) | 0})`);
       }
     }
     ctx.restore();

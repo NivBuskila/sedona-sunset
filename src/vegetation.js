@@ -78,9 +78,15 @@ function grassTuftGeo(seed) {
 function shrubGeo(seed) {
   const rand = rng(seed);
   return addWhite(cardGeometry((arr) => {
-    /* Two tiers, so it has a silhouette rather than being one slab. */
-    cardTuft(0, 0, 0, 0.95, 1.0, 3, rand, arr);
-    cardTuft(0, 0.18, 0, 0.62, 0.72, 2, rand, arr);
+    /* Two tiers, so it has a silhouette rather than being one slab — but eight
+       cards, not five, and the upper tier lifted 0.09 rather than 0.18.
+       At five cards each is offset by up to 35% of its own width and the second
+       tier started above the first one's midpoint, so a card could and did end up
+       with clear air between it and everything else: "several cards floating
+       detached" in the nearest shot of this shrub. Overlap is cheap here — this
+       geometry is instanced once and drawn a few hundred times. */
+    cardTuft(0, 0, 0, 0.95, 1.0, 5, rand, arr);
+    cardTuft(0, 0.09, 0, 0.70, 0.78, 3, rand, arr);
   }));
 }
 
@@ -372,11 +378,18 @@ export function planVegetation(path, terrain, rocks) {
           sx: 0.55 + rand() * 0.48, sy: 0.46 + rand() * 0.44, sz: 0.55 + rand() * 0.48,
           r: 0.84 + rand() * 0.26, g: 0.88 + rand() * 0.20, b: 0.78 + rand() * 0.22,
         });
-      } else if (roll < p * 0.505 && pear.length < 4) {
+        /* Terrace only, and a well-developed one. A prickly pear needs a soil
+           pocket — it roots shallow and wide in fines, and on scoured bar or bare
+           slickrock there is nothing to root in. The habitat test above admits
+           bar at 0.34 and talus at 0.55 weight, which is right for a bunch grass
+           and wrong for this, and it put several pads on bare rock. */
+      } else if (roll < p * 0.505 && pear.length < 4 && f.terr > 0.55) {
         pear.push({
           x, y: y - 0.05, z, rot: rand() * TAU,
           sx: 0.62 + rand() * 0.30, sy: 0.60 + rand() * 0.32, sz: 0.62 + rand() * 0.30,
-          r: 0.95 + rand() * 0.14, g: 1.0, b: 0.90 + rand() * 0.14,
+          /* Was 0.95-1.09 on all three, i.e. no tint at all on an albedo that was
+             already too pale. */
+          r: 0.70 + rand() * 0.12, g: 0.84 + rand() * 0.10, b: 0.68 + rand() * 0.12,
         });
       } else if (roll < p * 0.515 && agave.length < 2) {
         agave.push({
@@ -558,6 +571,12 @@ export function buildVegetation(path, terrain, rocks) {
      yellow-green albedo. Backlit on a distant bench that lands as the
      chartreuse shards a reviewer picked out in `sun_gap`. */
   midMat.userData.uniforms.uTransAmt.value = 0.12;
+  /* And the isotropic share cut with it, for the same reason. That term exists to
+     stop the *hero's* crown interior going black at three metres across; on a
+     card standing in for a whole tree at forty metres there is no interior to
+     light, and left at the hero's value it is simply a warm pedestal on a
+     yellow-green albedo. */
+  midMat.userData.uniforms.uTransIso.value = 0.04;
 
   /* Dark, desaturated, slightly blue-shifted green. A distant juniper is nearly
      black against sunlit rock; the haze does the rest of the work. */

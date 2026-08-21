@@ -894,7 +894,7 @@ export function makeBarkMaterial(bark) {
        *rendered* value ratio against live bark and that can only be reached by
        measuring frames and iterating — the albedo ratio is not the thing being
        judged, as the last two rounds established twice. */
-    uDeadCol: { value: new THREE.Color(1.30, 1.30, 1.30) },
+    uDeadCol: { value: new THREE.Color(1.72, 1.72, 1.72) },
     uDeadMap: { value: dead.albedo },
     uDeadNrm: { value: dead.normal },
     /* Debug only, and zero unless a probe sets it. `tools/deadratio.mjs` flips it
@@ -917,9 +917,20 @@ export function makeBarkMaterial(bark) {
       .replace('#include <common>', '#include <common>\n' +
         'varying float vDead;\nuniform vec3 uLiveCol;\nuniform vec3 uDeadCol;\n' +
         'uniform sampler2D uDeadMap;\nuniform sampler2D uDeadNrm;\nuniform float uDebugMask;')
-      .replace('#include <opaque_fragment>',
-        '#include <opaque_fragment>\n' +
-        'if ( uDebugMask > 0.5 ) gl_FragColor = vec4( vec3( vDead ), 1.0 );')
+      /* The mask is written *after* dithering, which is the last chunk in the
+         fragment program, because everything between `opaque_fragment` and here
+         would otherwise be applied to it: tone mapping, the sRGB encode and the
+         fog blend. Writing it at `opaque_fragment` produced a mask that had been
+         filmic-tone-mapped and fogged, and the probe read zero pixels.
+         Red for dead and green for live, rather than a grey ramp, so that
+         classification only depends on which channel is larger — true under any
+         monotonic per-channel transform that might still be downstream. A grey
+         ramp was ambiguous with the blown-out sky next to a backlit tree, and the
+         probe duly reported 16775 pixels of deadwood at value 0.94, all of it
+         sky. */
+      .replace('#include <dithering_fragment>',
+        '#include <dithering_fragment>\n' +
+        'if ( uDebugMask > 0.5 ) gl_FragColor = vec4( vDead, 1.0 - vDead, 0.0, 1.0 );')
       .replace('#include <map_fragment>', /* glsl */`
         vec4 bt = texture2D( map, vMapUv );
         vec4 dt = texture2D( uDeadMap, vMapUv );
@@ -1062,8 +1073,12 @@ function hummock(terrain, cx, cz, seed) {
   /* Widened from 2.15 m to reach the drip line of a seven-metre crown. A mound
      that stops well inside the foliage is a mound nobody attributes to the
      tree. */
-  const RINGS = 13, SEG = 44, R = 2.85;
-  const pos = [], uv = [], idx = [];
+  /* Out to 3.9 m, not 2.85. The mound proper is long flat by then — moundAt is
+     under a millimetre out there — but the disc has a second job: it carries the
+     drip-line duff and the bare ring, and those extend to the edge of a crown
+     seven metres across. */
+  const RINGS = 17, SEG = 44, R = 3.90;
+  const pos = [], uv = [], idx = [], col = [];
   const lobes = [];
   for (let i = 0; i < 5; i++) lobes.push({ a: rand() * TAU, m: 0.5 + rand() * 0.9 });
   for (let i = 0; i <= RINGS; i++) {
@@ -1083,6 +1098,21 @@ function hummock(terrain, cx, cz, seed) {
       const edge = 1 - smoothstep(0.80, 1.0, t);
       pos.push(x, base + (m + grain * (0.25 + 0.75 * edge)) * (0.12 + 0.88 * edge) + 0.006, z);
       uv.push(x * 0.85, z * 0.85);
+      /* Duff, and the bare ring at the drip line.
+         A juniper suppresses almost everything under its own canopy — partly
+         shade, partly the litter, partly chemistry — and shed scale accumulates
+         where nothing grows to break it up. The result is one of the most
+         recognisable ground signatures in the Southwest: a dark, bare, sharply
+         bounded disc that stops at the drip line and has open desert immediately
+         outside it. A reviewer found the ground under this tree indistinguishable
+         from the open wash twenty metres away, which is a strong negative cue.
+         The edge is deliberately narrow — 2.5 to 3.4 m against a 3.5 m crown
+         radius — because a soft gradient reads as a stain and a hard one reads as
+         a canopy. */
+      const duff = 1 - smoothstep(2.50, 3.40, r);
+      const mot = 0.86 + 0.28 * fbm(x * 3.1, z * 3.1, 3, 4417);
+      const k = duff * mot;
+      col.push(mix(1, 0.66, k), mix(1, 0.615, k), mix(1, 0.60, k));
       if (i > 0 && j < SEG) {
         const a = (i - 1) * (SEG + 1) + j, b = a + 1;
         const c = i * (SEG + 1) + j, d = c + 1;
@@ -1093,6 +1123,7 @@ function hummock(terrain, cx, cz, seed) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   g.setIndex(idx);
   g.computeVertexNormals();
   g.computeBoundingSphere();
@@ -1194,6 +1225,8 @@ export function buildJuniper(terrain, tex) {
        pasted on — meant a reviewer could not find the mound at all and reported
        the ground under the tree as identical to the ground twenty metres off. */
     color: new THREE.Color(0.66, 0.585, 0.525),
+    /* Carries the drip-line duff disc; see `hummock`. */
+    vertexColors: true,
     polygonOffset: true,
     polygonOffsetFactor: -2,
     polygonOffsetUnits: -2,
@@ -1215,14 +1248,18 @@ export function buildJuniper(terrain, tex) {
      a good two metres out. Sixty attempts rather than twenty-six: at eighteen
      metres a 0.2 m tuft is nine pixels, and a dozen of them scattered over five
      square metres is not something a viewer can see. */
-  for (let i = 0; i < 60; i++) {
+  /* 140 attempts, and the duff reaches to 3.2 m. At 60 with a 0.72 acceptance the
+     drip-line population came out at about nineteen tufts spread around a ring
+     fourteen metres in circumference, which is not a duff layer — it is a dozen
+     specks, and a reviewer reported no drip-line duff at all. */
+  for (let i = 0; i < 140; i++) {
     const th = rand() * TAU;
-    const dripLine = rand() < 0.45;
-    const rr = dripLine ? 1.75 + rand() * 0.95 : 0.40 + rand() * 1.35;
+    const dripLine = rand() < 0.58;
+    const rr = dripLine ? 1.60 + rand() * 1.60 : 0.40 + rand() * 1.35;
     const bias = 0.5 - 0.5 * (Math.cos(th) * WIND.x + Math.sin(th) * WIND.y);
     /* Duff under the drip line does not care about the wind; wind-piled litter
        cares about nothing else. */
-    if (rand() > (dripLine ? 0.72 : 0.26 + 0.74 * bias)) continue;
+    if (rand() > (dripLine ? 0.80 : 0.26 + 0.74 * bias)) continue;
     const x = JUNIPER_XZ.x + Math.cos(th) * rr, z = JUNIPER_XZ.z + Math.sin(th) * rr;
     const y = terrain.heightAt(x, z) + moundAt(rr) - 0.02;
     /* Shed duff lies flat and low; caught grass stands up. */
