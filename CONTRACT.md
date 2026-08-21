@@ -302,7 +302,7 @@ on it before the deadline was the wrong trade. This is the fourth time on this p
 a correct change has measured as nothing, or as something, because another correct
 change moved the denominator underneath it — see the process notes.
 
-## Open, for System 2: the wash head's amphitheatre is behind a rock ledge
+## Closed: the wash head's amphitheatre was behind a rock ledge
 
 `far_320` is the last framing of the walk and it was called the failure that matters
 most: "a ruler-straight, slightly tilted ledge running the full width of frame with
@@ -322,6 +322,45 @@ moves by more than 13/255, and the ledge's silhouette does not move at all. A 13
 shift across 99% of a region is an exposure change, not a geometry change. The ledge
 has a dead-straight aliased top edge and fine horizontal laminae under it, so it is
 rock, and the amphitheatre is standing behind it.
+
+**Fixed in `b977d26`, and the cause was that the wall curtain ran twenty-four metres
+past the end of the path it is hung on.** `WashPath.length` is 332.3 m and `posAt`
+clamps beyond it; `src/rock.js` authored the curtain's domain as `S1 = 356`. So the
+thirty-nine columns from `s` 332 to 356 were every one of them placed at the same
+point — x 0.0, z −319.9, on the corridor axis — and the wall's lateral offsets fanned
+that stack of coincident columns into a solid slab standing across the channel. The
+apron leaning on it, sized against the wall rather than against the room it had,
+reached to |x| 0.0 at fourteen to sixteen metres of height, in front of a bowl whose
+axis crest is 11.3 m.
+
+That closes both halves of the measurement. The silhouette did not move because the
+occluder is rock geometry and never read the height field; the 13/255 everywhere else
+was the exposure responding to a changed skyline it could not show.
+
+Two clamps, both the same statement — geometry cannot claim room it does not have.
+The curtain's domain ends six metres inside the path's length, with the existing 46 m
+end fade keyed to that end so the crest walks down onto a real column rather than onto
+the clamp, and `buildTalus` draws its stations from the same range because blocks drawn
+past the end were landing in one heap on the axis. And an apron's reach is capped at
+seven tenths of the wall's own set-back, leaving the inner third of the channel clear:
+a wash keeps its bed swept, so a talus toe stops where the channel starts rather than
+where gravity would let it stop. The seating walk in `apronProfile` cannot catch that
+case, because at the head the apron is not floating — it is simply too long for the
+room, and a collision test against the ground says nothing about that.
+
+Measured after: apron toes over `s` 320–326 stop at |x| 7.0 and 4.4 against 0.0 before,
+`far_320` shows the bowl, the flanking slopes and the sun in the notch, and `sun_gap`
+and `far_270` are unchanged. Walls lose 16k triangles.
+
+**Two general points, both cheap to reuse.** A domain constant that indexes a curve has
+to be checked against that curve's own length — the failure mode is silent, because a
+clamped parametric lookup returns a valid point and the geometry that lands there is
+well-formed rather than NaN, so nothing in `nanhunt` or a bounding-sphere check sees it.
+And `tools/_pixowner.mjs` settled in one render what three rounds of argument from
+pictures had not: it hides one object at a time and watches the pixel, so it attributes
+what was actually drawn. It named `apronL`, which no reading of the image would have —
+the thing looked like a wall and it was the apron. `tools/_headprofile.mjs` then prints
+the along-wash profile of both aprons against the terrain they stand in front of.
 
 ## Open: the head slopes read as streaks, and it is not stretched UV
 
@@ -2352,3 +2391,116 @@ Every system is critiqued by a separate agent that sees only the rendered PNGs, 
 code. The critic compares against real Sedona sunset photography and rates photorealism out
 of 10. A system is done when the critic scores it 8.5+ and stops reporting
 "looks like a game" failures.
+
+## Read the capture's own error log before attributing a colour excursion to a material
+
+The tenth instrument failure, and the cheapest one to have avoided. `sys7j`'s ungraded
+control measured lit rock at **saturation 0.330, hue −146.7°, B/G 1.193** against 0.615–0.626
+and 18.9–21.1° — cyan-blue sunlit sandstone, the wrong side of the colour wheel — and the
+attribution around it was careful and correct as far as it went: measured before the grade,
+so upstream of post by definition; only `wall_lit` moved, so not an airlight or exposure term;
+and HSV saturation and hue are both invariant under the positive scalar the toe applies.
+
+None of that could reach the answer, because **there was no rock in the frame**. `rock.js`
+carried three temporary lines from a `tools/_varn.mjs` substitution run whose uniform was
+never declared, so the rock fragment program failed to link. `shots/sys7j.json` and
+`sys7j_nopost.json` both record it verbatim:
+
+```
+ERROR: 0:2377: 'uVarnDbg' : undeclared identifier
+```
+
+Every rock mesh in every view drew nothing — the walls, both aprons and all ten buttes — and
+the fixed `wall_lit` rectangle measured the sky standing behind them. The sky in that frame
+*is* saturation 0.33 at hue −147° with B/G 1.19. The other windows were unmoved to three
+decimals because they are floor, sand and juniper crops with no rock in them, which is what
+made it look like a rock-material fault rather than the absence of the rock material.
+
+Three things to take from it.
+
+- **The tell was in the number.** The reported hue had a q25–q75 spread of **one degree**
+  across the whole crop. No material has a one-degree hue distribution; a flat unlit source
+  does. Sunlit rock in the same window a capture earlier reads 17.9–23.9°. When a
+  distribution collapses at the same time as its mean moves, suspect that the population has
+  been replaced rather than shaded differently.
+- **`shoot.mjs` already writes the page errors into `shots/<tag>.json`.** Reading that field
+  costs nothing and would have closed this in one second instead of a bisection.
+  `tools/_p7pre.mjs` catches a module that throws on evaluation and `tools/glslcheck.mjs`
+  catches an unterminated literal, but neither can see a GLSL identifier that does not exist:
+  the JS parses, the module evaluates, the geometry builds, and the failure appears only when
+  the driver links the assembled string.
+- **A debug substitution left in a shader is invisible to every static check in the tree.**
+  If a temporary uniform is added, declare it in the uniform block in the same edit, so the
+  worst case is a wrong-looking frame rather than no frame at all.
+
+Confirmed on HEAD with a matched ungraded capture and no page errors: lit rock **saturation
+0.621, hue 20.9°, B/G 0.638, V 0.676** — inside every band. The excursion does not reproduce,
+and the registration warp, the varnish density and the apron phase warp in `11e67dc` are
+cleared by measurement rather than by argument.
+
+## Triangles are not what this frame costs, and the frame costs 31 ms
+
+`tools/bench.mjs` on the real adapter, 2560×1440, top tier, median of seven blocks of thirty:
+
+| view | full | −shimmer | −particles | −shadow | −veg | −post | −far | @0.7 res | tris |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `wash_mid` | 30.49 | 30.52 | 30.50 | 30.54 | 29.91 | 30.06 | 30.51 | **19.58** | 3.97 M |
+| `wall_lit` | 18.85 | 18.94 | 18.90 | 18.89 | 18.46 | 18.38 | 18.91 | **11.41** | 3.89 M |
+| `sun_gap` | 30.93 | 30.99 | 31.02 | 31.07 | 30.23 | 30.57 | 30.95 | **20.02** | 3.92 M |
+
+**Nothing geometric moves it.** Removing the far ridgelines is worth 0.02 ms of 30.49;
+vegetation 0.58; shadows, particles and the whole post chain are inside the noise. Cutting
+the resolution to 0.7 — 49% of the pixels — takes a third of the frame off. The frame is
+fill-bound, exactly as the perf section at the top of this file predicted and for the first
+time measured rather than inferred.
+
+So **the ~3 M triangle ceiling is the wrong axis to hold the build to**, and shaving geometry
+to reach it buys nothing measurable. Where the triangles are, from `tools/_tricount.mjs`,
+which builds every geometry-bearing module in node and charges instanced meshes their full
+instance count:
+
+| group | triangles | share |
+| --- | --- | --- |
+| clast scatter | 2.253 M | 58% |
+| terrain mesh | 0.966 M | 25% |
+| rock walls + aprons | 0.272 M | 7% |
+| rock talus | 0.245 M | 6% |
+| far ridges | 0.069 M | 2% |
+| distant buttes | 0.063 M | 2% |
+
+The 1.18 M that arrived between `sys7h` (2.80 M) and `sys7i` (3.98 M) is all clast field and
+all one commit, `9320488`: bevel counts 8→20 on gravel, 16→24 and 17→26 on cobble and
+pavement, plus a new `granule` class at 26,000 instances over three variants (0.624 M on its
+own). `scour` is the single largest instanced entry at 32,084 × 20 = 0.642 M. Rock is 15% of
+the frame and System 2's apron rows are 12 k of it.
+
+**The real finding is the time, and it is a contract-level problem rather than a system's.**
+The target is 120+ fps at 1440p and the top tier delivers **32**. The quality ladder does not
+rescue it either: `high` 31.04 ms, `medium` 24.62, `low` 20.38, `potato` 18.03 — so the
+bottom rung of the governor is 55 fps, and there is no tier in the ladder that reaches the
+brief. The lever is fragment cost and resolution, not vertices. From
+`tools/shadercost.mjs`: `terrain.js` is 41 fetches with 14 unconditional and 8 inside a
+loop, `rock.js` is 16 with 15 unconditional, `post.js` is 52 across five literals. Note that
+`wall_lit`, which is mostly wall, costs 18.9 ms against 30.5 for the two floor-and-sky
+framings, which is consistent with the terrain shader being the larger per-pixel bill.
+
+Unowned and unscheduled, and it should be scheduled: a render-scale option, or a pass at
+`terrain.js`'s unconditional fetches, is worth more than every geometry reduction available
+in the tree. **Whoever picks it up should re-run `tools/bench.mjs` first** — the number above
+is one machine, one night, and the ablation columns are what say where to aim.
+
+## Accepted and declined, for System 2, so they are decisions rather than oversights
+
+Both were ruled on by the coordinator against the time remaining, and both are real.
+
+- **The masonry read on `wall_lit`.** `tools/_litpatch.mjs` finds 154 patches where a facet
+  faces the sun inside a shaded neighbourhood, and at a distance those right angles read as
+  coursed blockwork. The mechanism is the along-wall gradient of the lateral offset field:
+  where it turns faster than the weld threshold tolerates, the wall breaks into facets whose
+  arrises are square to the bedding. Limiting that gradient would round them — and the same
+  arrises are what make `sun_gap`'s wall the best rock in the project, so the trade needs
+  more render budget than exists before midday. **Accepted as shipped.**
+- **Alcoves.** Not built. A real Supai/Coconino wall carries wind-scoured hollows a few
+  metres across, and this one has joints, benches and spall scars but no concavities of that
+  size. It is a genuine gap in the surface vocabulary rather than a defect in what is there.
+  **Deferred, not forgiven.**
