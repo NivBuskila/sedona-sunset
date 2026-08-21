@@ -516,15 +516,25 @@ function wallGrid(path, terrain, side) {
          Both are cut with a hard edge on purpose — a soft-edged dent is a dune. */
       let fresh = 0;
       if (vert) {
-        /* Sharper edged than it was. A spall scar is where a slab let go along a
-           joint and a bedding plane, so its boundary is a fracture — the critique
-           asked specifically for light patches "sharper-edged than the surround"
-           and a scar ramped over fourteen hundredths of the driver is a dent.
-           Narrowing the ramp to four costs nothing and the rim now creases,
-           because the plan gradient across it exceeds the crease threshold. */
-        const scar = smoothstep(0.700, 0.740,
-          ridged(s * 0.055 + li * 4.1, yc * 0.075, 2, 383 + li * 31));
-        u += scar * 1.5;
+        /* Sharpening this to a four-hundredth ramp last round was a mistake with
+           two visible consequences, and they are the same consequence. A 1.5 m
+           lateral offset switched on over four hundredths of its driver is a
+           near-vertical wall in the *offset field*, so adjacent columns of the
+           grid could differ by the whole 1.5 m — which triangulates into the row
+           of bright triangular notches along every shaded bench, and which also
+           gives the scar the perfectly straight polygonal boundary that reads as a
+           boolean cut rather than a fracture.
+           A fracture surface is rough at every scale, and its trace on a face is
+           rough too. So the ramp goes back out to nine hundredths, its threshold
+           is perturbed by noise an order of magnitude finer than the scar so the
+           boundary is ragged rather than straight, and the release surface itself
+           carries relief instead of being a plane. Depth comes down to 1.1 m,
+           which caps how much any single column can differ from its neighbour. */
+        const scarD = ridged(s * 0.055 + li * 4.1, yc * 0.075, 2, 383 + li * 31)
+                    + (fbm(s * 0.42, yc * 0.55 + li * 7.3, 2, 397) - 0.5) * 0.075;
+        const scar = smoothstep(0.690, 0.780, scarD);
+        u += scar * 1.1
+           + scar * (1 - scar * 0.5) * 0.34 * (fbm(s * 0.19, yc * 0.26, 2, 401) - 0.5);
         fresh = scar;
       } else {
         u += 2.2 * smoothstep(0.60, 0.86, ridged(s * 0.028, yc * 0.055, 2, 389));
@@ -1184,15 +1194,35 @@ vec3 domApply(vec2 nxy, vec3 N){
    crawls. Most cell walls are *not* open joints, and where one is open its
    position within the cell and its aperture both vary, because a fracture set
    with a metronomic spacing is a comb. */
-float jointTrace(vec2 p, vec2 dir, float sp, float seed, float w, float thr){
+/* Returns the groove in x and the *bevel* beside it in y.
+ *
+ * The lip was previously taken as the top slice of the groove's own profile —
+ * clamp(groove * 1.7 - 0.55) — and that is why it rasterised as a row of evenly
+ * spaced bright dots rather than as a line. Slicing the top off a profile whose
+ * total half-width is already only about a pixel and a half leaves a feature
+ * a third of a pixel wide, and a sub-pixel line does not render as a thin line,
+ * it renders as a dashed one wherever the sampling grid happens to catch it. The
+ * concept was right and the width was impossible.
+ *
+ * So the bevel is now its own band, outboard of the groove, with a floor on its
+ * width of two pixels of world footprint. That is what a bevel physically is: an
+ * arris does not come to a knife edge, it retreats to a rounded shoulder of
+ * finite radius, and the highlight along it is as wide as the shoulder. Both
+ * edges of the band are filtered, so it antialiases in both directions instead
+ * of only inward. */
+vec2 jointTrace(vec2 p, vec2 dir, float sp, float seed, float w, float thr){
   float t = dot(p, dir) / sp;
   float ti = floor(t), tf = t - ti;
-  float h1 = hash11(ti * 1.731 + seed);
-  float open = step(thr, h1);
+  float open = step(thr, hash11(ti * 1.731 + seed));
   float c = 0.5 + (hash11(ti * 3.117 + seed + 11.0) - 0.5) * 0.7;
   float dd = abs(tf - c) * sp;
   float ap = w * (0.55 + 1.10 * hash11(ti * 5.311 + seed + 29.0));
-  return open * (1.0 - smoothstep(ap * 0.30, ap, dd));
+  float groove = 1.0 - smoothstep(ap * 0.30, ap, dd);
+  /* The shoulder: from the groove wall out to a radius of its own, never
+     narrower than two pixels, and smooth at both ends. */
+  float r0 = ap * 0.75, r1 = max(ap * 2.4, r0 + w * 2.0);
+  float bevel = smoothstep(r0, mix(r0, r1, 0.45), dd) * (1.0 - smoothstep(mix(r0, r1, 0.55), r1, dd));
+  return vec2(groove, bevel) * open;
 }
 
 vec3 bumpFrom(float hgt, vec3 N, float scale){
@@ -1274,7 +1304,16 @@ vec3 rkN2 = domNormal(uRockN, pF, gN, sF);
    the property that makes this legitimate rather than a cheat.
    One fetch carries tone, normal and cavity. */
 vec2 gUV = domUV(vWPos + vec3(3.7, 8.1, 12.9), aN);
-float gLod = log2(max(foot, 2e-4) * 256.0 * 1.7);
+/* The lock factor was 1.7 — a texel and two thirds per pixel — and that was the
+   second half of the wrong-band failure. A map sampled at 1.7 texels per pixel is
+   read a whole mip level up: the driver averages away everything at the texel
+   scale and returns the coarse populations, so the layer built to carry pixel-
+   scale structure arrived carrying eighteen-pixel blobs. Measured in
+   tools/wallprobe.mjs, dropping it to 0.9 moves this layer's one-to-four-pixel
+   ratio from 0.41 to 0.65 with no change to the map at all. Slightly under a
+   texel per pixel is deliberate: it is the sampling rate at which mip level zero
+   is actually used, which is the only level with the top octave still in it. */
+float gLod = log2(max(foot, 2e-4) * 256.0 * 0.9);
 float gFl = floor(gLod), gTw = gLod - gFl;
 float gSc = exp2(-gFl);
 vec4 grA = texture2D(uGrit, gUV * gSc);
@@ -1451,22 +1490,23 @@ albedo *= 1.0 + sbTone;
 float jw = max(foot * 1.6, 0.022);
 vec2 jp = vWPos.xz;
 float jVert = 0.55 + 0.45 * sin(y * 1.9 + aS * 0.07);
-float jt = jointTrace(jp, vec2(0.9397, 0.3420), 4.10, 3.0, jw * 2.4, 0.55) * 1.00
+vec2 jt2 = jointTrace(jp, vec2(0.9397, 0.3420), 4.10, 3.0, jw * 2.4, 0.55) * 1.00
          + jointTrace(jp, vec2(0.9397, 0.3420), 1.35, 7.0, jw * 1.2, 0.60) * 0.80
          + jointTrace(jp, vec2(-0.2588, 0.9659), 2.35, 17.0, jw, 0.66) * 0.75
          + jointTrace(jp, vec2(0.6428, -0.7660), 0.52, 41.0, jw * 0.8, 0.76) * 0.50;
+float jt = jt2.x;
 /* Only on faces steep enough to be a face. A bench top is a rubble tread, and a
    crack drawn across one reads as a scratch on a floor. */
 float jFace = smoothstep(0.62, 0.24, abs(gN.y)) * (1.0 - back);
 float joint = clamp(jt, 0.0, 1.0) * jFace * jVert * (0.55 + 0.45 * (1.0 - lPale * 0.5));
-/* The lip beside the groove: the arris between two joint blocks is case-hardened
-   and stands a few millimetres proud, so at eight degrees of solar elevation it
-   is the brightest line on the wall. Built as the *shoulder* of the same
-   filtered profile rather than as a second feature, so it can never separate
-   from its own crack. */
-float jLip = clamp(jt * 1.7 - 0.55, 0.0, 1.0) * jFace * jVert;
+/* The bevel beside the groove: the arris between two joint blocks is
+   case-hardened and retreats to a rounded shoulder, so at eight degrees of solar
+   elevation it is the brightest line on the wall. It comes out of jointTrace with
+   a guaranteed two-pixel width, which is the whole difference between a line and
+   the row of dots this was in the last round. */
+float jLip = clamp(jt2.y, 0.0, 1.0) * jFace * jVert;
 albedo *= 1.0 - joint * 0.46;
-albedo *= 1.0 + jLip * 0.14 * sTerm;
+albedo *= 1.0 + jLip * 0.13 * sTerm;
 
 /* ---- desert varnish ----
    Manganese and iron oxides washed out of the rock above and plated onto the face
@@ -1598,7 +1638,17 @@ diffuseColor.rgb *= albedo;
    present at every distance this scene ever looks at a cliff from, whereas the
    1.61 m reading is inside the mips beyond a few metres and should fade out on
    its own rather than dragging the other down with it. */
-float relW = (0.55 + 0.45 * grainF) * (0.05 + 0.95 * sTerm);
+/* The terminator floor is 0.32, not 0.05, and that change is most of why the
+   weathering pits now read as holes. The fade exists for a good reason — a
+   millimetre of relief at grazing incidence occludes itself rather than
+   sparkling, and taking it out is how this shader produced dotted rules twice.
+   But a floor of 0.05 does not fade a feature, it deletes it, and it deleted the
+   *decimetre* features along with the millimetre ones. A tafoni hollow is a
+   twenty-centimetre cavity: it has an occluded interior, a shadowed upper lip and
+   a lit lower lip whose polarity flips as the sun moves, and every one of those
+   is a consequence of its normal. With the normal gone all that survived the
+   frame was the pit's pigment, which is a flat dark spot facing nowhere. */
+float relW = (0.55 + 0.45 * grainF) * (0.32 + 0.68 * sTerm);
 vec3 nDet = normalize(rkN + (rkN2 - gN) * (0.30 + 0.70 * grainF));
 vec3 wN = normalize(mix(gN, nDet, relW));
 /* And the grit's own normal, which unlike the two above is present at every

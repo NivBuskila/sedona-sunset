@@ -592,8 +592,16 @@ export function makeRock(size = 1024) {
          outline is nibbled by noise finer than the pit the way the grains are,
          because a field of circles is as recognisable as a field of eggs. */
       const ptw = (pfbm(u * 3, v * 3, 3, 3, 5301) - 0.5) * 0.55;
+      /* Clustered by two envelopes, not one. A single 1.6 m patch field at a
+         third coverage still tiles a whole cliff at near-constant density, which
+         is what the last round shipped and what read as Swiss cheese. Real
+         cavernous weathering picks its ground: friable beds, alcove ceilings, the
+         lee of a seepage line. So a 6 m envelope decides whether this *stretch of
+         face* is susceptible at all — most of it is not — and the 1.6 m field
+         then places the honeycomb within it. */
+      const pitZone = smoothstep(0.42, 0.70, pfbm(u * 1, v * 1, 1, 2, 5351));
       const pitField = smoothstep(0.50, 0.82, pfbm(u * 4, v * 4, 4, 4, 5307))
-                     * (1 - lamHard * 0.62);
+                     * pitZone * (1 - lamHard * 0.62);
       const dish = (w, presT, rMin, rSpan, chip) => {
         if (w.id > presT) return 0;
         const rad = rMin + (w.id / presT) * rSpan;
@@ -654,7 +662,11 @@ export function makeRock(size = 1024) {
       let hh = broad * 0.20 + (lamHard - 0.5) * 0.085 + 0.055;
       if (grainH > hh) hh = grainH; else gi = -1;
       hh -= contact * 0.055 * (0.4 + 0.6 * (1 - lamHard));
-      hh += rimA * 0.055 - pit * 0.30 - flake * 0.085;
+      /* Deeper hollow, and a rim that stands twice as proud. Now that the pit is
+         carried by geometry rather than pigment it has to *be* geometry: a hollow
+         shallower than its own rim cannot occlude its interior, and it is the
+         occluded interior and the lit lower lip that make a hole read as a hole. */
+      hh += rimA * 0.105 - pit * 0.42 - flake * 0.085;
       h[i] = hh;
 
       /* ---- colour ----
@@ -688,8 +700,25 @@ export function makeRock(size = 1024) {
         else if (gv < 0.035) col = mixC(col, C(96, 78, 70), cover * 0.55);
       }
 
-      col = mixC(col, ROCK_DUST, rimA * 0.30);
-      col = mixC(col, ROCK_PITIN, pit * 0.62);
+      /* ---- the pit is a cavity, not a stain ----
+         This was the single most damaging thing in the last round, and the error
+         was one line: mixing 62% of a dark pigment into the pit interior. That
+         makes a pit *albedo*, and albedo survives the mip chain and the
+         terminator fade when a normal does not, so what reached the frame was a
+         dense field of flat dark blobs three to six pixels across with no rim, no
+         asymmetry and no response to the sun at all — fly-dirt on a scanned
+         negative. It also put a great deal of amplitude in the four-pixel band,
+         which is how the mean gradient rose eightfold while the ratio of one-pixel
+         to four-pixel energy did not move: the number was bought, not earned.
+         A tafoni pit is not a dark patch. It is a hole in a case-hardened rind.
+         What makes it dark is *occlusion*, which the height field already carries
+         into the cavity term and which flips its inner lighting as the sun moves
+         because it is geometry. The interior rock is the same rock: friable,
+         dust-lined, a shade duller, and that is all the pigment it gets. What
+         does get pigment is the rim — an indurated crust with efflorescent salt
+         on it, genuinely paler than the face and genuinely standing proud. */
+      col = mixC(col, ROCK_DUST, rimA * 0.46);
+      col = mixC(col, ROCK_PITIN, pit * 0.14);
       col = mixC(col, ROCK_HARD, flake * 0.34);
       col = mixC(col, mixC(col, ROCK_SOFT, 0.7), contact * 0.5);
 
@@ -753,12 +782,39 @@ export function makeRock(size = 1024) {
  * The normal's z is recovered in the shader, which is exact for a tangent-space
  * normal and free.
  */
+/* ---- and the spectrum, which is the whole design ----
+ *
+ * The first version of this map had populations at 14, 33 and 79 cells with
+ * relative heights 1.00, 0.40 and 0.155, combined by maximum. That is a very red
+ * spectrum: amplitude falling as roughly the wavelength, so the coarsest
+ * population dominates everything. It raised the mean per-pixel gradient by a
+ * factor of two and left the *ratio* of one-pixel to four-pixel gradient at 0.42
+ * against 0.54–0.75 measured on photographs of this rock — energy added in the
+ * wrong band. Isolated in tools/wallprobe.mjs this layer alone measured 0.41 at
+ * every distance while the rock map behind it measured 0.69–0.82, so the term
+ * added to fix the surface was the term holding it back.
+ *
+ * A weathered rock face is not one population of grains. It is roughness at
+ * every scale from the spall relief down through grain clusters and individual
+ * grains to the pitting left where cement has gone, and the amplitude falls only
+ * slowly with wavelength — near enough as its cube root over this range, which
+ * is what the measured ratio band implies. So the octaves are *summed* with
+ * amplitudes near that law rather than one of them winning by maximum: within an
+ * octave a packing is still the right model, because grains occupy space and do
+ * not ride on each other's backs, but across octaves a fractal surface is a sum.
+ *
+ * The finest terms are hashes rather than packings, because at two texels a
+ * Voronoi distance field is only an expensive way to make noise. They matter
+ * more than their amplitude suggests: shading responds to *slope*, and slope for
+ * a given amplitude goes as the reciprocal of the wavelength, so the last octave
+ * before the texel does most of the visible work.
+ */
 const GRIT = [
-  { f: 14, rMin: 0.21, rMax: 0.47, pres: 0.30, hgt: 1.00, flat: 0.55, seed: 9101 },
-  { f: 33, rMin: 0.24, rMax: 0.46, pres: 0.52, hgt: 0.40, flat: 0.66, seed: 9107 },
-  { f: 79, rMin: 0.27, rMax: 0.47, pres: 0.74, hgt: 0.155, flat: 0.78, seed: 9113 },
+  { f: 15, a: 1.00, rMin: 0.20, rMax: 0.48, pres: 0.34, flat: 0.55, seed: 9101 },
+  { f: 36, a: 0.78, rMin: 0.23, rMax: 0.47, pres: 0.48, flat: 0.64, seed: 9107 },
+  { f: 86, a: 0.61, rMin: 0.26, rMax: 0.47, pres: 0.66, flat: 0.74, seed: 9113 },
 ];
-for (const G of GRIT) G.hMax = G.hgt * G.flat;
+for (const G of GRIT) G.hMax = G.a * G.flat;
 
 export function makeGrit(size = 256) {
   const N = size * size;
@@ -771,70 +827,70 @@ export function makeGrit(size = 256) {
       const u = x / size;
       const i = y * size + x;
 
-      let gtop = 0, gi = -1, gcell = 0, gnorm = 0;
+      /* Each octave is a packing — grains occupy space and do not ride on each
+         other's backs — and the octaves are *summed*, because across scales a
+         weathered surface is a fractal and a fractal is a sum. Mean-removed per
+         octave so the total does not drift with the presence fraction. */
+      let hh = 0, tFine = 0;
       for (let L = 0; L < GRIT.length; L++) {
         const G = GRIT[L];
         const w = pworley(u * G.f, v * G.f, G.f, G.seed, 1.0);
-        if (w.id > G.pres) continue;
-        const t = w.id / G.pres;
-        const rad = G.rMin + Math.pow(t, 1.6) * (G.rMax - G.rMin);
-        if (w.f1 >= rad) continue;
-        /* Chipped, by noise finer than the grain itself. A circular plan makes
-           every grain an egg and a bed of eggs is caviar. */
-        const q = (w.f1 / rad) * (0.80 + 0.38 * pfbm(u * 96, v * 96, 96, 2, 9121));
-        if (q >= 1) continue;
-        const top = G.hMax * Math.pow(1 - q * q, 0.40);
-        if (top > gtop) { gtop = top; gi = L; gcell = w.id; gnorm = top / G.hMax; }
+        let top = 0, gnorm = 0;
+        if (w.id <= G.pres) {
+          const t = w.id / G.pres;
+          const rad = G.rMin + Math.pow(t, 1.6) * (G.rMax - G.rMin);
+          if (w.f1 < rad) {
+            /* Chipped, by noise finer than the grain itself. A circular plan
+               makes every grain an egg and a bed of eggs is caviar. */
+            const q = (w.f1 / rad) * (0.80 + 0.38 * pfbm(u * G.f * 4, v * G.f * 4,
+                                                         G.f * 4, 2, 9121 + L * 7));
+            if (q < 1) { top = G.hMax * Math.pow(1 - q * q, 0.40); gnorm = top / G.hMax; }
+          }
+        }
+        /* Sockets: the holes left where a grain has fallen out, one population
+           per octave. A weathered face is as much holes as grains, and the holes
+           are the darker half of the stipple — a layer that is only ever brighter
+           than the surface under it reads as dust, not as granularity. */
+        const ws = pworley(u * G.f * 1.37 + 11.0, v * G.f * 1.37, G.f * 1.37 | 0,
+                           G.seed + 401, 1.0);
+        let sock = 0;
+        if (ws.id < 0.30) {
+          const rs = 0.19 + (ws.id / 0.30) * 0.21;
+          if (ws.f1 < rs) sock = Math.pow(1 - (ws.f1 / rs) * (ws.f1 / rs), 0.7);
+        }
+        hh += (top - G.hMax * 0.30 - sock * G.hMax * 0.62) * 0.62;
+        /* Tone is carried mostly by the finer octaves on purpose: albedo
+           modulation has whatever spectrum it is given, unlike slope, which the
+           reciprocal of the wavelength already tilts upward. Weight rises with
+           octave index. */
+        const wt = 0.30 + 0.35 * L;
+        tFine += ((gnorm - 0.35) * 0.26 - sock * 0.30) * wt;
       }
 
-      /* Weathered-out grains: the sockets left where a grain has fallen away.
-         A weathered sandstone face is as much holes as grains, and the holes are
-         the darker half of the stipple — without them the layer is only ever
-         brighter than the surface it sits on and reads as dust rather than as
-         granularity. */
-      const pw = pworley(u * 21, v * 21, 21, 9131, 1.0);
-      let socket = 0;
-      if (pw.id < 0.34) {
-        const rad = 0.20 + (pw.id / 0.34) * 0.20;
-        if (pw.f1 < rad) socket = Math.pow(1 - (pw.f1 / rad) * (pw.f1 / rad), 0.7);
-      }
-
-      /* The interstitial cement between the grains, and nothing else: two
-         octaves at 40 and 96 cells, so the lowest frequency in the whole map is
-         the coarse grain population's own. */
-      const cement = pfbm(u * 40, v * 40, 40, 2, 9137);
-      let hh = cement * 0.09;
-      if (gtop > hh) hh = gtop; else gi = -1;
-      hh -= socket * 0.42;
+      /* The last octave before the texel, as hashes rather than packings, since
+         at two texels a Voronoi distance field is only an expensive way to make
+         noise. Two terms: one smoothed over a couple of texels, one per texel.
+         Their amplitude is small and their contribution is not, because slope for
+         a given amplitude goes as the reciprocal of the wavelength. */
+      const fine2 = pfbm(u * 128, v * 128, 128, 1, 9151) - 0.5;
+      const fine1 = hash2(x, y, 9143) - 0.5;
+      hh += fine2 * 0.115 + fine1 * 0.072;
       h[i] = hh;
-
-      /* Tone. Symmetric about zero deviation and *not* biased bright, which is
-         the distinction that matters: a grain is the same lithology as the cement
-         holding it, so the two differ by a shade, but the sockets where grains
-         have fallen out are genuinely dark and they are half the population. A
-         layer that is only ever brighter than the surface under it reads as dust;
-         one that goes both ways reads as granularity. Getting the *sign* right is
-         what separates stipple from confetti — not the amplitude, which has to be
-         substantial or the metric never moves. Measured against photographs the
-         per-pixel luminance contrast of a weathered sandstone face is eleven to
-         sixteen percent, so this is authored to reach it. */
-      let t = 0.5 + (cement - 0.5) * 0.15;
-      if (gi >= 0) {
-        const gv = (gcell * 173.7) % 1;
-        t += (gv - 0.5) * 0.30 * smoothstep(0.08, 0.55, gnorm);
-      }
-      t -= socket * 0.26;
-      t += (hash2(x, y, 9143) - 0.5) * 0.11;
-      tone[i] = clamp(t, 0, 1);
+      tone[i] = clamp(0.5 + tFine + fine2 * 0.13 + fine1 * 0.115, 0, 1);
     }
   }
 
-  const ao = aoFromHeight(h, size, 1, 5, 4.2);
+  /* One and two texels only. The cavity term has to sit at the top of the
+     spectrum for the same reason everything else here does; a wide-radius
+     occlusion is a low-frequency wash and would spend amplitude in the band that
+     is already too loud. */
+  const ao = aoFromHeight(h, size, 1, 3, 5.0);
   /* Slope, not relief: this map is read at every scale, so what has to be right
-     is the angle. A grain of radius a third of a cell standing half its radius
-     proud presents about thirty degrees at its flank, and 3.0 is what puts the
-     central difference there. */
-  const nrm = normalFromHeight(h, size, 3.0);
+     is the angle. With the spectrum flattened, the finest octaves dominate the
+     central difference, so the strength comes down — at 3.0 the summed field
+     produced normals lying past fifty degrees over most of the map, which is
+     shot blast rather than sandstone. */
+  const nrm = normalFromHeight(h, size, 1.9);
   const buf = new Uint8Array(N * 4);
   for (let i = 0; i < N; i++) {
     buf[i * 4] = clamp(tone[i], 0, 1) * 255;
