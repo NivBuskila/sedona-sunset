@@ -36,9 +36,14 @@ import path from 'node:path';
    to be, which is the sort of thing that is only noticed when a game stutters. */
 const UNATTENDED = process.env.RENDER_BUDGET === 'unattended' ||
   fs.existsSync(new URL('../.unattended', import.meta.url));
-const AFFINITY = UNATTENDED ? 0x3FF : 0xF00;
-const CORES = UNATTENDED ? 10 : 4;
-const CHILD_PRIO = UNATTENDED ? 'BelowNormal' : 'Idle';
+/* The core cap exists to stop a CPU rasteriser eating the machine. On the GPU
+   there is nothing to cap — the CPU only feeds draw calls — and pinning to four
+   idle cores there just starves the submission thread and hides the speedup. */
+const GPU_MODE = process.env.RENDER_GPU === '1' ||
+  fs.existsSync(new URL('../.gpu', import.meta.url));
+const AFFINITY = GPU_MODE ? 0xFFF : (UNATTENDED ? 0x3FF : 0xF00);
+const CORES = GPU_MODE ? 12 : (UNATTENDED ? 10 : 4);
+const CHILD_PRIO = GPU_MODE ? 'Normal' : (UNATTENDED ? 'BelowNormal' : 'Idle');
 
 /* Chromium keeps renaming the headless binary between versions, and Playwright
    may use either depending on channel; pin whichever shows up. */
@@ -54,9 +59,42 @@ function pinChildren() {
   return () => clearInterval(t);
 }
 
+/* Which rasteriser. SwiftShader is the default because it cannot touch the GPU
+   at all, so a capture can never steal frames from a game running on the same
+   machine. That safety costs about three orders of magnitude: a frame this scene
+   draws in under a millisecond on a discrete GPU takes two to three minutes on a
+   CPU rasteriser, and a full eight-view set takes twenty.
+
+   GPU mode exists for when the machine is free. Create a `.gpu` file in the
+   project root, or set RENDER_GPU=1. Delete it before gaming — a headless
+   capture on the real device is exactly the contention this harness was built to
+   avoid.
+
+   Note the two modes do not produce identical images: drivers differ from
+   SwiftShader in filtering, precision and dithering. GPU output is the one that
+   matches what a player sees, so it is the better reference; just do not compare
+   a GPU capture against a SwiftShader one pixel for pixel and read the
+   difference as a regression. */
+const USE_GPU = process.env.RENDER_GPU === '1' ||
+  fs.existsSync(new URL('../.gpu', import.meta.url));
+
+const RASTER_ARGS = USE_GPU
+  ? ['--use-angle=d3d11', '--enable-gpu-rasterization', '--enable-zero-copy',
+     '--ignore-gpu-blocklist', '--enable-webgl',
+     // Headless defaults to a software GL unless the GPU is explicitly allowed
+     // through; without these two the run silently falls back and the only
+     // symptom is that it is mysteriously still slow.
+     '--enable-features=Vulkan,VaapiVideoDecoder', '--use-gl=angle']
+  : ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
+     '--ignore-gpu-blocklist', '--enable-webgl',
+     // SwiftShader has no thread-count flag — it sizes its pool from
+     // hardware_concurrency — so affinity is the only real cap on it, and that
+     // is applied to the processes rather than passed in here.
+     '--js-flags=--single-threaded-gc'];
+
 export const LAUNCH_ARGS = [
-  '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
-  '--ignore-gpu-blocklist', '--enable-webgl', '--disable-lcd-text',
+  ...RASTER_ARGS,
+  '--disable-lcd-text',
   '--autoplay-policy=no-user-gesture-required',
   // One renderer process rather than one per frame/site. Chromium sizes its
   // process and thread pools from the machine's core count, then fights
@@ -64,10 +102,6 @@ export const LAUNCH_ARGS = [
   '--renderer-process-limit=1', '--disable-dev-shm-usage',
   '--disable-features=CalculateNativeWinOcclusion,site-per-process',
   '--disable-background-timer-throttling',
-  // SwiftShader has no thread-count flag — it sizes its pool from
-  // hardware_concurrency — so affinity is the only real cap on it, and that is
-  // applied to the processes rather than passed in here.
-  '--js-flags=--single-threaded-gc',
 ];
 
 /* A wrong content-type on a .js file is fatal rather than cosmetic: the browser
@@ -127,7 +161,54 @@ export async function capture(page, file) {
  * @param {{width?:number,height?:number,waitReady?:boolean,extraArgs?:string[],hash?:string}} opts
  * @param {(ctx:{page:any,url:string,errs:string[],browser:any}) => Promise<void>} body
  */
+/* One capture at a time, enforced rather than requested.
+ *
+ * Several agents build different systems in parallel and each is told to run a
+ * single capture — but nothing stopped them running one each, and five
+ * concurrent SwiftShader renders sharing four cores made the machine unusable
+ * while making every individual run slower. Politeness in a prompt is not a
+ * mutex.
+ *
+ * `wx` fails if the file exists, which makes creation atomic. The holder's pid
+ * goes in the file so a lock left by a hard-killed run can be told from a live
+ * one and broken; without that check a single SIGKILL would wedge every future
+ * capture. Released in run()'s finally, and tame.mjs's teardown covers the
+ * paths finally cannot.
+ */
+const LOCK = new URL('../.renderlock', import.meta.url);
+
+function alive(pid) {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+async function acquireLock(timeoutMs = 45 * 60 * 1000) {
+  const started = Date.now();
+  let announced = false;
+  for (;;) {
+    try {
+      fs.writeFileSync(LOCK, String(process.pid), { flag: 'wx' });
+      return () => { try { fs.unlinkSync(LOCK); } catch {} };
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      const held = Number(fs.readFileSync(LOCK, 'utf8').trim());
+      if (!held || !alive(held)) {          // stale — the holder died hard
+        try { fs.unlinkSync(LOCK); } catch {}
+        continue;
+      }
+      if (!announced) {
+        console.log(`… waiting for the capture held by pid ${held}`);
+        announced = true;
+      }
+      if (Date.now() - started > timeoutMs) {
+        throw new Error(`render lock held by pid ${held} for over ${Math.round(timeoutMs / 60000)} min`);
+      }
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+}
+
 export async function run(opts, body) {
+  const releaseLock = await acquireLock();
   const { width = 1280, height = 720, waitReady = true, extraArgs = [], hash = '',
           /* Which HTML to load. Defaults to the server's own `/` → index.html, so
              nothing changes for an ordinary run. `GAME_FILE` exists so a risky
@@ -159,7 +240,9 @@ export async function run(opts, body) {
     // without it the probe just hangs until Playwright's timeout.
     page.on('crash', () => errs.push('[crash] renderer process died'));
 
-    console.log(`→ ${url}   ${width}x${height}   ${CORES} cores, idle priority`);
+    console.log(`→ ${url}   ${width}x${height}   ` +
+      (GPU_MODE ? `GPU (d3d11), ${CORES} cores`
+                : `SwiftShader, ${CORES} cores, ${CHILD_PRIO.toLowerCase()} priority`));
     // 'load' would also wait on the streamed Poly Haven textures, which are
     // optional progressive upgrades; gate on the game object instead.
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120_000 });
@@ -173,10 +256,12 @@ export async function run(opts, body) {
     code = 1;
   } finally {
     // Order matters: kill the renderer before releasing the port, and never
-    // let a teardown error leave the browser running.
+    // let a teardown error leave the browser running. The lock goes last, so
+    // the next waiter does not start while this browser is still shutting down.
     await browser.close().catch(() => {});
     srv.close();
     unpin();
+    releaseLock();
   }
   if (errs.length) {
     console.log('\n─── page errors ───');
