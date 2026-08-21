@@ -147,8 +147,22 @@ for (const [name, , , pitch] of VIEWS) {
   console.log(`  pixels touched      ${(100 * changed / total).toFixed(3)}%   mean signed delta ` +
     `${(sum / Math.max(1, changed)).toFixed(2)}`);
   console.log(`  grain footprint     mean horizontal run ${meanRun.toFixed(2)} px`);
-  console.log(`  height above bed    mode ${(mode * 5 + 2.5).toFixed(0)} cm   p50 ${q[0.5]} cm   ` +
-    `p75 ${q[0.75]} cm   p90 ${q[0.9]} cm   p99 ${q[0.99]} cm   (n=${measured})`);
+  /* Only the mode is trustworthy here, and it is worth being explicit about why
+     rather than quoting a distribution that reads well and is not real. A
+     column of the image contains grains at every range at once, and this has
+     only the frame to work from, so it dates every grain in a column to the
+     range of the lowest one. A grain three metres away sitting high in a column
+     whose bed is forty metres out is credited with metres of height it does not
+     have, and the signature of that is exactly what the upper bins show: a flat
+     one-to-two percent per bin instead of a decay. The mode survives because
+     the bulk of grains hug the bed at every range, so it does not depend on the
+     range attribution being right.
+     The authority for the height law is the generator itself, which is closed
+     form -- y = bed + 4u(1-u) * apex over a known apex distribution -- and is
+     reported by the Monte Carlo over that arithmetic, not by this. */
+  console.log(`  height above bed    mode ${(mode * 5 + 2.5).toFixed(0)} cm   (trustworthy)`);
+  console.log(`                      p50 ${q[0.5]} p75 ${q[0.75]} p90 ${q[0.9]} cm ` +
+    `(range-confounded, see comment; n=${measured})`);
   console.log('  profile, 5cm bins   ' + Array.from(bins.slice(0, 16))
     .map((v) => (100 * v / Math.max(1, measured)).toFixed(0).padStart(3)).join(''));
 }

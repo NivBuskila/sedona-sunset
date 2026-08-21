@@ -55,29 +55,67 @@ for (let i = 0; i < argv.length; i++) {
   }
 }
 
-/* Sky in this scene is a bright, low-saturation, blue-or-white field and rock
-   is neither. The test is deliberately loose on hue — a hazed butte at 1,450 m
-   is nearly the colour of the sky behind it, which is the entire point of the
-   effect and also the reason a hue-only test cannot work. What separates them
-   reliably at that distance is that the sky is *brighter still*: nothing in
-   this scene is lit above the airlight it is seen through. */
-function isSky(r, g, b) {
-  const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
-  const s = mx ? (mx - mn) / mx : 0;
-  return mx > 200 && s < 0.22;
+/* Where the sky stops, per column.
+ *
+ * This used to be an absolute test — brighter than 200 and less saturated than
+ * 0.22 — and that was a latent bug that took a build with a different exposure
+ * to expose. When the scene's overall level rose, bands of sky that had been
+ * under the threshold crossed it and were suddenly excluded, so the same frame
+ * content scored differently and, worse, the *old* numbers had been counting
+ * the horizon as a ridgeline: on juniper's best strip, the top five bands held
+ * four thousand pixels at saturation 0.16 and B/G 1.08, which is sky, and the
+ * sky-to-rock transition below them was being credited as a step. A metric that
+ * is being used to decide whether the aerial perspective is working cannot move
+ * when the exposure moves.
+ *
+ * So the skyline is found geometrically instead, which is exposure-invariant
+ * and is also what a person means by it. Take the top few rows of the column as
+ * the sky reference, walk down, and cut at the first row that is either
+ * markedly darker than that reference or markedly more saturated. Hazed rock a
+ * kilometre away is close to the sky in both, which is the entire point of the
+ * effect — but it is never as bright as the sky it is seen through, because
+ * nothing in this scene is lit above its own airlight. */
+function skyline(img, x) {
+  let sr = 0, sg = 0, sb = 0;
+  const REF = 4;
+  for (let y = 0; y < REF; y++) {
+    const i = (y * img.w + x) * img.ch;
+    sr += img.px[i]; sg += img.px[i + 1]; sb += img.px[i + 2];
+  }
+  sr /= REF; sg /= REF; sb /= REF;
+  const smx = Math.max(sr, sg, sb), smn = Math.min(sr, sg, sb);
+  const ssat = smx ? (smx - smn) / smx : 0;
+  /* If the top of the frame is not sky at all, there is nothing to mask. */
+  if (smx < 90 || ssat > 0.30) return 0;
+  for (let y = REF; y < img.h; y++) {
+    const i = (y * img.w + x) * img.ch;
+    const mx = Math.max(img.px[i], img.px[i + 1], img.px[i + 2]);
+    const mn = Math.min(img.px[i], img.px[i + 1], img.px[i + 2]);
+    const s = mx ? (mx - mn) / mx : 0;
+    if (mx < 0.86 * smx || s > ssat + 0.13) return y;
+  }
+  return img.h;
+}
+
+const skyCache = new Map();
+function skylineOf(img, x) {
+  let m = skyCache.get(img);
+  if (!m) { m = new Int32Array(img.w).fill(-1); skyCache.set(img, m); }
+  if (m[x] < 0) m[x] = skyline(img, x);
+  return m[x];
 }
 
 function bandStats(img, x0, x1, y0, y1) {
-  let n = 0, ss = 0, sv = 0, sr = 0, sg = 0, sb = 0;
-  for (let y = y0; y < y1; y++) {
-    for (let x = x0; x < x1; x++) {
+  let n = 0, ss = 0, sv = 0, sg = 0, sb = 0;
+  for (let x = x0; x < x1; x++) {
+    const top = skylineOf(img, x);
+    for (let y = Math.max(y0, top); y < y1; y++) {
       const i = (y * img.w + x) * img.ch;
       const r = img.px[i], g = img.px[i + 1], b = img.px[i + 2];
-      if (isSky(r, g, b)) continue;
       const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
       if (mx < 10) continue;
       n++; ss += (mx - mn) / mx; sv += mx / 255;
-      sr += r; sg += g; sb += b;
+      sg += g; sb += b;
     }
   }
   if (!n) return null;

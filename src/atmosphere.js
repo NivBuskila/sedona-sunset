@@ -287,7 +287,15 @@ const DUST_TILE = 24;
    rock near 0.02, so a fully backlit grain at 0.35 reads clearly even over lit
    rock — which is correct, looking into a low sun dust washes over everything —
    while at ninety degrees the same grain falls to 0.012 and disappears. */
-const MOTE_FWD = 0.35;
+/* 0.55 puts the crossover — the background brightness at which a grain stops
+   glowing and starts darkening — at about 0.55 of display white when looking
+   into the sun, and below 0.05 when looking away from it. Measured at 0.35 the
+   crossover toward the sun sat at 0.39, which is under the value of lit rock,
+   so the motes extinguished against the very surfaces a low sun makes them
+   swarm over. Raising it does not weaken the law: away from the sun the phase
+   function is down by a factor of seventy and the grains are pure extinction
+   whatever this is set to. */
+const MOTE_FWD = 0.55;
 const MOTE_AMB = 0.006;
 
 function buildDust(count, sunDir, sunHue) {
