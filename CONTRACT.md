@@ -333,6 +333,26 @@ near floor has nearly all of it. At 0.70 a shaded vertical goes **pink, hue 331*
 it reads B/R 1.29 at a 23% channel spread against 1.12 at 11%, and the underside keeps its
 warm bounce — the bounce's *hue* is 21 at every value in the sweep, only its weight moves.
 
+### Blue chips on the wash floor — a scatter defect that a lit floor makes visible
+
+Not System 4's, but System 4's light is what reveals it, and the mechanism is the one
+above, so it is recorded here. `sys4d_wash_mid` has flat blue-violet quads scattered over
+the floor and the mid-ground. Counting pixels where B > R + 8 in the lower half of the
+frame: **2.33% in `sys4c`, 1.18% in `sys4d`**, mean rgb(64,59,92) and rgb(68,61,95). So
+they predate the sun move and the move halved them — but a dark blue chip on a dark floor
+is invisible and the same chip on a lit warm floor is not, which is why they appear new.
+
+Their B/G is **1.56**, against 0.54 for rock albedo and ~1.20 for the fill on a vertical.
+Nothing with a red-rock albedo can produce that. It is a **neutral-albedo element taking
+the up-facing sky fill**, which is B/R 1.93 at hue 218 — correct physics for a grey pebble
+under open sky, and scatter.js does place off-white Coconino and dark basalt clasts. Two
+things suggest it is nonetheless a defect rather than a shadowed grey pebble: the value is
+too extreme for one, and they read as *flat* chips, which points at a billboarded or
+single-quad element whose normal is pinned up so it takes the full sky lobe regardless of
+how it lies. Whoever owns the clast scatter should check the normals on the flat
+population. Do not fix it by cooling the fill; the fill is the one term here that measures
+correct.
+
 ### Deferred terrain defects, carried forward from System 1
 
 Not forgiven, only deferred. Revisit these after System 4 and System 7.
