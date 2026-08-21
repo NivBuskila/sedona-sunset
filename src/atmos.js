@@ -776,6 +776,28 @@ export function computeAtmosphere(over = {}) {
   const GAP_EL = (over.gapDeg ?? 15) * DEG;         // skyline inside the sun window
   const GAP_W = Math.cos((over.gapHalfWidthDeg ?? 22) * DEG);
   const GAP_W2 = Math.cos((over.gapHalfWidthDeg ?? 22) * DEG + 28 * DEG);
+  /* The corridor has two ends, and until now this model knew about one of them.
+     A wash is open up-canyon as well as down, and tools/_skydist.mjs bisects the
+     skyline at 24 bearings from four points along the traverse: at 100, 160 and
+     220 m along, the bearing directly *away* from the sun stands at 12 to 26
+     degrees, against the 40 to 55 the flanks stand at. Only at 40 m in, where
+     the walk starts inside the narrow part, does it close up to 50.
+     Leaving it at 45 mattered more than a missing doorway usually would, because
+     of which doorway it is. The away-from-sun hemisphere is exactly what a shaded
+     face in this corridor is turned toward, so it is the lobe that lights every
+     shaded wall in the set - and it was being filled with escarpment, which is
+     92 percent reflected sunlight at B/G 0.462 (tools/_fillterms.mjs). That lobe
+     came out at hue 10, warmer than the sunlit rock it is supposed to contrast
+     with, which is the whole of the "shade is brown, not blue" complaint from
+     both the critic and System 5.
+     Slightly wider than the sun's window and slightly higher: the measured band
+     of low skyline spans about 24 degrees either side of dead astern, and 20
+     degrees is the median of the three open viewpoints. The near viewpoint's 50
+     is not averaged in - it is a different place, not noise, and the probe height
+     lerp is what carries position-dependent aperture. */
+  const GAPA_EL = (over.gapAwayDeg ?? 20) * DEG;    // skyline up-canyon, astern
+  const GAPA_W = Math.cos((over.gapAwayHalfWidthDeg ?? 24) * DEG);
+  const GAPA_W2 = Math.cos((over.gapAwayHalfWidthDeg ?? 24) * DEG + 28 * DEG);
   const WALL_SKYVIS = over.wallSkyVis ?? 0.20;      // the far wall is in the same room
   /* Measured, not chosen. tools/skyview.mjs rays to the skyline and then shadow-
      rays from the hit toward the sun: the cosine-weighted sunlit fraction of the
@@ -815,12 +837,20 @@ export function computeAtmosphere(over = {}) {
     const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
     return t * t * (3 - 2 * t);
   };
-  const skylineSin = (d) => {
+  /* One skyline, used by both the escarpment's radiance and its coverage. They
+     used to compute it separately from the same constants, which is two places
+     to add a doorway to and one of them to forget. */
+  const skylineEl = (d) => {
     const hl = Math.hypot(d[0], d[2]) || 1e-6;
     const towardSun = (d[0] * sunH[0] + d[2] * sunH[2]) / hl;
-    const gap = smooth(GAP_W2, GAP_W, towardSun);
-    return Math.sin(SKYLINE + (GAP_EL - SKYLINE) * gap);
+    const gs = smooth(GAP_W2, GAP_W, towardSun);
+    const ga = smooth(GAPA_W2, GAPA_W, -towardSun);
+    /* The two windows face opposite bearings and their ramps end 50 and 52
+       degrees out, so they cannot both be open on one direction and adding them
+       is a selection rather than a sum. */
+    return SKYLINE + (GAP_EL - SKYLINE) * gs + (GAPA_EL - SKYLINE) * ga;
   };
+  const skylineSin = (d) => Math.sin(skylineEl(d));
   const wallRadiance = (d, out) => {
     const hl = Math.hypot(d[0], d[2]) || 1e-6;
     /* A wall seen in direction d faces back along -d, so its cosine to the sun
@@ -861,10 +891,7 @@ export function computeAtmosphere(over = {}) {
   const coverAt = (d) => {
     const y = d[1];
     if (y < 0) return 1;
-    const hl = Math.hypot(d[0], d[2]) || 1e-6;
-    const towardSun = (d[0] * sunH[0] + d[2] * sunH[2]) / hl;
-    const gap = smooth(GAP_W2, GAP_W, towardSun);
-    const hs = Math.sin(SKYLINE + (GAP_EL - SKYLINE) * gap);
+    const hs = skylineSin(d);
     return 1 - smooth(hs - 0.07, hs + 0.07, y);
   };
 
