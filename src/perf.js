@@ -136,11 +136,24 @@ import * as THREE from 'three';
    dependent fetches per ground pixel. Gating it would need a #define, so a tier
    change would recompile every lit program mid-play, and a compile hitch costs
    more than the term does in its whole lifetime. Leave it on at potato. */
+/* `samples` now governs *both* float targets the scene can be drawn into —
+   System 5's shimmer buffer and System 7's sceneRT — because which of the two
+   the scene lands in depends on whether System 5's stage is enabled, and a
+   ladder that set the sample count on only one of them made the frame's
+   antialiasing a side effect of another system's feature flag. It was, and it
+   cost two agents a contradictory measurement each. One number, applied to
+   whichever target the scene actually goes to.
+   Note that this is why it stays 0 at low and potato even though skyline
+   aliasing is the most visible defect at any tier: at that point the bandwidth
+   is the reason the tier exists. What carries those rungs instead is System 7's
+   along-edge resolve, which works on the encoded frame and so is independent of
+   the sample count — it is deliberately at full strength on every rung, being
+   about six texture fetches, which is less than the branch to skip it. */
 export const QTIERS = [
-  { name: 'high',   shadowFar: 4096, shadowNear: 2048, shimmer: true,  samples: 4, dust: 1.00, salt: 1.00, far: 4, softShadow: true,  post: { bloom: 4, dofTaps: 12, flare: 2 } },
-  { name: 'medium', shadowFar: 3072, shadowNear: 1536, shimmer: true,  samples: 2, dust: 0.70, salt: 0.70, far: 4, softShadow: true,  post: { bloom: 4, dofTaps:  6, flare: 2 } },
-  { name: 'low',    shadowFar: 2048, shadowNear: 1024, shimmer: true,  samples: 0, dust: 0.45, salt: 0.40, far: 3, softShadow: false, post: { bloom: 8, dofTaps:  0, flare: 1 } },
-  { name: 'potato', shadowFar: 1024, shadowNear:  512, shimmer: false, samples: 0, dust: 0.25, salt: 0.20, far: 2, softShadow: false, post: { bloom: 0, dofTaps:  0, flare: 0 } },
+  { name: 'high',   shadowFar: 4096, shadowNear: 2048, shimmer: true,  samples: 4, dust: 1.00, salt: 1.00, far: 4, softShadow: true,  post: { bloom: 4, dofTaps: 12, flare: 2, edge: 1 } },
+  { name: 'medium', shadowFar: 3072, shadowNear: 1536, shimmer: true,  samples: 2, dust: 0.70, salt: 0.70, far: 4, softShadow: true,  post: { bloom: 4, dofTaps:  6, flare: 2, edge: 1 } },
+  { name: 'low',    shadowFar: 2048, shadowNear: 1024, shimmer: true,  samples: 0, dust: 0.45, salt: 0.40, far: 3, softShadow: false, post: { bloom: 8, dofTaps:  0, flare: 1, edge: 1 } },
+  { name: 'potato', shadowFar: 1024, shadowNear:  512, shimmer: false, samples: 0, dust: 0.25, salt: 0.20, far: 2, softShadow: false, post: { bloom: 0, dofTaps:  0, flare: 0, edge: 1 } },
 ];
 
 const RSCALE = [1.0, 0.88, 0.78, 0.68, 0.58];
@@ -362,6 +375,10 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
       if (atmo.setShimmerSamples) atmo.setShimmerSamples(q.samples);
       atmo.setShimmer(q.shimmer);
     }
+    /* The same sample count on System 7's scene target. Set from the same rung
+       and unconditionally, because the whole point is that the frame's
+       antialiasing must not depend on which of the two paths is live. */
+    if (post && post.setSamples) post.setSamples(q.samples);
     /* setDrawRange under the hood rather than rebuilding the buffers: the
        attribute data is already resident, the particles are distributed by a
        hash over the index so any prefix of them is still an even scatter, and
@@ -472,7 +489,12 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
       `shimmer ${QTIERS[qi].shimmer ? QTIERS[qi].samples + 'x' : 'off'}  ` +
       `dust ${Math.round(dustN * QTIERS[qi].dust)}  salt ${Math.round(saltN * QTIERS[qi].salt)}\n` +
       `post bloom ${QTIERS[qi].post.bloom ? '1/' + QTIERS[qi].post.bloom : 'off'}  ` +
-      `dof ${QTIERS[qi].post.dofTaps || 'off'}  flare ${QTIERS[qi].post.flare}\n` +
+      `dof ${QTIERS[qi].post.dofTaps || 'off'}  flare ${QTIERS[qi].post.flare}  ` +
+      /* Read off the chain rather than off the tier, because the sample count it
+         actually carries depends on whether it owns the scene draw — and that is
+         the number someone asking "is this frame antialiased" needs. */
+      `aa ${post ? (post.samples ? post.samples + 'x own' : QTIERS[qi].samples + 'x s5') : '—'}` +
+      ` +edge\n` +
       gpuName;
   }
   /* F3, because that is where a debug readout lives and because it is the only

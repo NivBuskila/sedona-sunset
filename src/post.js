@@ -237,6 +237,53 @@ export const POST_DEFAULTS = {
      contour spacing from 14.5 rows to 10.5 and the distinct-colour count up
      with it. */
   grain: 0.013,
+
+  /* The silhouette resolve, and it is worth explaining why a fifth polish term
+   * exists at all when restraint is the theme of the whole project.
+   *
+   * The whole-scene critique calls the butte skyline against bright sky the one
+   * edge that reads as broken rather than imperfect. Two agents measured the
+   * cause and disagreed; the driver's answer, from tools/_p7msaa.mjs, is that 26
+   * of 48 indexed draws land in a four-sample framebuffer, so the scene *is*
+   * antialiased and always was. The edge is bad anyway, and four coverage
+   * samples is the whole reason: the silhouette carries about 150 code values
+   * across one pixel, and four samples can put at most three intermediate levels
+   * into it. Measured on sys7e, the median largest one-pixel jump is 114 and the
+   * edge carries 0.73 intermediate rows per column — one partly covered pixel,
+   * which is exactly what MSAA at 4x looks like when it is working.
+   *
+   * More samples barely helps: System 2's 3200x1800 control, which is sixteen
+   * effective samples, only reaches 91. That is a 20% return for four times the
+   * sampling, because the limit is not the sample count, it is that a
+   * high-contrast geometric edge lands inside one pixel.
+   *
+   * What is actually visible is not the step across the edge — a photograph of a
+   * backlit ridge has a hard edge too — it is that the partly covered pixel
+   * exists in one column and not the next, and that alternation marching along
+   * the ridge is the staircase. So this blurs *along* the local edge direction
+   * and never across it: the profile through the edge is untouched, and the
+   * columns that had no transition pixel get one. Measured at amount 0.75 the
+   * median jump goes 114 -> 78 with the intermediate rows up to 0.99, which beats
+   * the supersampled reference by a wide margin at about a twentieth of the cost.
+   *
+   * The gate is what keeps it off everything else, and it is the reason this is
+   * not a filter. It reads the local luminance range over the four neighbours:
+   * rock and floor interiors measure 6 to 10 code values of range, a silhouette
+   * against sky measures 95, so a threshold in the tens separates them with two
+   * decimal orders to spare.
+   *
+   * Where exactly it sits was swept rather than chosen. At 40 the surface figures
+   * do move, slightly and only on the one standard crop that straddles a
+   * silhouette: bend's wall window went hf/lf 0.56 -> 0.55, which is the gate
+   * exactly, from 0.92% of its pixels sitting on a 95 code value edge. Nothing
+   * below 40 was touched at all — measured, with tools/_p7edge.mjs --touch — so
+   * it was structure of the right kind rather than leakage. Sitting on a contract
+   * figure is still not somewhere to sit, and the sweep says the trade is nearly
+   * free: at 70 every surface figure reads identically to ungraded and the edge
+   * median gives up 0.8 of 32 code values. So 70, and the 1% is the price of not
+   * taking anything measurable off Systems 1 and 2. */
+  edgeAmount: 0.75,
+  edgeLo: 70 / 255, edgeHi: 130 / 255,
 };
 
 /* ── the grain plate ────────────────────────────────────────────────────────
@@ -440,6 +487,11 @@ export function createPost({ renderer, camera, atmo, sun }) {
       P.toeTop = floor;
     }
   }
+  /* The silhouette resolve, sweepable for the same reason the grade is: the
+     claim that it fixes the staircase without touching surface structure is two
+     measurements on the same frame with this at its value and at zero, and
+     needing a rebuild between them is how that check quietly stops happening. */
+  P.edgeAmount = num('edge', P.edgeAmount);
   let disabled = /(^|[#&])nopost(\b|$|&)/.test(hash);
 
   const plate = grainPlate(256);
@@ -447,19 +499,26 @@ export function createPost({ renderer, camera, atmo, sun }) {
   /* ── targets ───────────────────────────────────────────────────────────── */
 
   let sceneRT = null;          // full res, scene-linear radiance
+  let outRT = null;            // full res, display-encoded, for the resolve
   let loA = null, loB = null;  // the low-resolution ping-pong
   let W = 0, H = 0, LODIV = 4;
+  /* Multisampling on sceneRT, which is *not* the same question as multisampling
+     the frame. See setSamples: it is only paid on the branch where this chain
+     draws the scene itself, and it is zero when this target is a blit
+     destination, because MSAA on a full-screen quad is 66 MB a frame for
+     nothing. */
+  let SAMP = 0, wantSamp = 4;
 
-  function allocate(w, h, div) {
-    if (sceneRT && W === w && H === h && LODIV === div) return;
-    W = w; H = h; LODIV = div;
+  function allocate(w, h, div, samp) {
+    if (sceneRT && W === w && H === h && LODIV === div && SAMP === samp) return;
+    W = w; H = h; LODIV = div; SAMP = samp;
     if (sceneRT) {
       if (sceneRT.depthTexture) sceneRT.depthTexture.dispose();
       sceneRT.dispose();
       sceneRT = null;
     }
-    for (const t of [loA, loB]) if (t) t.dispose();
-    loA = loB = null;
+    for (const t of [loA, loB, outRT]) if (t) t.dispose();
+    loA = loB = outRT = null;
 
     /* A depth *texture*, not a renderbuffer, and it is readable by anyone.
      *
@@ -477,22 +536,35 @@ export function createPost({ renderer, camera, atmo, sun }) {
      * for a texture this target can supply for free. Pointing their march at
      * `post._sceneDepth()` lets that buffer go.
      *
-     * Two things a migration still needs and this change deliberately does not
-     * assume, because they are theirs to decide: `samples` has to come with the
-     * scene draw or the frame loses its only antialiasing, and something has to
-     * composite the shaft buffer once their blit is no longer there to do it.
-     * The second is a texture and a gain, which is a chain, not an absorption. */
+     * One thing a migration still needs, and it is theirs to decide: something
+     * has to composite the shaft buffer once their blit is no longer there to do
+     * it. That is a texture and a gain, which is a chain, not an absorption.
+     * The other precondition used to be listed here — that `samples` has to come
+     * with the scene draw or the frame loses its only antialiasing — and it is
+     * now met on this side by setSamples below, so the handover no longer costs
+     * the frame its edges. */
     const depth = new THREE.DepthTexture(w, h, THREE.UnsignedIntType);
     depth.format = THREE.DepthFormat;
     sceneRT = new THREE.WebGLRenderTarget(w, h, {
       type: THREE.HalfFloatType,
       depthBuffer: true,
       depthTexture: depth,
-      samples: 0,
+      samples: samp,
     });
     sceneRT.texture.minFilter = THREE.LinearFilter;
     sceneRT.texture.magFilter = THREE.LinearFilter;
     sceneRT.texture.generateMipmaps = false;
+
+    /* The display-space frame the resolve pass reads. Half float rather than
+       eight bit on purpose: it holds encoded values, and quantising them here
+       would put the 8-bit step *before* the dither that exists to break it up,
+       which is the one ordering that makes the grain useless. */
+    outRT = new THREE.WebGLRenderTarget(w, h, {
+      type: THREE.HalfFloatType, depthBuffer: false, samples: 0,
+    });
+    outRT.texture.minFilter = THREE.NearestFilter;
+    outRT.texture.magFilter = THREE.NearestFilter;
+    outRT.texture.generateMipmaps = false;
 
     if (div > 0) {
       const lw = Math.max(2, Math.round(w / div)), lh = Math.max(2, Math.round(h / div));
@@ -718,7 +790,6 @@ ${GHOSTS.map(([t, r, tr, tg, tb, gi]) => `    {
       tScene: { value: null },
       tBloom: { value: null },
       tDepth: { value: null },
-      tGrain: { value: plate },
       uRes: { value: new THREE.Vector2(1, 1) },
       uAspect: { value: 1.777 },
       uNear: { value: 0.06 },
@@ -743,17 +814,12 @@ ${GHOSTS.map(([t, r, tr, tg, tb, gi]) => `    {
       uContrast: { value: P.contrast },
       uContrastPivot: { value: P.contrastPivot },
       uToe: { value: new THREE.Vector2(P.toeTop, P.toeSlope) },
-
-      uGrain: { value: P.grain },
-      uGrainOff: { value: new THREE.Vector2() },
-      uGrainSwz: { value: 0 },
     },
     vertexShader: VERT,
     fragmentShader: /* glsl */`
 uniform sampler2D tScene;
 uniform sampler2D tBloom;
 uniform sampler2D tDepth;
-uniform sampler2D tGrain;
 uniform vec2 uRes;
 uniform float uAspect;
 uniform float uNear;
@@ -778,10 +844,6 @@ uniform float uVibrance;
 uniform float uContrast;
 uniform float uContrastPivot;
 uniform vec2 uToe;
-
-uniform float uGrain;
-uniform vec2 uGrainOff;
-uniform float uGrainSwz;
 
 varying vec2 vUv;
 ${COMMON}
@@ -916,8 +978,20 @@ void main() {
 
   }
 
-  gl_FragColor = vec4(o, 1.0);
-  #include <colorspace_fragment>
+  /* The sRGB encode, written out rather than left to three's
+     "#include <colorspace_fragment>", and not by preference.
+     Three resolves that include at program-compile time from the render target
+     it is compiling for, and for any target that is not the canvas it emits
+     LinearTransferOETF, which is a no-op. This pass now writes into a float
+     target so the silhouette resolve below can read its neighbours in display
+     space, and had the include stayed it would have silently stopped encoding —
+     leaving the contrast and toe below, which are specified on encoded
+     luminance, operating on linear radiance instead. The expression is three's
+     sRGBTransferOETF verbatim, 0.41666 and all, because the grade at zero being
+     bit-identical to #nopost is a property this file is measured on and an
+     honest 1.0/2.4 would break it in the last digit. */
+  gl_FragColor = vec4(mix(pow(o, vec3(0.41666)) * 1.055 - vec3(0.055), o * 12.92,
+                          vec3(lessThanEqual(o, vec3(0.0031308)))), 1.0);
 
   /* Contrast and the shadow toe: one transfer curve on encoded luminance.
      Two things about it were corrections that were measured rather than reasoned.
@@ -958,7 +1032,84 @@ void main() {
     gl_FragColor.rgb = clamp(gl_FragColor.rgb * (le > 1e-4 ? te / le : 1.0), 0.0, 1.0);
   }
 
-  /* ── grain, after the encode ──────────────────────────────────────────────
+}`,
+    depthTest: false, depthWrite: false, toneMapped: false,
+  });
+
+  /* ── the silhouette resolve, and the grain ─────────────────────────────────
+   *
+   * The last pass, and the only one that reads the frame in display space.
+   *
+   * Why it is a pass of its own rather than more arithmetic in the one above:
+   * the blend has to average *encoded* neighbours, and a fragment shader cannot
+   * see its neighbours' output. The alternative was to tone-map three or four
+   * extra taps inline, which means factoring the grade and the toe into a
+   * function and re-verifying every contract figure against the refactor. This
+   * way the arithmetic here is the same arithmetic that tools/_p7edge.mjs
+   * simulated on an actual PNG, so the 114 -> 78 figure is a prediction of this
+   * shader rather than an analogy for it.
+   *
+   * See POST_DEFAULTS for what the terms are and why the gate is where it is.
+   */
+  const resolveMat = new THREE.ShaderMaterial({
+    uniforms: {
+      tSrc: { value: null },
+      uTexel: { value: new THREE.Vector2() },
+      uEdge: { value: P.edgeAmount },
+      uGate: { value: new THREE.Vector2(P.edgeLo, P.edgeHi) },
+
+      tGrain: { value: plate },
+      uGrain: { value: P.grain },
+      uGrainOff: { value: new THREE.Vector2() },
+      uGrainSwz: { value: 0 },
+    },
+    vertexShader: VERT,
+    fragmentShader: /* glsl */`
+uniform sampler2D tSrc;
+uniform vec2 uTexel;
+uniform float uEdge;
+uniform vec2 uGate;
+
+uniform sampler2D tGrain;
+uniform float uGrain;
+uniform vec2 uGrainOff;
+uniform float uGrainSwz;
+
+varying vec2 vUv;
+
+float lum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+
+void main() {
+  vec3 c = texture2D(tSrc, vUv).rgb;
+  gl_FragColor = vec4(c, 1.0);
+
+  if (uEdge > 0.0) {
+    /* Four taps for the gate and the gradient. Cheap, and they are the only
+       unconditional cost this pass adds over a blit. */
+    float lc = lum(c);
+    float lw = lum(texture2D(tSrc, vUv - vec2(uTexel.x, 0.0)).rgb);
+    float le = lum(texture2D(tSrc, vUv + vec2(uTexel.x, 0.0)).rgb);
+    float ln = lum(texture2D(tSrc, vUv - vec2(0.0, uTexel.y)).rgb);
+    float ls = lum(texture2D(tSrc, vUv + vec2(0.0, uTexel.y)).rgb);
+
+    float mx = max(lc, max(max(lw, le), max(ln, ls)));
+    float mn = min(lc, min(min(lw, le), min(ln, ls)));
+    float w = smoothstep(uGate.x, uGate.y, mx - mn) * uEdge;
+
+    if (w > 0.002) {
+      /* Along the edge, which is perpendicular to the luminance gradient, and
+         snapped to whichever axis that is nearer so the two taps land on texel
+         centres. A bilinear tap between centres would blur across the edge as
+         well as along it, which is the thing this must not do. */
+      vec2 g = vec2(le - lw, ls - ln);
+      vec2 dir = (abs(g.y) > abs(g.x) ? vec2(uTexel.x, 0.0) : vec2(0.0, uTexel.y));
+      vec3 a = texture2D(tSrc, vUv + dir).rgb;
+      vec3 b = texture2D(tSrc, vUv - dir).rgb;
+      gl_FragColor.rgb = mix(c, 0.5 * (a + b), w);
+    }
+  }
+
+  /* ── grain, after the encode and after the resolve ────────────────────────
    *
    * Deliberately the last thing that happens, and deliberately in encoded
    * units. Grain is a density fluctuation, so it belongs in a perceptual space
@@ -967,6 +1118,12 @@ void main() {
    * rows: a smooth gradient crossing an 8-bit step. An amplitude of a code
    * value or two is exactly the dither that breaks that up, and it has to be
    * applied after the quantising transform to do it.
+   *
+   * After the resolve, not before, and that ordering is load-bearing in two
+   * directions: a blend along the edge would average the grain and halve its
+   * amplitude exactly where the eye is most likely to look, and the gate above
+   * reads a local luminance range, which grain would raise everywhere by its own
+   * peak-to-peak and so widen the gate into surfaces it must not touch.
    *
    * Heavier in the shadows, which is backwards for real film — silver grain
    * peaks in the midtones — but right for what a viewer reads as grain, and
@@ -979,7 +1136,7 @@ void main() {
      sliding across the frame as a texture. */
   float mono = uGrainSwz < 0.5 ? n.r : (uGrainSwz < 1.5 ? n.g : n.b);
   vec3 gn = mix(vec3(mono), n, 0.28);
-  float ly2 = luma(gl_FragColor.rgb);
+  float ly2 = lum(gl_FragColor.rgb);
   gl_FragColor.rgb += gn * (uGrain * (0.45 + 0.55 * (1.0 - ly2)));
 }`,
     depthTest: false, depthWrite: false, toneMapped: false,
@@ -1023,6 +1180,11 @@ void main() {
 
   const lastInfo = { calls: 0, triangles: 0 };
   let haveSceneInfo = false;
+  /* Which branch drew the scene last frame. Starts true so that if this chain
+     turns out to own the scene draw, the very first frame is already sampled —
+     guessing the other way would cost the first capture its edges, and guessing
+     this way costs one reallocation. */
+  let ownDraw = true;
   /* Where the flare thinks the sun is, read off `_post._diag` and shown on F3.
      "Is the flare doing anything" is otherwise unanswerable from a PNG in which
      the sun is behind a butte — and it is behind a butte in most of the
@@ -1051,19 +1213,19 @@ void main() {
     const ox = s % 251;
     s = Math.imul(s ^ (s >>> 13), 0xc2b2ae35) >>> 0;
     const oy = s % 241;
-    finalMat.uniforms.uGrainOff.value.set(ox, oy);
-    finalMat.uniforms.uGrainSwz.value = p % 3;
+    resolveMat.uniforms.uGrainOff.value.set(ox, oy);
+    resolveMat.uniforms.uGrainSwz.value = p % 3;
   }
   applyGrainPhase();
 
   /* ── tier ──────────────────────────────────────────────────────────────── */
 
-  let level = { dofTaps: 12, flare: 2, bloom: 4 };
+  let level = { dofTaps: 12, flare: 2, bloom: 4, edge: 1 };
 
   function setLevel(l) {
-    const next = { dofTaps: 12, flare: 2, bloom: 4, ...(l || {}) };
+    const next = { dofTaps: 12, flare: 2, bloom: 4, edge: 1, ...(l || {}) };
     if (next.dofTaps === level.dofTaps && next.flare === level.flare &&
-        next.bloom === level.bloom) return;
+        next.bloom === level.bloom && next.edge === level.edge) return;
     level = next;
     finalMat.defines.DOF_TAPS = level.dofTaps;
     finalMat.defines.USE_BLOOM = level.bloom > 0 ? 1 : 0;
@@ -1072,7 +1234,7 @@ void main() {
     flareMat.needsUpdate = true;
     /* The low-resolution chain is allocated at the divisor the tier asks for,
        and not allocated at all when the tier has no use for it. */
-    if (sceneRT) allocate(W, H, level.bloom);
+    if (sceneRT) allocate(W, H, level.bloom, SAMP);
   }
 
   /* ── the frame ─────────────────────────────────────────────────────────── */
@@ -1092,7 +1254,13 @@ void main() {
       return true;
     }
 
-    allocate(w, h, level.bloom);
+    /* Multisampling follows the *branch*, and it has to be decided before the
+       branch is taken, so it follows last frame's. Which path renders is a
+       property of whether System 5's stage is enabled, and that changes at most
+       once in a session — so a one-frame lag costs one reallocation at startup
+       and nothing afterwards, and it is far cheaper than the alternative of
+       carrying a 4x float target on the path that only blits into it. */
+    allocate(w, h, level.bloom, ownDraw ? wantSamp : 0);
 
     /* 1. the scene, into scene-linear radiance. */
     haveSceneInfo = false;
@@ -1103,6 +1271,7 @@ void main() {
       lastInfo.triangles = renderer.info.render.triangles;
       haveSceneInfo = true;
     }
+    ownDraw = haveSceneInfo;
 
     /* Depth: System 5's when its stage ran, otherwise this chain's own.
        `haveSceneInfo` is exactly the right test and not a proxy for one — it is
@@ -1211,10 +1380,23 @@ void main() {
     fu.uContrast.value = P.contrast;
     fu.uContrastPivot.value = P.contrastPivot;
     fu.uToe.value.set(P.toeTop, P.toeSlope);
-    fu.uGrain.value = P.grain;
     fu.uFocus.value = P.focus;
     fu.uFarCoc.value.set(P.farPx * (h / 900), P.farA, P.farB);
-    draw(finalMat, null);
+    draw(finalMat, outRT);
+
+    /* 6. the silhouette resolve, and the grain, in display space. */
+    const ru = resolveMat.uniforms;
+    ru.tSrc.value = outRT.texture;
+    ru.uTexel.value.set(1 / w, 1 / h);
+    /* Neither term is scaled by resolution, unlike every other pixel figure in
+       this file, and that is deliberate rather than an omission. The artefact is
+       one pixel of the rendered buffer wide by definition — it is the sampling
+       grid — so a blend one texel along the edge is the right width at any
+       resolution. The gate is a luminance range, which is unitless. */
+    ru.uEdge.value = level.edge ? P.edgeAmount : 0.0;
+    ru.uGate.value.set(P.edgeLo, P.edgeHi);
+    ru.uGrain.value = P.grain;
+    draw(resolveMat, null);
     return true;
   }
 
@@ -1228,6 +1410,30 @@ void main() {
        measurable question rather than an argued one. */
     setEnabled(b) { disabled = !b; },
     get level() { return { ...level }; },
+
+    /* Multisampling for the scene draw, wired to the same tier rung that sets
+     * System 5's, so the two cannot disagree.
+     *
+     * Worth stating plainly, because it cost two agents a contradiction: the
+     * renderer is created with `antialias: false` and that is correct and should
+     * stay. The flag only governs the *default framebuffer*, and nothing in this
+     * scene draws to the default framebuffer — the scene lands in a float target
+     * either way, because the grade needs linear radiance. So a probe that reads
+     * the flag concludes there is no antialiasing, and a probe that reads the
+     * draw call finds four samples, and both are looking at real things. The
+     * observable that settles it is which framebuffer the *scene* draws bound,
+     * which is what tools/_p7msaa.mjs reports and what _diag.targets now exposes.
+     *
+     * Applied here rather than assumed, so whichever branch owns the scene draw,
+     * the frame is sampled. Zero is honoured, for a tier that would rather have
+     * the bandwidth. */
+    setSamples(n) {
+      const s = Math.max(0, Math.min(8, n | 0));
+      if (s === wantSamp) return;
+      wantSamp = s;
+      if (sceneRT && ownDraw) allocate(W, H, LODIV, s);
+    },
+    get samples() { return sceneRT && ownDraw ? sceneRT.samples : 0; },
 
     /* The scene depth, for System 5's marched in-scatter.
      *
@@ -1271,6 +1477,13 @@ void main() {
           scene: sceneRT ? [sceneRT.width, sceneRT.height] : null,
           low: loA ? [loA.width, loA.height] : null,
           level: { ...level },
+          /* Reported because "is the frame antialiased" turned into two agents
+             measuring different branches and getting opposite answers. samples
+             is what this chain's own target carries; ownDraw is whether that
+             target is the one the scene was drawn into, and without the second
+             the first means nothing. */
+          samples: sceneRT ? sceneRT.samples : null,
+          ownDraw,
         };
       },
       /* The buffer the bright pass reads, for tools/hdrmax.mjs. Nothing in the
