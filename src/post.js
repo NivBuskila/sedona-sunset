@@ -165,6 +165,21 @@ export const POST_DEFAULTS = {
      something the next person has to rediscover. `#toe=` and `#toes=` sweep it. */
   toeTop: 0.111, toeSlope: 1.00,
 
+  /* The highlight shoulder, which is the toe's mirror and was missed for the same
+     reason the toe's clipping was: a pivoted gain has a symmetric problem at the
+     top and the clamp hides it. The line crosses one at 0.9854 encoded, so
+     everything above 251 code values flattened to white, and the chain was adding
+     0.31% of the lit-rock window at 250+ against 0.04% ungraded. That is small,
+     and it is worth having anyway for two reasons beyond the metric: clipped
+     highlights on sunlit sandstone are a photographic failure, and the sun disc is
+     now visible in the gap with the sky's range near it much wider than when this
+     curve was tuned, so the term most likely to clip next has just arrived.
+     0.86 is 219 code values, chosen to sit far above every measured window — lit
+     rock's mean max channel is 170 — so it cannot move a contract figure. 0.45
+     keeps the Hermite monotone, which needs both end slopes inside three times the
+     mean slope over the span, here 2.77. `#sh=` and `#shs=` sweep it, 0 is off. */
+  shoulderTop: 0.86, shoulderSlope: 0.45,
+
   /* Defocus. A physical thin-lens circle of confusion, so the shape of the
      falloff is not a free parameter: 24 mm at f/11 focused at 20 m on a 24 mm
      sensor. That is what a landscape photographer at golden hour is actually
@@ -555,6 +570,8 @@ export function createPost({ renderer, camera, atmo, sun }) {
      contribution gets separated from the rest of the grade. */
   P.toeTop = num('toe', P.toeTop);
   P.toeSlope = num('toes', P.toeSlope);
+  P.shoulderTop = num('sh', P.shoulderTop);
+  P.shoulderSlope = num('shs', P.shoulderSlope);
   /* `#dith=0` is the control for the banding measurement, which needs the run
      lengths with the dither out and everything else identical. */
   P.dither = num('dith', P.dither);
@@ -909,6 +926,7 @@ ${GHOSTS.map(([t, r, tr, tg, tb, gi]) => `    {
       uContrast: { value: P.contrast },
       uContrastPivot: { value: P.contrastPivot },
       uToe: { value: new THREE.Vector2(P.toeTop, P.toeSlope) },
+      uShoulder: { value: new THREE.Vector2(P.shoulderTop, P.shoulderSlope) },
     },
     vertexShader: VERT,
     fragmentShader: /* glsl */`
@@ -941,6 +959,7 @@ uniform float uVibrance;
 uniform float uContrast;
 uniform float uContrastPivot;
 uniform vec2 uToe;
+uniform vec2 uShoulder;
 
 varying vec2 vUv;
 ${COMMON}
@@ -1150,9 +1169,37 @@ void main() {
     float k = mix(1.0, uContrast, uGrade);
     float p = uContrastPivot;
     float A = uToe.x;
+    float B = uShoulder.x;
     float le = luma(gl_FragColor.rgb);
     float te;
-    if (le >= A || A <= 0.0) {
+    if (B > 0.0 && le > B) {
+      /* The shoulder, which is the toe's mirror and exists for the same reason:
+         a pivoted gain does not only lift the top of the range, it lifts part of
+         it past one, and the clamp that catches it is a hard clip. At k 1.03 and
+         p 0.5 the line crosses one at 0.9854 encoded, so everything from 251 code
+         values up flattened to white — measured on lit rock as 0.31% of the window
+         at 250+ against 0.04% ungraded, and 0.02% at 254+ against 0.00%.
+         So above shoulderTop the line is replaced by a Hermite that matches its
+         value and slope there and lands on exactly (1, 1) with slope
+         shoulderSlope. One is reachable only from one, so nothing below white
+         can be clipped to white, which is the same guarantee the toe gives at the
+         other end, and this time it holds after rounding too: the curve is below
+         the line everywhere above the knee, so it cannot round up to 255 where the
+         line would not have.
+         Placed at 0.86 encoded, which is 219 code values, deliberately far above
+         anything the measured windows contain — lit rock's mean max channel is 170
+         — so it cannot move a contract figure even in principle. And luminance
+         only, so like every other term in this curve it is a scalar multiply and
+         leaves HSV saturation and hue exactly where they were. */
+      float s1 = mix(1.0, uShoulder.y, uGrade);
+      float vB = (B - p) * k + p;
+      float h = 1.0 - B;
+      float u = (le - B) / h, u2 = u * u, u3 = u2 * u;
+      te = vB * (2.0 * u3 - 3.0 * u2 + 1.0)
+         + h * k  * (u3 - 2.0 * u2 + u)
+         +           (-2.0 * u3 + 3.0 * u2)
+         + h * s1 * (u3 - u2);
+    } else if (le >= A || A <= 0.0) {
       te = clamp((le - p) * k + p, 0.0, 1.0);
     } else {
       float s0 = mix(1.0, uToe.y, uGrade);
@@ -1607,6 +1654,7 @@ void main() {
     fu.uContrast.value = P.contrast;
     fu.uContrastPivot.value = P.contrastPivot;
     fu.uToe.value.set(P.toeTop, P.toeSlope);
+    fu.uShoulder.value.set(P.shoulderTop, P.shoulderSlope);
     fu.uFocus.value = P.focus;
     fu.uFarCoc.value.set(P.farPx * (h / 900), P.farA, P.farB);
     draw(finalMat, outRT);
