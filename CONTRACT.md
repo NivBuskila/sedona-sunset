@@ -710,6 +710,66 @@ far more than it made it redder, and darker is what raised the number. Correctin
 scene's own stratigraphy was still the right thing to do — it removes a surface model that was
 indefensible on its own terms — but it was never going to recover a level effect.
 
+### The gate was a geometry problem, and the wall was grazed at 88 degrees
+
+**The whole evening of dimming the fill was fighting the wrong thing.** The wall takes a cosine of
+`-sin(azimuth + 7.5)` on the beam, which at azimuth −9 is **0.026** — the surface the gate's
+denominator is measured on was lit at 88 degrees of incidence. That is why the measured gate read
+0.428 while this model's own prediction for a *sun-facing* vertical is 0.189. The fill was never the
+problem; the denominator was.
+
+Two levers, and `tools/expose.mjs` separates them by inverting an ungraded capture through the exact
+ACES curve, changing the level in scene-linear, and re-encoding:
+
+| lever | gate | sunlit V | lit sat | shaded face |
+| --- | --- | --- | --- | --- |
+| unchanged | 0.428 | 0.552 | 0.672 | 19.68 cv |
+| exposure ×1.30 | **0.467** | 0.617 | 0.636 | 25.77 cv |
+| sun only ×1.50 | **0.363** | 0.625 | 0.641 | 19.68 cv |
+
+**Global exposure moves the gate the wrong way**, and that is worth knowing before anyone reaches
+for it: the curve is compressive, so the shaded numerator sits on a steeper part of it than the
+sunlit denominator and rises faster. Raising the level helps saturation and V either way, but only a
+*sun-side* raise helps the gate, and the sun's irradiance is derived from the atmosphere solve
+rather than being a dial. So the lever is where the sun is.
+
+Measured, nine captures over the azimuth-elevation plane, against the bands: wall V 0.59–0.73, wall
+saturation 0.615–0.626, gate 0.15–0.25, floor grad/L 0.12–0.16.
+
+| az | el | wall V | wall sat | gate | floor L | floor grad/L |
+| --- | --- | --- | --- | --- | --- | --- |
+| −9 | 11 | 0.563 | 0.666 | 0.343 | 0.137 | 0.192 |
+| −11 | 11 | 0.662 | 0.654 | 0.284 | 0.052 | 0.230 |
+| −13 | 11 | 0.740 | 0.631 | **0.243** | 0.052 | 0.230 |
+| −12 | 13 | 0.750 | 0.601 | 0.269 | 0.062 | 0.210 |
+| −13 | 14 | 0.797 | 0.569 | 0.258 | 0.067 | 0.200 |
+| −11 | 15 | 0.776 | 0.569 | 0.286 | 0.272 | **0.149** |
+| −10 | 15 | 0.752 | 0.579 | 0.301 | 0.430 | **0.157** |
+| **−9** | **15** | **0.725** | 0.589 | 0.338 | 0.469 | **0.130** |
+| −13 | 17 | 0.844 | 0.516 | 0.273 | 0.127 | 0.099 |
+
+Elevation and azimuth do different jobs and the table separates them cleanly. **Elevation fixes
+everything except the gate**: at azimuth −9, going 11 to 15 puts wall V inside its band, floor
+grad/L inside its band from above it, brings saturation down from over the top of the
+real-photograph range into it, moves hue toward target, and makes the floor three times brighter
+rather than dimmer. **Azimuth is the only thing that moves the gate**, because it is the only thing
+that changes the wall's cosine — −13 takes the gate to 0.243, inside its band for the first time in
+the project, and costs 62 percent of the floor's level.
+
+Shipped as azimuth −9, elevation 15: the elevation-only move, because it takes four figures toward
+band and spends nothing. The gate stays where it is at 0.338, and closing it needs either the
+azimuth trade above or the toe. The one real cost is shadow length, 5.1 times the height of what
+casts it down to 3.7 — still long, but a brief-level property and recorded as spent.
+
+And the azimuth conflict is now fully pinned, because `-sin(azimuth + 7.5)` changes sign at −7.5:
+**below that the wall is lit and the sun disc is blocked; above it the disc can clear and the wall
+is past its own terminator.** `tools/sundisc.mjs` over az −16…−4 by 2 and el 11/13/15 finds the disc
+clear in all four views only at azimuth −4, or −6 at elevation 15. Azimuth −4 gives the wall a
+cosine of −0.061, which is to say no direct light at all. The sun disc and the lit wall cannot both
+be had at this corridor heading, and the disc is one view's composition while the wall carries three
+measured gates. At the shipped elevation of 15 the disc does clear in `wash_low`, which is the free
+part of it.
+
 Which points the remaining 0.040 somewhere useful rather than at the gate. **The sunlit wall is
 below its own band**: `wall_lit` V measures 0.563 against a documented 0.59–0.73. Level is the
 lever, and there are two of them — the shaded face is the gate's numerator and raising it is

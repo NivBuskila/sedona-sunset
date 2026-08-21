@@ -51,8 +51,40 @@ import * as THREE from 'three';
    reference photographs sit at, because a sun that clears the skyline rakes the
    face instead of grazing it below the terminator. Eleven degrees is still
    forty minutes of golden hour, and the shadow is five times the height of what
-   casts it rather than seven. */
-export const SUN_EL_DEG = 11.0;
+   casts it rather than seven.
+
+   Eleven to fifteen, because the sunlit wall was below its own band and the only
+   physical lever on it is where the sun is. The wall takes a cosine of
+   -sin(azimuth + 7.5) on the beam, which is 0.026 here — the "sunlit" wall was
+   grazed at 88 degrees of incidence, and no exposure fixes a surface with no light
+   on it. That is also why the shadow-to-sunlit gate read 0.428 when this model's
+   own prediction for a *sun-facing* vertical is 0.189: the gate's denominator was
+   a wall that was barely lit, and the whole evening of dimming the fill was
+   fighting a geometry problem.
+
+   Measured, three views, azimuth held at -9 so nothing that depends on the sun's
+   bearing moves:
+
+       el    wall V   wall sat   hue    gate    floor L   floor grad/L
+       11     0.563     0.666    13.6   0.343    0.137       0.192
+       15     0.725     0.589    14.3   0.338    0.469       0.130
+
+   Wall V enters its 0.59-0.73 band, floor grad/L enters the 0.12-0.16 band it was
+   above, saturation comes down from over the top of the real-photograph range into
+   it, hue moves toward its target, and the floor gets brighter rather than dimmer
+   — this does not spend the lit floor to buy the wall, which was the constraint.
+
+   The gate is the one thing elevation does not fix, and the reason is worth
+   keeping: raising the sun lights the shaded face's surroundings too, so numerator
+   and denominator rise together. Only azimuth separates them, because only azimuth
+   changes the wall's cosine. Measured at el 11: azimuth -13 takes the gate to
+   0.243, inside its band for the first time, and darkens the floor by 62 percent.
+   That trade is not mine to make.
+
+   The cost is shadow length: at fifteen degrees a shadow is 3.7 times the height
+   of what casts it rather than 5.1. Still long, and still golden hour, but it is a
+   brief-level property and it is recorded here as spent rather than free. */
+export const SUN_EL_DEG = 15.0;
 /* Off the corridor axis, and further than it looks like it should be.
    The provisional rig had this at +3.15 degrees. Two things are wrong with that
    and both were measured rather than reasoned about, because reasoning about it
