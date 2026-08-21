@@ -88,6 +88,15 @@ class Wind {
     this.CAP_LO = this.t0 + 2;
     this.CAP_HI = this.t0 + 46;
     this.pump(this.t0, 48);
+    /* And do not *assume* it: the schedule is random, and a window that happens
+       to contain no gust would give a capture set with no moving sand anywhere
+       in it — a silent failure that looks like the feature working. Extend
+       until there is one, or give up at three minutes and let the base wind
+       carry it. */
+    for (let i = 0; i < 4 && !this.gustsInWindow(); i++) {
+      this.CAP_HI += 34;
+      this.pump(this.t0, this.CAP_HI - this.t0 + 2);
+    }
 
     this.state = { gust: 0, sal: 0, dirX: Math.sin(WIND_HEADING), dirZ: Math.cos(WIND_HEADING), speed: 0.5 };
   }
@@ -103,6 +112,11 @@ class Wind {
       this.seen.add(k);
       this.gusts.push({ t0: g.t0, dur: g.dur, peak: g.peak, char: g.char === undefined ? 0.5 : g.char });
     }
+  }
+
+  /** Does the deterministic capture window contain any gust at all? */
+  gustsInWindow() {
+    return this.gusts.some((g) => g.t0 + g.dur > this.CAP_LO && g.t0 < this.CAP_HI);
   }
 
   /**
@@ -145,7 +159,14 @@ class Wind {
     const g = Math.min(1, base + gsum);
     const heading = WIND_HEADING + 0.26 * Math.sin(t * 0.021 + 0.8);
     o.gust = g;
-    o.sal = Math.min(1, sal);
+    /* A floor under the still state, from the bed wind rather than from any
+       gust. Below the threshold friction velocity the *bed* is static, but the
+       few most exposed grains on the most exposed crests are not: a desert on a
+       quiet evening always has a little creep somewhere. It matters here for a
+       reason beyond physics — absolute zero everywhere reads as "the feature is
+       broken", where two or three grains moving on one crest reads as "nothing
+       is happening", and those are very different frames. */
+    o.sal = Math.min(1, sal + 0.11 * smoothstep(0.11, 0.30, base));
     o.heading = heading;
     o.dirX = Math.sin(heading);
     o.dirZ = Math.cos(heading);
@@ -159,13 +180,15 @@ class Wind {
    * the window's contents never change after construction — so `walkTo(46)`
    * twice is the same weather twice, to the last grain.
    *
-   * The multiplier is irrational-ish against the window length on purpose, so
-   * that the eight standard viewpoints do not all land on the same phase of the
-   * same gust and half the capture set is not accidentally identical weather.
+   * One second of weather per metre walked, which is the simplest mapping there
+   * is and deliberately not tuned: picking a multiplier that lands the
+   * interesting viewpoints inside a gust would be arranging the weather for the
+   * camera, and the whole point of driving this from System 6 is that the
+   * weather is not arranged.
    */
   captureTime(d) {
     const span = this.CAP_HI - this.CAP_LO;
-    let u = ((+d || 0) * 0.6137) % span;
+    let u = (+d || 0) % span;
     if (u < 0) u += span;
     return this.CAP_LO + u;
   }
@@ -218,7 +241,7 @@ float aHG(float g, float c) {
    the Mie lobe that produces it. These are the individual grains you can pick
    out inside it, and the count and tile are set to put a comfortable scatter of
    them across the frame rather than to build a volume. */
-const DUST_TILE = 52;
+const DUST_TILE = 60;
 
 function buildDust(count, sunDir, sunTint) {
   const g = new THREE.BufferGeometry();
@@ -307,18 +330,18 @@ void main() {
   vec3 e2 = cross(e1, uSun);
   float b1 = dot(p, e1), b2 = dot(p, e2);
   float shaft = aNoise(vec2(b1 * 0.075, b2 * 0.045));
-  shaft = 0.30 + 1.45 * smoothstep(0.34, 0.86, shaft);
+  shaft = 0.12 + 1.90 * smoothstep(0.30, 0.80, shaft);
   /* Air below the bank tops is in the wall's shadow at this solar elevation,
      so the shaft only exists where the light can reach. */
   shaft *= mix(0.22, 1.0, smoothstep(0.6, 5.5, h));
 
   vA = dens * shaft * uDrive;
-  vA *= 1.0 - smoothstep(TILE * 0.30, TILE * 0.49, dist);
+  vA *= 1.0 - smoothstep(TILE * 0.32, TILE * 0.48, dist);
   vPhase = dot(normalize(toEye), -uSun);
 
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;
-  float px = uPix * aux.y * 0.010 / max(0.35, dist);
+  float px = uPix * aux.y * 0.015 / max(0.35, dist);
   /* Below a pixel a point stops shrinking and starts having to lose energy
      instead, or the field gets brighter with distance as more motes crowd into
      each pixel and each one still paints a whole one. */
@@ -339,7 +362,7 @@ void main() {
      roughly what a 2-micron mineral grain does and is why dust is a nuisance
      in front of a low sun and invisible behind you. */
   float ph = min(20.0, aHG(0.62, vPhase) / aHG(0.62, 0.0));
-  float amp = 0.0045 * (0.16 + ph);
+  float amp = 0.013 * (0.16 + ph);
   vec3 c = uTint * amp * vA * s;
   gl_FragColor = vec4(c, 1.0);
   #include <tonemapping_fragment>
@@ -823,7 +846,7 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
   const ground = bakeGround(terrain, path);
   const bakeMs = performance.now() - t0;
 
-  const dust = buildDust(9000, sunDir, sunTint);
+  const dust = buildDust(13000, sunDir, sunTint);
   const salt = buildSaltation(11000, ground, sunTint);
   scene.add(dust, salt);
 

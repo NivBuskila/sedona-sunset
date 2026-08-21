@@ -116,9 +116,19 @@ const Y0 = 0;
  * airlight that FOG measures. RAY is Rayleigh's, near-isotropic and lit by the
  * whole dome; AMB and FWD are the dust's, and they run it from 0.145 to 0.445
  * of the sky's luminance across the azimuth. */
-const RAY = 0.19;
-const AMB = 0.145;
-const FWD = 0.30;
+/* Measured, not derived. The first pass at these was computed from the model
+ * and landed the far field five times too dark, because the analytic estimate
+ * assumed a rock albedo and a lit-face radiance that the scene does not have —
+ * System 4's exposure and the beam's actual cosine at these faces put the far
+ * buttes far lower than the arithmetic said. Numbers here are set from
+ * tools/layers.mjs on b1_sun_gap, which reported the far ridge at V 0.38 and
+ * B/G 1.01 — a cold grey silhouette where a mass a kilometre away at ten
+ * degrees off a low sun should be a warm lift. Raising FWD against RAY moves
+ * both: the forward lobe is the warm term and the Rayleigh term is the neutral
+ * one whose only job is to make the *anti*-sun distance blue. */
+const RAY = 0.16;
+const AMB = 0.20;
+const FWD = 0.78;
 /* How far the forward lobe's colour goes toward the raw beam hue. The beam at
    air mass 6.86 is strongly orange and a haze that colour is a sepia filter;
    what the aureole actually looks like is a warm white, because most of what
