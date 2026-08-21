@@ -158,7 +158,7 @@ function trace(img, x0, x1, y0, y1) {
  * feature measured along its length, which is the only thing a displacement
  * figure can be about. It also removes the need to know the junction's row in
  * advance — give it a generous band and it locks onto the dominant contour. */
-function traceTracked(img, x0, x1, y0, y1, win = 3) {
+function traceTracked(img, x0, x1, y0, y1, win = 7, maxGap = 6) {
   const grad = (x, y) => Math.abs(lum(img, x, y + 1) - lum(img, x, y - 1));
   const sub = (x, y) => {
     const a = grad(x, y - 1), b = grad(x, y), c = grad(x, y + 1);
@@ -176,17 +176,46 @@ function traceTracked(img, x0, x1, y0, y1, win = 3) {
   }
   if (sx < 0 || sv < 6) return { ys: [], miss: x1 - x0, seed: null };
 
+  /* Follow the contour, with three properties the first version lacked and
+   * needed once the warp got stronger:
+   *
+   * A wider window. At +-3 px a displacement of a pixel or two, on a contour that
+   * is also sloping, walks out of the search band and the walk stops. That is how
+   * measuring the *fixed* effect cut the usable sample from 236 columns to 50 —
+   * the tool got worse exactly as the thing it measures got better, which is the
+   * most misleading way for an instrument to fail.
+   *
+   * Gap tolerance. A single column where the gradient dips under threshold is a
+   * cobble edge crossing the contour, not the end of it. Breaking on the first
+   * miss threw away everything past the first blemish; now a run of misses has to
+   * accumulate before the walk gives up, and skipped columns are simply absent
+   * from the trace rather than terminating it.
+   *
+   * A slope predictor. The junction recedes across the frame, so the contour has
+   * a real gradient; centring the next search on the last position biases every
+   * step against that slope. Centring it on a short-run extrapolation removes the
+   * bias, and it lets the window stay tight enough to keep feature identity. */
   const out = new Map();
   const walk = (dir) => {
-    let prev = sy;
+    let prev = sy, slope = 0, gap = 0;
     for (let x = sx + dir; x >= x0 && x < x1; x += dir) {
+      const pred = prev + slope;
+      const lo = Math.max(y0 + 1, Math.round(pred) - win);
+      const hi = Math.min(y1 - 2, Math.round(pred) + win);
       let by = -1, bv = 0;
-      for (let y = Math.max(y0 + 1, prev - win); y <= Math.min(y1 - 2, prev + win); y++) {
+      for (let y = lo; y <= hi; y++) {
         const g = grad(x, y);
         if (g > bv) { bv = g; by = y; }
       }
-      if (by < 0 || bv < 6) break;
+      if (by < 0 || bv < 6) {
+        if (++gap > maxGap) break;
+        continue;
+      }
+      gap = 0;
       out.set(x, sub(x, by));
+      /* dy per step taken, in whichever direction this walk is going. Smoothed,
+         so one noisy step cannot steer the walk off the feature. */
+      slope = 0.7 * slope + 0.3 * (by - prev);
       prev = by;
     }
   };
@@ -258,6 +287,50 @@ if (argv.includes('--selftest')) {
   console.log('\nA paired figure near A means the estimator is faithful at that scale.');
   console.log('A jitter figure far below A is the second difference rejecting the');
   console.log('smooth part of the warp — by design, and fatal if read as displacement.');
+
+  /* ---- and the tracker, on the case that caught it out ---------------------
+   *
+   * The tracked contour is a separate mechanism from the estimators and needs its
+   * own control, because its failure mode is not a wrong number — it is a smaller
+   * sample, silently. When the junction warp got stronger the tracker lost 79% of
+   * its columns and still reported a confident figure on what was left, which is
+   * the instrument getting worse exactly as the effect got better.
+   *
+   * So: a *sloping* edge, which the junction is, with a competing weaker edge
+   * nearby for it to be tempted by, under a known displacement. What matters here
+   * is columns kept, and that the recovered amplitude does not drift when the
+   * walk has to work for it. */
+  console.log('\ntracked contour on a sloping edge with a decoy 14 px away');
+  console.log('   A   slope   columns kept   paired MAD   paired/A');
+  const synth2 = (disp, slope) => {
+    const px = new Uint8Array(w * h * ch);
+    for (let x = 0; x < w; x++) {
+      const e = 70 + slope * x + disp(x);
+      const dec = e + 14;
+      for (let y = 0; y < h; y++) {
+        const t = Math.max(0, Math.min(1, 0.5 + (e - y)));
+        /* Half-contrast decoy: a real cobble edge in the band. */
+        const t2 = Math.max(0, Math.min(1, 0.5 + (dec - y)));
+        const v = Math.round(30 + 150 * t + 45 * t2);
+        const i = (y * w + x) * ch;
+        px[i] = px[i + 1] = px[i + 2] = v;
+      }
+    }
+    return { w, h, ch, px };
+  };
+  for (const [A, slope] of [[1.0, 0], [1.0, 0.05], [2.0, 0.05], [2.0, 0.12], [0, 0.05]]) {
+    const base = synth2(() => 0, slope);
+    const warp = synth2((x) => A * Math.sin((2 * Math.PI * x) / 40), slope);
+    const tb = traceTracked(base, 2, w - 2, 0, h);
+    const tw = traceTracked(warp, 2, w - 2, 0, h);
+    const p = stats(paired(tb, tw).v) || { mad: 0 };
+    const kept = Math.min(tb.ys.length, tw.ys.length);
+    console.log(`  ${A.toFixed(1)}   ${slope.toFixed(2)}   ` +
+      `${String(kept).padStart(6)}/${w - 4}   ${p.mad.toFixed(3).padStart(8)}   ` +
+      `${A ? (p.mad / A).toFixed(3).padStart(7) : '    —  '}`);
+  }
+  console.log('Columns kept well below full means the walk is losing the contour,');
+  console.log('and any figure it reports is drawn from whatever survived.');
   process.exit(0);
 }
 
