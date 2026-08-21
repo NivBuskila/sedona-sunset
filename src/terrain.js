@@ -725,6 +725,39 @@ vec3 triSample(sampler2D t, vec3 p, vec3 w, float sc){
        + texture2D(t, p.xy * sc).rgb * w.z;
 }
 
+/* ---- the same two, with the derivatives passed in ----
+   Everything below that is worth skipping is skipped behind a weight test, and
+   a weight derived from a texture or from the slope is not uniform across a
+   2x2 quad: the fragments on the far side of a rock/floor boundary take the
+   other path, and an implicitly-differentiated fetch inside divergent control
+   flow has no defined derivative. Which is exactly why the first version of
+   this shader sampled everything unconditionally.
+
+   Handing the gradients in resolves that completely. dFdx(vWPos) is evaluated
+   once, at the top of the shader, where every fragment in the quad reaches it;
+   the branch then only decides whether to *use* it. The gradient of a planar
+   projection scaled by a constant is that constant times the gradient of the
+   position, so no per-plane derivative is needed either — one pair of vectors
+   covers all three projections and all three maps.
+
+   texture2DGradEXT is three's own alias for textureGrad, defined in the WebGL2
+   prefix of every GLSL1 program it compiles, so this needs no extension dance. */
+vec3 triSampleG(sampler2D t, vec3 p, vec3 w, float sc, vec3 dx, vec3 dy){
+  return texture2DGradEXT(t, p.zy * sc, dx.zy * sc, dy.zy * sc).rgb * w.x
+       + texture2DGradEXT(t, p.xz * sc, dx.xz * sc, dy.xz * sc).rgb * w.y
+       + texture2DGradEXT(t, p.xy * sc, dx.xy * sc, dy.xy * sc).rgb * w.z;
+}
+
+vec3 triNormalG(sampler2D t, vec3 p, vec3 w, float sc, vec3 N, vec3 dx, vec3 dy){
+  vec3 nx = texture2DGradEXT(t, p.zy * sc, dx.zy * sc, dy.zy * sc).xyz * 2.0 - 1.0;
+  vec3 ny = texture2DGradEXT(t, p.xz * sc, dx.xz * sc, dy.xz * sc).xyz * 2.0 - 1.0;
+  vec3 nz = texture2DGradEXT(t, p.xy * sc, dx.xy * sc, dy.xy * sc).xyz * 2.0 - 1.0;
+  nx = vec3(nx.xy + N.zy, abs(nx.z) * N.x);
+  ny = vec3(ny.xy + N.xz, abs(ny.z) * N.y);
+  nz = vec3(nz.xy + N.xy, abs(nz.z) * N.z);
+  return normalize(nx.zyx * w.x + ny.xzy * w.y + nz.xyz * w.z);
+}
+
 vec3 triNormal(sampler2D t, vec3 p, vec3 w, float sc, vec3 N){
   vec3 nx = texture2D(t, p.zy * sc).xyz * 2.0 - 1.0;
   vec3 ny = texture2D(t, p.xz * sc).xyz * 2.0 - 1.0;
@@ -765,7 +798,11 @@ vec2 wxz = vWPos.xz;
    flat, letting the albedo mip carry a fine even stipple, which is precisely what
    distant gravel looks like. Each relief term below is therefore gated by the
    footprint against its own feature size. */
-float foot = max(length(dFdx(vWPos)), length(dFdy(vWPos)));
+/* Hoisted out of foot so the branches below have gradients to hand. Every
+   fragment in a quad executes this line whichever path it later takes, which
+   is the property the skipped fetches depend on. */
+vec3 pdx = dFdx(vWPos), pdy = dFdy(vWPos);
+float foot = max(length(pdx), length(pdy));
 /* ---- manual anisotropic sampling for the floor ----
    This is what the mid-distance flatness actually was, and four rounds of shader
    work failed to move it because the detail was already gone before any of that
@@ -784,7 +821,7 @@ float foot = max(length(dFdx(vWPos)), length(dFdy(vWPos)));
    on albedo and not on normals — a normal is what scintillates, because shading
    is non-linear in it, whereas colour aliasing at this scale is the grain of the
    surface and reads as gravel. Capped at three levels, which is eight to one. */
-float footMin = min(length(dFdx(vWPos)), length(dFdy(vWPos)));
+float footMin = min(length(pdx), length(pdy));
 float aniso = -clamp(log2(foot / max(footMin, 1e-5)), 0.0, 3.0);
 float grainF = 1.0 - smoothstep(0.007, 0.040, foot);   // grains, 5-30 mm
 float platF  = 1.0 - smoothstep(0.030, 0.120, foot);   // mud plates, 3-15 cm
@@ -828,9 +865,8 @@ vec3 dirtM = mix(texture2D(uDirtM, d1, aniso).rgb, texture2D(uDirtM, d2, aniso).
 
 /* ---- drifted sand ---- */
 vec2 s1 = rot2(wxz, 0.35) * 0.4545;   // 2.2 m tile
-vec3 sandA = texture2D(uSandA, s1, aniso).rgb;
-vec3 sandN = texture2D(uSandN, s1).xyz * 2.0 - 1.0;
-vec3 sandM = texture2D(uSandM, s1, aniso).rgb;
+vec2 sdx = dFdx(s1), sdy = dFdy(s1);
+vec3 sandA = vec3(0.0), sandN = vec3(0.0, 0.0, 1.0), sandM = vec3(0.0);
 
 /* A sand sheet ends in a crisp depositional lobe, not a crossfade. Hard
    threshold on a lobe-shaped field rather than a wide smoothstep. */
@@ -868,6 +904,19 @@ float sandW = smoothstep(0.62, 0.68, sandF) * smoothstep(0.10, 0.42, vSheet)
             * (1.0 - rockW) * (1.0 - wallM)
             * smoothstep(0.135, 0.045, slope) * (1.0 - panRaw * 0.9);
 
+/* Three fetches that only matter inside a sand lobe, and a sand lobe is slack
+   water on the inside of a bend — a few percent of the floor by area and none
+   of the wall. Everywhere else mix(dirt, sand, 0.0) was being paid for in
+   full. The LOD bias the unbranched call carried becomes a gradient scale:
+   lod is log2 of the gradient, so multiplying the gradient by exp2(bias) adds
+   the bias, and aniso is negative, so this sharpens exactly as before. */
+if (sandW > 0.0015) {
+  float ka = exp2(aniso);
+  sandA = texture2DGradEXT(uSandA, s1, sdx * ka, sdy * ka).rgb;
+  sandN = texture2DGradEXT(uSandN, s1, sdx, sdy).xyz * 2.0 - 1.0;
+  sandM = texture2DGradEXT(uSandM, s1, sdx * ka, sdy * ka).rgb;
+}
+
 /* ---- raking grain shadows, marched in the height map ----
  * With the sun at eight degrees, a one-centimetre grain throws a shadow seven
  * centimetres long, and a floor covered in those raking fingers is most of what
@@ -885,12 +934,36 @@ float sandW = smoothstep(0.62, 0.68, sandF) * smoothstep(0.10, 0.42, vSheet)
  * chain and converges on the mean occlusion rather than on noise. It multiplies
  * the direct term only, through the same shadow hook, because that is what it is.
  */
-float dirtH = texture2D(uDirtM, d1).b;
+/* ---- and why the march is now behind a gate ----
+ * Nine fetches, and they were unconditional. Read the line that consumes them:
+ *
+ *   gRake = 1 - mix(0.26, rakeRes, grainF) * 0.88 * smoothstep(0.35, 0.10, slope)
+ *
+ * The march only reaches the output through rakeRes, and rakeRes only
+ * reaches it through grainF. So there are two whole regimes in which all nine
+ * fetches are computed and then multiplied by zero:
+ *
+ *   · anything steeper than about twenty degrees, where the slope term is out —
+ *     which is every canyon wall, every bank face and all the talus;
+ *   · anything past the footprint where individual grains stop resolving,
+ *     grainF = 0 and the term collapses to the constant 0.26 mean. On the wash
+ *     floor under a grazing camera that is everything beyond roughly a dozen
+ *     metres, which is the large majority of the ground pixels in a long shot.
+ *
+ * The gate is on the product of the two, so the branch is only taken where the
+ * result would actually differ. rakeRes keeps its declaration outside so the
+ * mean-occlusion fallback on the next line is unchanged in both regimes.
+ */
+float rakeW = 0.88 * smoothstep(0.35, 0.10, slope);
 float rake = 0.0;
-for (int k = 1; k <= 8; k++) {
-  float t = float(k) * 0.011;                        // metres along the sun azimuth
-  float hs = texture2D(uDirtM, d1 + uSunStep * t).b;
-  rake = max(rake, hs - (dirtH + t * uSunRise));
+if (rakeW * grainF > 0.002) {
+  vec2 ddx = dFdx(d1), ddy = dFdy(d1);
+  float dirtH = texture2DGradEXT(uDirtM, d1, ddx, ddy).b;
+  for (int k = 1; k <= 8; k++) {
+    float t = float(k) * 0.011;                      // metres along the sun azimuth
+    float hs = texture2DGradEXT(uDirtM, d1 + uSunStep * t, ddx, ddy).b;
+    rake = max(rake, hs - (dirtH + t * uSunRise));
+  }
 }
 /* ---- and the part that must survive the footprint ----
    Fading this out with the grains, as it was, threw away the wrong half. Two
@@ -907,7 +980,7 @@ for (int k = 1; k <= 8; k++) {
    cools as well as darkens for free, because this multiplies the warm key only and
    what is left is the violet sky fill. */
 float rakeRes = clamp(rake * 3.4, 0.0, 1.0);
-gRake = 1.0 - mix(0.26, rakeRes, grainF) * 0.88 * smoothstep(0.35, 0.10, slope);
+gRake = 1.0 - mix(0.26, rakeRes, grainF) * rakeW;
 
 vec3 gA  = mix(dirtA, sandA, sandW);
 vec3 gM  = mix(dirtM, sandM, sandW);
@@ -940,9 +1013,19 @@ if (steep > 0.006) {
   float ax = abs(gN.x), az = abs(gN.z);
   float pw = ax / max(ax + az, 1e-4);
   vec2 uzy = vWPos.zy * 0.3846, uxy = vWPos.xy * 0.3846;
-  vec3 pA = mix(texture2D(uDirtA, uxy).rgb, texture2D(uDirtA, uzy).rgb, pw);
-  vec3 pM = mix(texture2D(uDirtM, uxy).rgb, texture2D(uDirtM, uzy).rgb, pw);
-  vec3 pN = mix(texture2D(uDirtN, uxy).xyz, texture2D(uDirtN, uzy).xyz, pw) * 2.0 - 1.0;
+  /* Explicit gradients, for the same reason the rock block below has them: this
+     branch was already here and already divergent, so these three pairs of
+     fetches have been running on undefined derivatives on the wall-ramp edges
+     the whole time. The gradient of a scaled planar projection is the scaled
+     gradient of the position, and pdx/pdy are quad-uniform. */
+  vec2 zdx = pdx.zy * 0.3846, zdy = pdy.zy * 0.3846;
+  vec2 xdx = pdx.xy * 0.3846, xdy = pdy.xy * 0.3846;
+  vec3 pA = mix(texture2DGradEXT(uDirtA, uxy, xdx, xdy).rgb,
+                texture2DGradEXT(uDirtA, uzy, zdx, zdy).rgb, pw);
+  vec3 pM = mix(texture2DGradEXT(uDirtM, uxy, xdx, xdy).rgb,
+                texture2DGradEXT(uDirtM, uzy, zdx, zdy).rgb, pw);
+  vec3 pN = mix(texture2DGradEXT(uDirtN, uxy, xdx, xdy).xyz,
+                texture2DGradEXT(uDirtN, uzy, zdx, zdy).xyz, pw) * 2.0 - 1.0;
   float w = steep * (1.0 - sandW);
   gA  = mix(gA, pA, w);
   gM  = mix(gM, pM, w);
@@ -1035,33 +1118,59 @@ if (bankW > 0.004) {
   gWN = bumpFrom((coarse - 0.5) * inBed * bankW, gWN, 0.022 * platF);
 }
 
-/* ---- wall rock, triplanar so vertical faces do not smear ---- */
-vec3 rockA = triSample(uRockA, vWPos, triW, 0.0715);   // 14 m tile
-vec3 rockM = triSample(uRockM, vWPos, triW, 0.0715);
-/* Filtered against the footprint like the ground grain, and for the same reason:
-   the rock map's own relief is centimetres, so on a wall face seen at fifty metres
-   a pixel spans a dozen grains. Unfiltered, that came out as chunky warm speckles
-   on the wall slopes that read as glitter rather than as rock. */
-vec3 rockWN = normalize(mix(gN, triNormal(uRockN, vWPos, triW, 0.0715, gN),
-                            0.12 + 0.88 * rockF));
+/* ---- wall rock, triplanar so vertical faces do not smear ----
+ * Nine fetches — three maps, three planes each — and the note left with them
+ * said that branching them behind a rockW test was the obvious first cut if
+ * headroom ever got tight. It is, and this is it.
+ *
+ * rockW is wallM * (0.34 + 0.66 * smoothstep(...)), and wallM is
+ * smoothstep(0.06, 0.42, vWall) — so it is identically zero everywhere off
+ * the wall ramp. That is the entire wash floor, the terraces, the whole
+ * foreground of the low views and most of the pixels of the wide ones. On all
+ * of them the three lines below resolved to mix(ground, rock, 0.0): nine
+ * texture fetches, three of them a full triplanar normal reconstruct with its
+ * three normalizes, computed and then discarded.
+ *
+ * The reason it was not branched before is real and is answered above rather
+ * than ignored: rockW varies per fragment, so a quad on the wall's edge
+ * diverges, and an implicitly-differentiated fetch in divergent flow has no
+ * defined derivative. triSampleG/triNormalG take the gradients that were
+ * computed at the top of the shader, so there is nothing left to be undefined.
+ */
+vec3 albedo, arm, wN;
+if (rockW > 0.002) {
+  vec3 rockA = triSampleG(uRockA, vWPos, triW, 0.0715, pdx, pdy);   // 14 m tile
+  vec3 rockM = triSampleG(uRockM, vWPos, triW, 0.0715, pdx, pdy);
+  /* Filtered against the footprint like the ground grain, and for the same
+     reason: the rock map's own relief is centimetres, so on a wall face seen at
+     fifty metres a pixel spans a dozen grains. Unfiltered, that came out as
+     chunky warm speckles on the wall slopes that read as glitter rather than as
+     rock. */
+  vec3 rockWN = normalize(mix(gN, triNormalG(uRockN, vWPos, triW, 0.0715, gN, pdx, pdy),
+                              0.12 + 0.88 * rockF));
 
-/* ---- stratigraphy ----
-   Same bed index and resistance function the height field used, driven by the
-   pre-bench elevation, so the pale bed and the ledge are one feature. The
-   contact is a hard seam because real bedding contacts are. */
-float bedF = vRef;
-float bedI = floor(bedF);
-float bedFr = bedF - bedI;
-float resist = smoothstep(0.30, 0.72, 0.5 + 0.5 * sin(bedI * 2.399 + 1.7));
-/* The whole bed changes colour, with a hard contact at its base. Deliberately
-   no thin seam on the contact itself: a bright hairline at every boundary is
-   what turns bedding into cross-hatching. */
-rockA *= mix(vec3(0.86, 0.70, 0.62), vec3(1.10, 1.05, 0.96), resist * smoothstep(0.0, 0.20, bedFr));
-rockM.g = clamp(rockM.g * mix(1.06, 0.90, resist), 0.2, 1.0);
+  /* ---- stratigraphy ----
+     Same bed index and resistance function the height field used, driven by the
+     pre-bench elevation, so the pale bed and the ledge are one feature. The
+     contact is a hard seam because real bedding contacts are. */
+  float bedF = vRef;
+  float bedI = floor(bedF);
+  float bedFr = bedF - bedI;
+  float resist = smoothstep(0.30, 0.72, 0.5 + 0.5 * sin(bedI * 2.399 + 1.7));
+  /* The whole bed changes colour, with a hard contact at its base. Deliberately
+     no thin seam on the contact itself: a bright hairline at every boundary is
+     what turns bedding into cross-hatching. */
+  rockA *= mix(vec3(0.86, 0.70, 0.62), vec3(1.10, 1.05, 0.96), resist * smoothstep(0.0, 0.20, bedFr));
+  rockM.g = clamp(rockM.g * mix(1.06, 0.90, resist), 0.2, 1.0);
 
-vec3 albedo = mix(gA, rockA, rockW);
-vec3 arm    = mix(gM, rockM, rockW);
-vec3 wN     = normalize(mix(gWN, rockWN, rockW));
+  albedo = mix(gA, rockA, rockW);
+  arm    = mix(gM, rockM, rockW);
+  wN     = normalize(mix(gWN, rockWN, rockW));
+} else {
+  albedo = gA;
+  arm    = gM;
+  wN     = gWN;
+}
 
 /* ---- tonal and hue variance ----
    The failure this fixes is a palette spanning twenty-five degrees of hue.
