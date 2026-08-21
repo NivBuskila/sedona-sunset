@@ -182,6 +182,40 @@ moved: generate at lower resolution first and refine, defer textures not needed 
 first frame, move generation into workers, or cache into IndexedDB after the first visit.
 Unowned and unscheduled; worth doing before this is ever shown to anyone.
 
+## Open, for System 2: the wash head's amphitheatre is behind a rock ledge
+
+`far_320` is the last framing of the walk and it was called the failure that matters
+most: "a ruler-straight, slightly tilted ledge running the full width of frame with
+uniform horizontal striping and zero erosional variation… it reads as a retaining
+wall or a berm."
+
+Half of that was System 1's and is fixed — the headwall's rise was a function of `z`
+alone, so every contour was a line of constant `z`, which from a camera on the
+centreline is a horizontal straight edge across the whole frame. It is now a bowl
+that closes in from the flanks twenty-six metres before it closes on the axis, with
+a pour-off notch and converging gullies. Measured on the height field at `z = -350`:
+the axis stands at 11 m and `x = 25 m` at 35 m.
+
+**None of it is visible, and the measurement says why.** Between the old head and the
+new one — a change that moves twenty-four metres of relief — no pixel in `far_320`
+moves by more than 13/255, and the ledge's silhouette does not move at all. A 13/255
+shift across 99% of a region is an exposure change, not a geometry change. The ledge
+has a dead-straight aliased top edge and fine horizontal laminae under it, so it is
+rock, and the amphitheatre is standing behind it.
+
+## Open: the head slopes read as streaks, and it is not stretched UV
+
+Named alongside the above: "smooth surfaces with parallel diagonal streaks, pale
+specks smeared into elongated tails along the slope direction — stretched UV, not
+colluvium." Magnified 6×, the streaks resolve into individual platy clasts, each
+foreshortened into a sliver by a grazing view of a slope they all share, and all
+therefore elongated the same way. That is geometrically correct and it still looks
+wrong, because the slope has nothing else on it: no size grading, no chutes, no
+blocks. It wants a colluvium pass — larger angular blocks near the toe, sorting down
+the slope, and the pale lithologies dusted harder — rather than a projection fix.
+Checked and excluded: the shader bedform is already gated off at slope 0.20, and the
+XZ projection stretch at these angles is a few per cent.
+
 ## Open, unassigned: white/black faceted shards in the near foreground
 
 Visible bottom-left of `sys3e_wall_shade.png` — a cluster of hard-edged facets, some pure
@@ -199,6 +233,63 @@ technique will localise this quickly if it is a NaN.
 Three separate critics have already had to write around an untextured object in these frames.
 Whoever picks this up should verify from a magnified crop that it is gone from `wall_shade`,
 `wall_lit` and `wash_mid`.
+
+## A correction and the thing it corrects have to be measured in the same length
+
+The clast burial was fixed, tuned and signed off, and the very next critique said
+"no burial" again. The reason is that the two quantities involved were measured
+against different lengths and nothing in the code said so. Burial is a fraction of
+the clast's **thickness**; the slope correction that raises a stone to rest on the
+highest ground beneath it is a fraction of its **radius**; and a tabular clast is
+three or four times wider than it is thick. So a correction written as a modest
+0.55 of one quantity was, in the units of the other, most of it:
+
+| floor gradient over 0.28 m | correction | share of a median gravel's whole burial |
+|---|---|---|
+| median 0.248 | 0.68 cm | about a third |
+| p90 0.831 | 2.29 cm | all of it |
+| p99 1.771 | 4.87 cm | twice the clast's entire height |
+
+A tenth of the floor had gravel standing completely proud or floating clear of the
+ground. Two further points generalise:
+
+- **It got worse when an unrelated change landed.** Filling the 0.1–1 m band in the
+  height field raised the gradient at this baseline everywhere, so a term that was
+  merely too strong became catastrophic. A coefficient tuned against one version of
+  the terrain is a hidden dependency on that terrain.
+- **It also had the wrong sign.** "A stone rests on the highest ground beneath it"
+  is true of a stone dropped on a plane it is *not aligned with*. Every placement
+  branch already seats the clast on the local surface normal, so the alignment has
+  happened and there is nothing left to raise it for. What the normal genuinely
+  cannot see is roughness finer than its own sampling baseline, and that leaves gaps
+  *under* the clast — so the residual should bury deeper, not shallower. Two
+  plausible-sounding sentences, opposite signs, and only one of them applies once
+  you know what the code above already did.
+
+## A stack of multiplicative occlusion terms needs a floor, or it makes holes
+
+Large flat clasts on shaded banks rendered at literal `0,0,0` and were reported as
+holes punched through the terrain. No single term was wrong. `cCav`, `mesoAO` and
+`contact` each multiply the indirect diffuse, each is defensible, and none had a
+lower bound, so the worst case was `0.34 × 0.224 × 0.46 = 0.035` of the sky dome.
+On a sunlit bed that is invisible. On a shaded bank, where the incident fill is
+already at its lowest, it falls below what eight bits can represent.
+
+The floor belongs on the **product**, not on the terms, because weakening the terms
+would remove the bedding cue everywhere it was working. It is also the right shape
+physically: a crown that is exposed at all sees a good part of the sky, because that
+is what being exposed means.
+
+## The count did not move and the defect was still fixed
+
+Worth adding to the list of ways a measurement misleads on this project, because it
+is the inverse of the usual one. Ablating the occlusion stack removed every hole
+from `bend` — visible immediately in a magnified crop — while the frame's
+true-black **count** went from 0.583% to 0.552%. The metric was sound and it was
+counting a different population: most of `bend`'s true black is vegetation
+silhouette against a bright sky, which swamps a few thousand pixels of hole. A
+whole-frame statistic cannot see a localised defect that is a fraction of a
+percent, however severe it looks. This defect had to be looked at, not counted.
 
 ## Never run `pnpm install`
 
