@@ -2663,6 +2663,100 @@ Unowned and unscheduled, and it should be scheduled: a render-scale option, or a
 in the tree. **Whoever picks it up should re-run `tools/bench.mjs` first** — the number above
 is one machine, one night, and the ablation columns are what say where to aim.
 
+**Taken up, and half of the paragraph above is wrong. See the next section.** The frame
+being fill-bound is right and the triangle ceiling being the wrong axis is right. The
+terrain fetch count was not the cost and never had been: it is about two milliseconds of a
+thirty-millisecond frame. The `-shadow` column that reads 30.54 against 30.49 in the table
+above is **a broken ablation**, not a result — `shadowMap.enabled` is a compile-time define
+and three does not relink on a runtime change, so the column switched off a shadow-map
+redraw that `autoUpdate = false` had already made free while every fragment went on sampling
+the maps. Shadows were 23 of those 30.49 ms.
+
+## Where the frame actually went: 160 shadow comparisons per ground pixel
+
+The frame is **30.5 ms → 15.7–16.9 ms at 2560×1440 on the top tier** and the governor's
+ladder reaches 120 fps at rung 4 and 182 fps at its floor. Full account in `PERF.md` §9;
+what belongs here is the method and the two instrument failures, because both recur.
+
+**An object ablation cannot price a shader.** Every ablation `bench.mjs` had hides a *mesh*,
+which is the wrong instrument twice over: hiding the terrain does not price the terrain
+shader, because whatever stands behind it must be shaded instead, and the two largest
+fragment consumers — the ground and the sky dome — cannot be hidden without changing which
+pixels exist. `tools/fillcost.mjs` ablates the *shader* and leaves the object, by splicing an
+early constant write into the top of each material's fragment `main`. Same geometry, same
+vertex program, same draw order, same overdraw, same shaded-pixel count.
+
+| `wash_mid`, 2560×1440 | full | −ground | −rock | −sky | −clasts | −veg | −msaa | −allScene |
+|---|---|---|---|---|---|---|---|---|
+| ms | 30.66 | **6.46** | 29.17 | 30.60 | 30.24 | 29.83 | 23.37 | 4.24 |
+
+**The terrain fragment shader was 24.2 ms of a 30.7 ms frame.** `tools/terrcost.mjs` then
+ablates one block at a time inside it, and 23 of those 24 are five shadow lookups. The
+arithmetic is not close: `getShadow` is sixteen `texture2DCompare` calls under `PCF_SOFT` and
+seventeen under `PCF` — the soft variant is a bilinear-weighted filter at the same tap count,
+not a cheaper one — `terrain.js`'s footprint filter calls it five times, and the scene has
+two shadow-casting directional lights. **160 shadow texture reads per ground fragment.**
+
+The four offset taps are 2.6 texels apart while `PCF_SOFT` already integrates a 4×4
+neighbourhood, so five kernels covering nine texels square were sampled eighty times per
+light. Each offset is now a bilinear 4-tap: same neighbourhood, quarter the cost, and still
+*interpolated* rather than binary — a single hard compare per offset would be cheaper again
+and is exactly the bimodal sample the footprint filter exists to remove. The centre tap is
+untouched, so the penumbra sized from the sun's angular diameter is bit-identical, and the
+block is gated on its own weight, which is an exact identity in the near field.
+
+**Verified as a pair in one page load** (`tools/shadowpair.mjs`, both halves one module set,
+one sun, one substitution between them, substitution-site count reported). All eight views:
+mean absolute difference a third of a code value, whole-frame luminance moving at most 0.12
+of one, no page errors. `grad` and `hf/lf` identical in all twelve windows to the digit
+`grad.mjs` prints; the largest colour excursion in the set is `sun_gap` floor mid saturation
+0.568 → 0.566; lit rock in `wall_lit` reads 0.687 at hue 14.6° both sides. **The shadow gate
+is 0.211 before and 0.211 after.**
+
+### Two instrument failures, and both generalise
+
+**A compile-time define toggled at runtime is an ablation that reports zero for something
+enormous.** That is the `-shadow` column above: it read 0.05 ms for a term that was three
+quarters of the frame, and it was quoted upward as evidence. Anything gated by a `#define`
+needs `material.needsUpdate` beside it or the column is a no-op with a plausible number
+attached. `bench.mjs` now forces the relink, in the warm-up frames, and reads 16.8 against
+11.0.
+
+**A tier is not a rung.** `perf.setTier` moves the quality tier and deliberately leaves the
+render scale at 1.0, which is the right control for "what does a tier cost" and the wrong
+answer to "does the fallback reach the target" — the governor descends an *interleaved*
+ladder whose bottom step is potato **and** a 0.58 render scale, and on a fill-bound frame
+those differ by most of the frame. "The bottom rung of the governor is 55 fps" was measuring
+potato at native resolution, which is a setting the governor never selects. `perf.js` now
+exposes `rungs` and `setRung` and `bench.mjs` prints both tables.
+
+### The ladder, measured, and the numbers to quote
+
+Per rung at `sun_gap`, 2560×1440, RTX 4060, median of seven blocks of thirty:
+
+| rung | tier | scale | buffer | ms | fps |
+|---|---|---|---|---|---|
+| 0 | high | 1.00 | 2560×1440 | 16.95 | 59 |
+| 1 | high | 0.88 | 2253×1267 | 14.34 | 70 |
+| 2 | medium | 0.88 | 2253×1267 | 12.05 | 83 |
+| 3 | medium | 0.78 | 1997×1123 | 10.28 | 97 |
+| **4** | **low** | **0.78** | **1997×1123** | **8.12** | **123** |
+| 5 | low | 0.68 | 1741×979 | 6.91 | 145 |
+| 6 | potato | 0.68 | 1741×979 | 6.50 | 154 |
+| 7 | potato | 0.58 | 1485×835 | 5.48 | 182 |
+
+The governor targets 8.33 ms and settles at rung 4, so the shipped experience on this machine
+is **120+ fps at an upscaled 1997×1123**, and `#high` pins 2560×1440 at 59. Quoting a
+scale-1.0 tier row as the fallback is the error the row above documents.
+
+**What is left, and it is not a shader.** The terrain shader is now 9.1 ms, of which 4.0 is
+its centre shadow tap — sixteen comparisons across two lights, carrying the penumbra, and not
+reducible without changing the picture or the light rig. The fixed floor of vertex work,
+resolve and post chain is **4.5 ms, now 28% of the frame** where it was 15% when the geometry
+ceiling was declared the wrong axis. That does not make the ceiling right — shaving triangles
+to reach 3 M still buys nothing measurable — but the next axis after resolution is vertex
+cost, and 2.25 M of the 3.97 M triangles are clast instances. Measure it before touching it.
+
 ## Accepted and declined, for System 2, so they are decisions rather than oversights
 
 Both were ruled on by the coordinator against the time remaining, and both are real.

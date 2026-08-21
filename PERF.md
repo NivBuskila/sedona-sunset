@@ -642,3 +642,222 @@ whole frame, so a small movement in any window may be theirs rather than mine.
 - **Whether 56 000 unculled point sprites matter.** `-particles` answers it. If
   they do, the fix is `frustumCulled = true` with a bounding sphere, which is
   free, rather than the draw-range trimming the tiers do now.
+
+---
+
+## 9. The frame was 160 shadow comparisons per ground pixel
+
+Written after the second pass, with the GPU numbers §6 asked for. The short
+version: the frame went **30.5 ms to 15.7 ms at 2560×1440 on the top tier**, the
+governor's ladder now reaches 120 fps at rung 4 and 188 fps at its floor, and
+**none of it was where §3 said it would be.** Everything §3 predicted was
+reasoned from a static fetch count, and the static fetch count was measuring the
+wrong thing by a factor of ten.
+
+### 9.1 An object ablation cannot price a shader
+
+`tools/bench.mjs`'s table proved the frame fill-bound and could not say whose
+fill. Every ablation it has hides a *mesh*, and that is the wrong instrument
+twice over: hiding the terrain does not price the terrain shader, because
+whatever stands behind it has to be shaded instead, and the two largest fragment
+consumers in the frame — the ground and the sky dome — are exactly the two that
+cannot be hidden without changing which pixels exist.
+
+`tools/fillcost.mjs` ablates the *shader* and leaves the object. Each material's
+fragment program gets an early `gl_FragColor = <constant>; return;` spliced into
+the top of `main`, which the driver reduces to a write. Same geometry, same
+vertex program, same draw order, same overdraw, same shaded-pixel count — only
+the per-pixel work is gone.
+
+At 2560×1440, before any of this pass's changes:
+
+| view | full | −ground | −rock | −sky | −clasts | −veg | −particles | −allScene | −msaa | @0.7 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `wash_mid` | 30.66 | **6.46** | 29.17 | 30.60 | 30.24 | 29.83 | 30.57 | 4.24 | 23.37 | 19.76 |
+| `sun_gap` | 31.20 | **7.13** | 29.09 | 31.13 | 30.96 | 30.13 | 31.14 | 4.28 | 24.60 | 20.06 |
+| `wall_lit` | 19.00 | **5.98** | 17.24 | 19.03 | 18.81 | 18.39 | 19.00 | 4.02 | 16.00 | 11.47 |
+
+**The terrain fragment shader is 24.2 ms of a 30.7 ms frame** — 79% — against
+1.5 for all eighteen rock meshes, 0.8 for the vegetation and nothing measurable
+for the sky, the clasts or the particles. The multisampled half-float target is
+the only other item over a millisecond, at 7.3.
+
+Read `allScene` beside `@0.7`: with every scene material neutered the frame is
+4.2 ms, and fitting the resolution columns gives fixed 4.5 ms plus 21.4 ms of
+fill. That 4.5 is vertex processing, the resolve and the post chain, and it is
+the ceiling nothing in a fragment shader can go below.
+
+### 9.2 It was not the texture fetches, and it was never going to be
+
+`tools/terrcost.mjs` does the same thing one block at a time *inside* the
+terrain shader, by rewriting the assembled fragment source and re-timing. On the
+30.5 ms build, at `wash_mid`:
+
+| block | saving |
+|---|---|
+| the four footprint shadow taps | **18.45 ms** |
+| the centre shadow tap | 5.31 ms |
+| wall rock triplanar (9 fetches) | 1.11 |
+| every band-limited sine and its `fwidth` | 0.88 |
+| the second dirt tile (3 fetches) | 0.44 |
+| the raking grain march (9 fetches, 8 looped) | 0.40 |
+| steep reprojection (6 fetches) | 0.40 |
+| grit, sand, macro, crack, bedform, strat | 0.06 – 0.17 each |
+
+**Twenty-three of the twenty-four milliseconds are in five shadow lookups.** The
+forty-one texture fetches this project has been worrying about since the first
+perf note — the ones §3 branched, correctly, and §4 counted 23 → 10 of — are
+about two milliseconds between them, and the whole of §4's terrain work is worth
+less than a tenth of what one unexamined wrapper was costing.
+
+The arithmetic, once seen, is not close. `getShadow` under `PCFSoftShadowMap` is
+**sixteen** `texture2DCompare` calls, and under `PCFShadowMap` seventeen — the
+soft variant is not a cheaper filter, it is a bilinear-weighted one at the same
+tap count. `src/terrain.js` wraps every shadow lookup in a footprint filter that
+calls it five times. The scene has two shadow-casting directional lights. That
+is **160 shadow texture reads per ground fragment**, and the ground is most of
+most frames.
+
+### 9.3 The fix, and why it does not move a pixel
+
+The four offset taps exist to estimate the *mean* shadow coverage over a pixel's
+footprint, and the estimator was hugely oversampled: the offsets are 2.6 texels
+while `PCF_SOFT` already integrates a 4×4 neighbourhood, so five kernels
+covering roughly nine texels square were being sampled eighty times per light.
+
+Each offset becomes a **bilinear 4-tap** coverage lookup. It samples the same
+neighbourhood at a quarter of the cost and it stays *interpolated* rather than
+binary, which matters: a single hard `texture2DCompare` per offset would be
+cheaper again and is precisely the bimodal sample the wrapper was built to
+remove. The centre tap is left as the stock `getShadow`, so the penumbra sized
+from the sun's angular diameter is bit-identical.
+
+The block is also gated on its own weight. At `wide = 0` the offsets *and* the
+mix weight are both zero, so the four taps return `s` and are then discarded:
+skipping them is an exact identity, not an approximation of one. The branch is
+safe with implicit-LOD fetches inside it because a shadow map has no mip chain —
+three builds it `NearestFilter`, `generateMipmaps` off — so there is no
+derivative for divergent flow to leave undefined.
+
+Per light: 80 comparisons become 32. Measured, `wash_mid` **30.66 → 16.03 ms**,
+`sun_gap` 31.20 → 15.83, `wall_lit` 19.00 → 11.39.
+
+### 9.4 Verified as a pair, in one page load
+
+`CONTRACT.md`: *two captures are not a pair.* `tools/shadowpair.mjs` renders both
+halves from one page — one module set, one set of procedural textures, one sun —
+with a single substitution in the assembled fragment shader between them, so the
+control is the old estimator and nothing else differs. It reports the count of
+substitution sites it actually hit, because a change that did nothing and a
+change that was never applied look identical.
+
+All eight standard views, 1280×720, on the GPU:
+
+| | mean abs Δ | max Δ | px ≥ 4 cv | frame L before → after |
+|---|---|---|---|---|
+| `wash_low` | 0.25 cv | 131 | 1.74% | 77.74 → 77.66 |
+| `wash_mid` | 0.29 | 99 | 2.00% | 76.05 → 76.08 |
+| `ground` | 0.05 | 127 | 0.36% | 91.49 → 91.48 |
+| `wall_lit` | 0.29 | 119 | 1.79% | 55.22 → 55.23 |
+| `wall_shade` | 0.06 | 86 | 0.46% | 44.78 → 44.80 |
+| `bend` | 0.09 | 88 | 0.73% | 45.09 → 45.09 |
+| `juniper` | 0.35 | 130 | 2.67% | 68.38 → 68.26 |
+| `sun_gap` | 0.31 | 134 | 2.08% | 81.52 → 81.62 |
+
+The maxima are individual pixels on a cast-shadow edge changing side, which is
+what any change of shadow estimator does; the population statistic is a mean
+absolute difference of a third of a code value and a whole-frame luminance that
+moves by at most 0.12 of one.
+
+Every contracted figure holds. `grad` and `hf/lf` are identical in all twelve
+windows across the eight views, to the digit `grad.mjs` prints — the largest
+movement anywhere is the `juniper` wall window at 0.0289 → 0.0286, and that
+window has vegetation in it. Saturation and hue likewise: the biggest excursion
+in the set is `sun_gap` floor mid saturation 0.568 → 0.566, and lit rock in
+`wall_lit` reads 0.687 both sides at hue 14.6°. **The shadow gate is 0.211
+before and 0.211 after** — shaded 11.7 cv over sunlit 55.6 — which is the one
+number most at risk from touching a shadow filter and it does not move.
+`shadowpair.mjs` reports no page errors, so the frames contain the geometry they
+are supposed to.
+
+### 9.5 The ladder was being measured one lever at a time
+
+`perf.setTier` moves the quality tier and deliberately leaves the render scale at
+1.0. That is the right control for "what does a tier cost" and the wrong answer
+to "does the fallback reach the target", because the governor descends an
+*interleaved* ladder whose bottom step is potato **and** a 0.58 render scale. On
+a fill-bound frame those two differ by most of the frame. The recorded "the
+bottom rung of the governor is 55 fps" was potato at native resolution — a
+setting the governor never selects.
+
+`perf.js` now exposes `rungs` and `setRung`, and `bench.mjs` prints the rung
+table beside the tier table. With a table to read, the interleave stops being a
+reasoned guess. Per rung at `sun_gap`, 2560×1440:
+
+| | 1.00 | 0.88 | 0.78 | 0.68 | 0.58 |
+|---|---|---|---|---|---|
+| high | 15.73 | 13.27 | 11.46 | 9.88 | 8.51 |
+| medium | 13.33 | 11.28 | 9.78 | 8.46 | 7.31 |
+| low | 10.75 | 8.98 | 7.68 | 6.54 | 5.56 |
+| potato | 9.99 | 8.34 | 7.13 | 6.06 | 5.14 |
+
+Read down a column rather than along a row. Once the shadow filter stopped being
+three quarters of the frame, a tier step became worth about as much as a scale
+step and costs less picture than one. The order sheds one resolution step and
+then alternates, so the 8.33 ms budget is reached at **low / 0.78 — 1997×1123**
+where the old order reached it at medium / 0.68 — 1741×979. Same budget, 34%
+more pixels. The trade is MSAA for resolution and it is the right way round,
+because System 7's along-edge resolve runs at full strength on every rung
+precisely so the samples-0 rungs are not left bare.
+
+### 9.6 `bench.mjs`'s `-shadow` column was measuring nothing
+
+Recorded because it is the eleventh instrument failure on this project and it
+cost the diagnosis directly. `renderer.shadowMap.enabled` is folded into
+`USE_SHADOWMAP` when a program is compiled, and three does not relink on a
+runtime change. So flipping it stopped the shadow *maps* being redrawn — which
+was already free, since `shadowMap.autoUpdate` is false and a static camera
+redraws no cascade — while every lit fragment went on sampling them exactly as
+before. The column read 30.54 against a full frame of 30.49 and was written down
+as *"shadows, particles and the whole post chain are inside the noise"*, at a
+moment when the shadow lookups were 23 of those 30.49 ms.
+
+It now forces every material to relink, in the six warm-up frames rather than in
+the timed block, and reads 16.68 against 10.63.
+
+The general form is worth keeping: **a compile-time define toggled at runtime is
+an ablation that reports zero for something enormous.** Anything gated by a
+`#define` needs `material.needsUpdate` beside it, or the column is a no-op with
+a plausible number attached.
+
+### 9.7 Where the remaining time is, and what it would cost to take
+
+At the top tier, 2560×1440, after this pass:
+
+| | ms |
+|---|---|
+| whole frame, `wash_mid` | 16.0 |
+| terrain fragment shader | 9.1 |
+| — of which its centre shadow tap | 4.0 |
+| — of which the footprint taps | 0.6 |
+| — the rest of the material | ~4.5 |
+| the 4× half-float target | 3.9 |
+| rock | 1.8 |
+| vegetation | 1.0 |
+| the marched in-scatter | 0.8 |
+| fixed: vertex, resolve, post chain | ~4.5 |
+
+Three honest observations and no more work done on them:
+
+- **The centre shadow tap cannot be cut without changing the picture.** It is
+  sixteen comparisons across two lights and it carries the penumbra. Halving it
+  means `PCFShadowMap` — which is seventeen taps, so not a saving — or fewer
+  shadow-casting lights, which is System 4's light rig.
+- **The fixed 4.5 ms is now 28% of the frame**, where when the geometry ceiling
+  was declared the wrong axis it was 15%. That does not make the ceiling right —
+  shaving triangles to reach 3 M still buys nothing measurable — but it does mean
+  that the *next* axis after resolution is vertex cost, and 2.25 M of the 3.97 M
+  triangles are clast instances. It should be measured before it is touched.
+- **The 3.9 ms multisampled target is a top-tier feature and the ladder already
+  spends it.** Dropping it at `high` would be removing a feature to buy frame
+  time, which is the one thing this pass was told not to do.
