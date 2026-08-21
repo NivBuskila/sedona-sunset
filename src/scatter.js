@@ -619,6 +619,9 @@ export function buildScatter(terrain, tex) {
         vec3 iW = (instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
         float pat = 0.5 + 0.25 * sin(iW.x * 0.213 + iW.z * 0.131)
                         + 0.25 * sin(iW.z * 0.087 - iW.x * 0.052 + 2.1);
+        /* Read before the distance mix: this is the instance's own lithology, and
+           the far colour is the population mean, which every instance shares. */
+        float lithL = dot(vColor, vec3(0.2126, 0.7152, 0.0722));
         vec3 far = uFarCol * mix(vec3(0.90, 0.97, 1.09), vec3(1.11, 1.00, 0.87), pat);
         vColor = mix(vColor, far, vFar);
         /* The seat direction, with a per-instance dust weight smuggled in as its
@@ -626,9 +629,18 @@ export function buildScatter(terrain, tex) {
            every flood and stays the colour of its own lithology; a slab has lain
            in the same attitude for decades and its sky-facing faces carry a film
            of whatever the wash is made of. So the weight is a function of size,
-           which is the closest thing available to residence time. */
+           which is the closest thing available to residence time.
+           And of *paleness*, which is the correction this round. Fresh Coconino is
+           off-white; Coconino that has been lying in a wash weathers to a duller,
+           browner buff and carries the same red film as everything else around it.
+           A pale lithology therefore takes several times the dust of a dark one at
+           the same size, which turns a bright plate into a pale warm buff block
+           without touching the palette — the palette is a requested Sedona
+           signature and is not the thing that was wrong. */
+        float dustW = (0.55 + 2.55 * smoothstep(0.30, 0.50, lithL))
+                    * smoothstep(0.09, 0.28, iRad);
         vSeat = normalize(normalMatrix * mat3(instanceMatrix) * vec3(0.0, 1.0, 0.0))
-              * (1.0 + smoothstep(0.11, 0.30, iRad));
+              * (1.0 + dustW);
       `);
 
     shader.fragmentShader = ('varying float vFar;\nvarying float vFarN;\n' +
@@ -766,7 +778,11 @@ export function buildScatter(terrain, tex) {
          * a pale block and lifts a varnished dark one — which is what a film
          * does. Weighted by instance size through vSeat's length, so the gravel
          * keeps the lithological variety that took three rounds to get. */
-        cDust = smoothstep(0.34, 0.90, nWc.y) * 0.44 * dustK;
+        /* Capped rather than allowed to run to one. A dust film in a wash is thin
+           and patchy — you see the rock through it — so past about two thirds the
+           block stops being dusty Coconino and becomes a lump of bed, which
+           deletes the lithology instead of weathering it. */
+        cDust = smoothstep(0.34, 0.90, nWc.y) * min(0.66, 0.42 * dustK);
 
         normal = normalize(mix(normal, seatC, vFarN * 0.92));
       `)
@@ -919,10 +935,42 @@ export function buildScatter(terrain, tex) {
        * turned the bank faces into near-white ellipsoids on a near-black ground —
        * measured as polka dots, and correctly. */
       const sizeFr = clamp((rad - cl.rMin) / Math.max(1e-6, cl.rMax - cl.rMin), 0, 1);
-      const bankF = clamp((1 - nrm.y - 0.20) / 0.28, 0, 1);
+      /* Onset pulled down from 0.20 to 0.11 — from about eleven degrees of slope
+         to six. The pale ovals a critic found on the shaded bank in `wash_low`
+         were on a bank *toe*, which is gentler than eleven degrees, so none of
+         the provenance logic below was firing on them at all: they were drawing
+         from the general mix and skipping the matrix blend, which is precisely
+         the polka-dot mechanism on a surface the gate could not see. A bank toe
+         is still a bank — the clasts in it weathered out of the same alluvium. */
+      const bankF = clamp((1 - nrm.y - 0.11) / 0.30, 0, 1);
       let cdfUse = cl.lith;
-      if (cdfUse === CDF_T && (bankF > 0.25 || rand() < Math.pow(sizeFr, 1.2))) cdfUse = CDF_L;
+      if (cdfUse === CDF_T && (bankF > 0.15 || rand() < Math.pow(sizeFr, 1.2))) cdfUse = CDF_L;
       const lith = pickLith(cdfUse, rand());
+
+      /* ---- where a *pale* coarse clast is allowed to be ----
+       * The pale lithologies stay: a scatter of off-white Coconino on red soil is
+       * one of the most recognisable things about these washes and it was asked
+       * for by name. What was wrong was the distribution — the reference is one or
+       * two conspicuous pale blocks in a frame, and this was producing a field of
+       * plates spread evenly across the apron.
+       *
+       * Two constraints, both of them the same physics as the rest of the file.
+       * Coconino is the *cap*, so a pale block started its fall from the top of
+       * the wall, and how far a block leaves the wall scales with how far it fell:
+       * the coarse pale fraction belongs at the apron **toe**, which is talPos 0,
+       * not distributed up the ramp. And rockfall is an event, so it arrives in
+       * the same lobes `pile` already describes rather than as a sprinkle. Between
+       * them these two reject about four in five pale coarse draws.
+       *
+       * The survivors are then pushed *up* in size. That is the point rather than
+       * a side effect: what the eye reads as Sedona is a few big conspicuous pale
+       * blocks, and what it reads as builders' rubble is many medium ones. Same
+       * total pale area, concentrated. */
+      const lithL = 0.2126 * LITH[lith][0] + 0.7152 * LITH[lith][1] + 0.0722 * LITH[lith][2];
+      if (lithL > 0.40 && rad > 0.14) {
+        if (rand() > (1 - fc.talPos * 0.85) * Math.min(1, fc.pile) * 0.60) continue;
+        rad = rad + (cl.rMax - rad) * 0.45;
+      }
 
       emit(cl, buckets[placed % cl.variants], x, y, z, rad, lith, rand, th, nrm, bankF);
       placed++;

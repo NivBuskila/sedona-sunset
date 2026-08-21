@@ -314,9 +314,17 @@ export class Terrain {
     const pan = this.panField(x, z, f);
 
     /* Rockfall is episodic and it arrives down the gullies, so an apron is a run
-       of heaps with swept ground between them, not an even sprinkle. */
-    const pile = 0.10 + 1.55 * smoothstep(0.44, 0.80, 0.5 + 0.5 *
-      fbm(x * 0.055, z * 0.055, 3, 271));
+       of heaps with swept ground between them, not an even sprinkle.
+       Sharpened, and the reason is a critique of the pale blocks: "one or two
+       conspicuous blocks in a frame is the reference; a field of them is not".
+       The floor here was 0.10, which is small but never zero, so every square
+       metre of apron got a background sprinkle and the lobes were a modulation on
+       top of an even field rather than the whole story. At 0.02 the ground
+       between heaps is genuinely swept. The lobes are also larger — a 25 m
+       wavelength rather than 18 — because a rockfall lobe is the debris of one
+       event off one gully, and there are not that many gullies. */
+    const pile = 0.02 + 1.80 * smoothstep(0.50, 0.86, 0.5 + 0.5 *
+      fbm(x * 0.040, z * 0.040, 3, 271));
 
     return { chan, bar, terr, tal, talPos, sheet, bare, lag, string, pan, pile, f };
   }
