@@ -494,6 +494,15 @@ const api = {
   perf,
   audio: audio.api,
   // handy while developing; not part of the contract
+  /* The namespace itself, so a probe can construct a Raycaster. Every
+     screen-space route to "is the sun disc occluded" failed for a different
+     reason — post's scene target is stale whenever the bloom chain is off, and
+     comparing a sky-on frame against a sky-off one is defeated by veiling
+     glare, which is computed from the whole frame and so perturbs every pixel.
+     Geometry is the only ground truth and reaching it needed one line. See
+     tools/sundisc.mjs. A dynamic `import('three')` inside an evaluate context is
+     not an alternative: it hangs rather than throwing. */
+  _three: THREE,
   _scene: scene, _camera: camera, _terrain: terrain, _path: path, _atmo: atmo,
   _post: post,
   _instances: clasts.reduce((n, m) => n + m.count, 0),
