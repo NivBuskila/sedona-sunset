@@ -360,8 +360,15 @@ void main() {
   /* Below a pixel a point stops shrinking and starts having to lose energy
      instead, or the field gets brighter with distance as more motes crowd into
      each pixel and each one still paints a whole one. */
-  gl_PointSize = max(0.85, px);
+  /* Capped at both ends. Below a pixel a point stops shrinking and has to lose
+     energy instead, or the field brightens with distance as more motes crowd
+     into a pixel each still painting a whole one. Above four it is a blob:
+     without depth of field a mote half a metre from the eye has no business
+     being a disc, and there are few enough of them that far that clamping the
+     size and letting the alpha carry the difference is invisible. */
+  gl_PointSize = clamp(px, 0.85, 4.0);
   vA *= min(1.0, px / 0.85) * min(1.0, px / 0.85);
+  if (px > 4.0) vA *= (px / 4.0) * (px / 4.0);
 }`,
     fragmentShader: /* glsl */`
 uniform vec3 uTint;
@@ -789,9 +796,14 @@ void main() {
        for the *cells* — they are between the eye and everything, at no
        particular distance — but their size must not change with resolution,
        hence the aspect-corrected uv. */
+    /* Cell size and rise rate both matter and both were an order of magnitude
+       out at first. A shimmer cell is a convective plume a few centimetres
+       across seen at range — tens of pixels, not a third of the screen — and it
+       boils: the plumes rise at something like a metre a second, which is tens
+       of pixels a second, not two. Slow, huge cells read as a lens wobble. */
     vec2 q = vec2(vUv.x * uRes.x / uRes.y, vUv.y);
-    vec2 n1 = texture2D(tNoise, q * 3.1 + vec2(0.013 * uT, -0.055 * uT)).rg;
-    vec2 n2 = texture2D(tNoise, q * 6.7 + vec2(-0.021 * uT, -0.115 * uT)).rg;
+    vec2 n1 = texture2D(tNoise, q * 20.0 + vec2(0.09 * uT, -0.55 * uT)).rg;
+    vec2 n2 = texture2D(tNoise, q * 44.0 + vec2(-0.16 * uT, -1.15 * uT)).rg;
     d = (n1 - 0.5) * 1.0 + (n2 - 0.5) * 0.55;
     /* Vertical displacement dominates: the gradient is vertical, so the
        refraction is too. */
