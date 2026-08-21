@@ -68,10 +68,61 @@ import * as THREE from 'three';
  * of transmission through dust that keeps a distant sunlit face warm rather
  * than letting it go the mauve that a neutral veil produces.
  */
+/* ---- stratification, and where the air was actually wrong -------------------
+ *
+ * A critic put a contradiction to this file: a 1.76 km visual range and a blue
+ * zenith cannot coexist, because that column would be featureless brown. The
+ * recommendation was to cap the dust in a shallow layer with clean air above.
+ *
+ * Working it through located the fault somewhere else, and the arithmetic is
+ * worth keeping because it is not where either of us first looked. The dust was
+ * *already* stratified — H_DUST is 210 m, shallower than the few hundred metres
+ * to 1.5 km suggested — and contributes only 0.26 of optical depth to a zenith
+ * column. The term with no height dependence whatsoever is the Rayleigh one:
+ * it was applied as `density * dist`, uniform to infinity, at 3.25e-4 per metre
+ * against a physical sea-level value at 550 nm of 1.16e-5. Twenty-eight times
+ * too thick and unstratified, it put 2.60 of the zenith's 2.86 optical depth
+ * there by itself. So 91% of the brown column the critic predicted was one
+ * coefficient, and the "clean air above" was missing for that reason rather than
+ * for want of a cap on the dust.
+ *
+ * Cutting it to 0.05 leaves the zenith at 0.587 — 4.9x thinner — and costs
+ * almost nothing in the horizontal, because over the 550 m the scene actually
+ * contains, Rayleigh was never more than a tenth of the optical depth. It is not
+ * taken all the way to physical: at 0.05 the term stands in for the fine-mode
+ * aerosol that accompanies blowing dust, which genuinely carries a steep
+ * spectral slope, and it is what makes distance away from the sun read blue-grey
+ * rather than warm. Taking it to 0.011 would be true Rayleigh and would flatten
+ * that. Named as the approximation it is.
+ *
+ * The dust gain then sets the visual range. 0.40 puts it at 4.98 km above the
+ * near-ground band, against 2.50 km before: still 5-10x hazier than a Sedona
+ * annual mean, which is the point — this is an active blowing-dust evening and
+ * the saltation is in frame. It is short of the 15-30 km asked for, and that gap
+ * is geometry rather than a dial: see the note on GEOMETRY_NEEDED below. */
 const BETA_R = [0.327, 0.570, 1.000];   // x fogDensity, per metre, at any height
-const R_GAIN = 0.30;
+const R_GAIN = 0.05;
 const BETA_M = [1.000, 0.962, 0.905];   // x fogDensity, per metre, at y = Y0
-const M_GAIN = 0.68;
+const M_GAIN = 0.40;
+
+/* What 15-30 km visual range would need from System 2, with the arithmetic, so
+ * the request is checkable rather than a preference.
+ *
+ * Airlight share is 1 - e^(-beta*d), so thinning the air and keeping the ladder
+ * requires d to grow by the same factor beta shrinks. At the current far mass of
+ * about 550 m:
+ *
+ *     visual range   airlight share at 550 m   at 1450 m   at 4 km   at 8 km
+ *     2.50 km (was)          0.62                 0.92      1.00      1.00
+ *     4.98 km (now)          0.42                 0.76      0.98      1.00
+ *     13.3 km                0.25                 0.52      0.87      0.98
+ *
+ * So 13-15 km is not a thin ladder, it is a ladder measured over the wrong
+ * baseline: at 4-8 km it is stronger than anything the scene has now. Far ridges
+ * at 2-8 km would let the extinction drop another 2.6x and *gain* contrast at
+ * the back. Below that they merely fade. This is the whole of the disagreement
+ * about extinction, and it is a geometry request, not an atmosphere dial. */
+const GEOMETRY_NEEDED = 'far ridgelines at 2-8 km to support 15-30 km visual range';
 
 /* Scale height of the dust layer, metres, and the datum it is measured from.
  * 210 m is a settled evening boundary layer, and it is chosen against the
@@ -262,6 +313,38 @@ const WALL_SHARE = 0.55;
    not brighten when you turn into the sun. */
 const NEAR_FWD = 0.9;
 
+/* ---- the two extinction dials ----------------------------------------------
+ *
+ * AIR scales the two long-range species, Rayleigh and the 210 m dust. SUSP
+ * scales the 16 m suspension layer. They are separate on purpose: the near-
+ * ground band and the height law need the shallow layer, and the complaint that
+ * the air reads like the day after a haboob is about the long sightlines. One
+ * dial cannot serve both, and the first thing the sweep below asked was whether
+ * they really do want different answers.
+ *
+ * Overridable from the URL — `#medium,air=0.25` — so a sweep is four page loads
+ * inside one render-lock acquisition rather than four edit-and-rebuild rounds.
+ * Absent a hash both are 1 and nothing changes, so this costs the shipped build
+ * exactly one constant fold. */
+function hashNum(key, dflt) {
+  try {
+    if (typeof location === 'undefined' || !location.hash) return dflt;
+    const m = new RegExp(`(?:^|[#,&;])${key}=([0-9]*\\.?[0-9]+)`).exec(location.hash);
+    return m ? Number(m[1]) : dflt;
+  } catch (e) { return dflt; }
+}
+const AIR = hashNum('air', 1);
+const SUSP = hashNum('susp', 1);
+
+/** The three extinction coefficients as baked, after the dials. */
+function betas() {
+  return {
+    R: BETA_R.map((x) => x * R_GAIN * AIR),
+    M: BETA_M.map((x) => x * M_GAIN * AIR),
+    S: BETA_S.map((x) => x * S_GAIN * SUSP),
+  };
+}
+
 function hg(g, c) {
   const g2 = g * g;
   return (1 - g2) / (4 * Math.PI * Math.pow(Math.max(1e-4, 1 + g2 - 2 * g * c), 1.5));
@@ -349,10 +432,19 @@ export function installAerial(sun, fogColor) {
     installed: true,
     sun: [d.x, d.y, d.z],
     tint, fogL: L, jRay, jSky, jSun, jNear,
-    betaR: BETA_R.map((x) => x * R_GAIN),
-    betaM: BETA_M.map((x) => x * M_GAIN),
-    H: H_DUST, sIll: S_ILL, farGain: FAR_GAIN,
+    betaR: betas().R, betaM: betas().M, betaS: betas().S,
+    H: H_DUST, hS: H_SUSP, sIll: S_ILL, farGain: FAR_GAIN,
+    air: AIR, susp: SUSP,
   });
+
+  /* Published so a measurement can check what was actually baked rather than
+     what it believes it asked for. This exists because the first extinction
+     sweep silently produced four byte-identical frames — a fragment-only
+     navigation does not re-run a module, so the dial never reached the shader
+     and every setting measured the same build. Twelve frames of agreement
+     looked like a robust ladder instead of a broken harness. A measurement that
+     cannot detect its own no-op is worse than no measurement. */
+  if (typeof window !== 'undefined') window.__AERIAL_DIAG = AERIAL_DIAG;
 
   const PARS = /* glsl */`
 #ifdef USE_FOG
@@ -372,9 +464,9 @@ export function installAerial(sun, fogColor) {
   const vec3  AER_JSKY  = ${v3(jSky)};
   const vec3  AER_JSUN  = ${v3(jSun)};
   const vec3  AER_JNEAR = ${v3(jNear)};
-  const vec3  AER_BETAR = ${v3(BETA_R.map((x) => x * R_GAIN))};
-  const vec3  AER_BETAM = ${v3(BETA_M.map((x) => x * M_GAIN))};
-  const vec3  AER_BETAS = ${v3(BETA_S.map((x) => x * S_GAIN))};
+  const vec3  AER_BETAR = ${v3(betas().R)};
+  const vec3  AER_BETAM = ${v3(betas().M)};
+  const vec3  AER_BETAS = ${v3(betas().S)};
   const float AER_H     = ${f(H_DUST, 2)};
   const float AER_HS    = ${f(H_SUSP, 2)};
   const float AER_Y0    = ${f(Y0, 2)};
@@ -485,6 +577,7 @@ export function installAerial(sun, fogColor) {
 export function aerialModel(sun, fogColor, density = 0.0019) {
   const { d, jRay, jSky, jSun, jNear } = sources(sun, fogColor);
   const nB = 1 / hg(G_BROAD, 1), nN = 1 / hg(G_NARROW, 1);
+  const B = betas();
   return function apply(color, cam, world) {
     const rx = world[0] - cam[0], ry = world[1] - cam[1], rz = world[2] - cam[2];
     const dist = Math.hypot(rx, ry, rz);
@@ -500,9 +593,8 @@ export function aerialModel(sun, fogColor, density = 0.0019) {
     const ds = dist / S_ILL;
     const out = [0, 0, 0];
     for (let i = 0; i < 3; i++) {
-      const tR = BETA_R[i] * R_GAIN * density * dist;
-      const tM = BETA_M[i] * M_GAIN * density * col
-               + BETA_S[i] * S_GAIN * density * colS;
+      const tR = B.R[i] * density * dist;
+      const tM = B.M[i] * density * col + B.S[i] * density * colS;
       const t = tR + tM, T = Math.exp(-t);
       const jM = jSky[i] * AMB + jSun[i] * FWD * lobe;
       const J = (tR * jRay[i] + tM * jM) / Math.max(1e-6, t);
