@@ -78,6 +78,12 @@ import * as THREE from 'three';
  * Each is exposed on the returned handle as `params` and can be overridden from
  * the URL, e.g. `#grain=0` or `#grade=0`, which is how the measurement captures
  * separate one term from another.
+ *
+ * `#nopost` switches the whole chain out, and that one is not a debug aid: this
+ * chain moves saturation, hue and `hf/lf`, which are the numbers four other
+ * systems are judged on, so every handoff set from here ships with a matching
+ * ungraded control. `tools/postpair.mjs` produces the pair from one frozen
+ * source tree and exists so that cannot be forgotten.
  */
 export const POST_DEFAULTS = {
   /* Grade. Both tints are normalised to unit Rec.709 luminance, so they rotate
@@ -131,6 +137,22 @@ export const POST_DEFAULTS = {
      itself feed it. */
   bloomThresh: 0.55, bloomKnee: 0.35, bloomGain: 0.055,
   ghostGain: 0.030, veilGain: 0.055, streakGain: 0.030,
+  /* Ceiling on the flare *source*, not on the flare. Every flare term is
+     proportional to the radiance in the bright buffer, which is what makes
+     occlusion free — but it also means the gains above are only meaningful
+     against a known source brightness, and the brightest thing feeding them
+     today is sky glow near the skyline at a linear ~2.
+     System 4 is clearing the solar disc into the gap. A disc is not 2, it is
+     hundreds to thousands, so without a ceiling these three gains would be
+     wrong by three orders of magnitude the moment it appears — the flare would
+     go from invisible to a white frame with no intermediate state, and the
+     numbers below would have to be re-derived rather than nudged.
+     `flareKnee` is set five times above anything in the frame now, so it is an
+     identity on today's capture, and the soft ceiling above it bounds the
+     source at knee+range. A visible sun therefore flares about twenty times
+     harder than the current sky, which is the right direction and the right
+     order, and re-tuning against it is a trim rather than a rebuild. */
+  flareKnee: 20.0, flareRange: 40.0,
 
   /* Polish. */
   vignette: 0.20,            // linear light lost at the extreme corner
@@ -229,6 +251,39 @@ float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
  * off, and the mechanism is worth recording because any later pass will hit it
  * too.
  *
+ * The mechanism below was inferred rather than measured, and the measurement
+ * says it is wrong. tools/hdrmax.mjs reads the linear values out of this very
+ * buffer: in the wash_mid view the finite maximum is 2.89 and there are zero
+ * +Inf channels, so nothing here ever approached 65504 and no overflow was
+ * involved. There were six NaN channels -- two adjacent texels -- and they
+ * survive with the sky dome hidden, which rules out the sky shader too. Its
+ * output is bounded at about 203 by construction: the LUT is finite, the
+ * Henyey-Greenstein phase peaks at 2.43 for g = 0.76, and the disc radiance is
+ * capped at forty times the aureole peak.
+ *
+ * The real source is upstream of every pass here. Bisecting the scene graph,
+ * hiding juniper-wood takes the count from six to zero, and scanning its
+ * buffers finds 33 non-finite floats in its color vertex attribute -- 11
+ * vertices, first at index 11565. Vertex colour multiplies into diffuse, so
+ * those vertices emit NaN directly, and only two pixels show it because the
+ * faces are tiny and far. (juniper-hummock separately carries 44 degenerate
+ * triangles of 1144 and one zero-length normal.) That is System 3's to fix.
+ *
+ * The guard below is still right and should stay: it is what stopped two texels
+ * of somebody else's bad geometry from becoming a rectangle across the sky, and
+ * it costs nothing. Only the explanation needed correcting. The general lesson
+ * is the reason for keeping this note: a plausible mechanism that explains the
+ * symptom is not the same as the mechanism, and "a radiance above half-float
+ * range" sent the investigation into the one shader that could be proved
+ * innocent with arithmetic.
+ *
+ * A note for whoever edits this next, having just cost two people ten minutes:
+ * this comment is inside the COMMON template literal, so a backtick anywhere in
+ * it terminates the string and the module stops parsing at the next keyword.
+ * Write code names bare in here.
+ *
+ * For the record, the inferred chain was this, and it remains a real hazard for
+ * any pass that reads the frame arithmetically, just not what happened here.
  * The scene buffer is RGBA16F, so a radiance above 65504 arrives as +Inf. A
  * tone curve does not care: ACES clamps, and Inf comes out white, which is why
  * nothing upstream had ever noticed. A *bright pass* does care, because its
@@ -240,8 +295,8 @@ float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
  * shading artefact.
  *
  * A test of x >= 0.0 is false for NaN and for negatives, which is all this
- * needs in
- * GLSL ES 1.00 — isnan() is a 3.0 builtin and this material compiles as 1.00.
+ * needs in GLSL ES 1.00 — isnan() is a 3.0 builtin and this material compiles
+ * as 1.00, and it catches the measured cause and the inferred one alike.
  */
 vec3 sane(vec3 c) {
   return vec3(c.r >= 0.0 ? min(c.r, 60000.0) : 0.0,
@@ -286,6 +341,10 @@ export function createPost({ renderer, camera, atmo, sun }) {
      effect being broken. `#flare=8` makes the geometry visible so it can be
      checked once, rather than shipping a path nothing has ever exercised. */
   P.flareScale = num('flare', 1);
+  /* `#fknee=100000` lifts the flare-source ceiling out of reach, which is how
+     the claim that the ceiling is an identity on the present frame gets tested
+     rather than asserted: capture with and without and diff the files. */
+  P.flareKnee = num('fknee', P.flareKnee);
   let disabled = /(^|[#&])nopost(\b|$|&)/.test(hash);
 
   const plate = grainPlate(256);
@@ -340,6 +399,7 @@ export function createPost({ renderer, camera, atmo, sun }) {
       uTexel: { value: new THREE.Vector2() },
       uThresh: { value: P.bloomThresh },
       uKnee: { value: P.bloomKnee },
+      uCeil: { value: new THREE.Vector2(P.flareKnee, P.flareRange) },
     },
     vertexShader: VERT,
     fragmentShader: /* glsl */`
@@ -347,6 +407,7 @@ uniform sampler2D tSrc;
 uniform vec2 uTexel;
 uniform float uThresh;
 uniform float uKnee;
+uniform vec2 uCeil;
 varying vec2 vUv;
 ${COMMON}
 void main() {
@@ -366,7 +427,17 @@ void main() {
   float l = luma(c);
   float k = clamp(l - uThresh + uKnee, 0.0, 2.0 * uKnee);
   float w = max(l - uThresh, k * k / (4.0 * uKnee + 1e-5)) / max(l, 1e-5);
-  gl_FragColor = vec4(c * clamp(w, 0.0, 1.0), 1.0);
+  c *= clamp(w, 0.0, 1.0);
+
+  /* Soft ceiling, applied here rather than in the flare pass so that the one
+     buffer bounds all four terms that read it — bloom, veil, ghosts, streak.
+     Below the knee this is exactly the identity; above it, the source saturates
+     at knee+range instead of running away with the solar disc. See flareKnee in
+     POST_DEFAULTS for why that matters more than it looks like it should. */
+  vec3 over = uCeil.x + uCeil.y * (1.0 - exp(-(c - uCeil.x) / max(uCeil.y, 1e-3)));
+  c = mix(c, over, step(vec3(uCeil.x), c));
+
+  gl_FragColor = vec4(c, 1.0);
 }`,
     depthTest: false, depthWrite: false, toneMapped: false,
   });
@@ -812,10 +883,12 @@ void main() {
 
   const lastInfo = { calls: 0, triangles: 0 };
   let haveSceneInfo = false;
-  /* Where the flare thinks the sun is, for tools/_p7cap.mjs. "Is the flare
-     doing anything" is otherwise unanswerable from a PNG in which the sun is
-     behind a butte — and it is behind a butte in most of the standard set,
-     which is the scene working as designed rather than the effect failing. */
+  /* Where the flare thinks the sun is, read off `_post._diag` and shown on F3.
+     "Is the flare doing anything" is otherwise unanswerable from a PNG in which
+     the sun is behind a butte — and it is behind a butte in most of the
+     standard set, which is the scene working as designed rather than the effect
+     failing. That is changing: System 4 is clearing the disc into the gap, at
+     which point this is how to confirm the flare is anchored to it. */
   const lastSun = { x: 0.5, y: 0.5, on: 0, facing: 0 };
 
   /* ── grain clock ───────────────────────────────────────────────────────── */
@@ -931,6 +1004,7 @@ void main() {
       brightMat.uniforms.uTexel.value.set(1 / w, 1 / h);
       brightMat.uniforms.uThresh.value = P.bloomThresh;
       brightMat.uniforms.uKnee.value = P.bloomKnee;
+      brightMat.uniforms.uCeil.value.set(P.flareKnee, P.flareRange);
       draw(brightMat, loA);
 
       blurMat.uniforms.tSrc.value = loA.texture;
@@ -1039,6 +1113,13 @@ void main() {
           level: { ...level },
         };
       },
+      /* The buffer the bright pass reads, for tools/hdrmax.mjs. Nothing in the
+         running app touches this; it exists because the +Inf that produced the
+         black rectangle could only be found by reading the linear values, and
+         every route to them from outside this closure was worse — a dynamic
+         `import('three')` inside an evaluate context hangs instead of throwing,
+         and a probe-owned target would have missed System 5's composite. */
+      get sceneRT() { return sceneRT; },
       get grain() { return { phase: grainPhase, frozen }; },
       get sun() { return { ...lastSun }; },
       sunDir: [sunDir.x, sunDir.y, sunDir.z],
