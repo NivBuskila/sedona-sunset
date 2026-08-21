@@ -49,7 +49,10 @@ let cy0 = 1e9, cy1 = -1e9;
 for (const c of clumps) {
   fol++;
   if (c.interior) interior++;
-  cards += Math.round(3 + c.size * 11 + 1);
+  /* Mirrors foliageGeometry's count, floor included — without the floor this
+     under-reported by about a fifth, which is the difference between a spray
+     that stays joined and one that sheds its tip into the sky. */
+  cards += Math.max(c.interior ? 5 : 9, Math.round(4 + c.size * 16 + 1));
   if (c.p.y < cy0) cy0 = c.p.y;
   if (c.p.y > cy1) cy1 = c.p.y;
 }
