@@ -111,15 +111,41 @@ import * as THREE from 'three';
  * a corner, and the corner is where to sit. 0.56 it is — 1.4x thinner than the
  * air a critic called the day after a haboob, with the ladder intact.
  *
- * Short of the 15-30 km asked for, and that gap is geometry rather than a dial:
- * see GEOMETRY_NEEDED below. The sweep is the evidence for why. At 4.98 km the
- * ladder is already down to one step and 33%, because the scene's deepest
- * sightline is 550 m and thinner air needs a longer baseline to carry the same
- * contrast. */
+ * ---- and then the geometry landed, which changed the answer ----------------
+ *
+ * That corner was real but it was a property of the *scene*, not of the air. Its
+ * cause is stated above and it turned out to be the whole story: the deepest
+ * sightline was 550 m, airlight share goes as 1 - exp(-beta*d), so the only way
+ * to get separation between masses 550 m apart was to make beta large. System 2
+ * then built receding ridgelines at 2.3, 3.4, 5.0 and 7.3 km. With a baseline an
+ * order of magnitude longer, the same ladder is available at a tenth of the
+ * extinction, and re-sweeping says so plainly — weighted edge share on sun_gap,
+ * which is the statistic to read since the best-strip figure was retired:
+ *
+ *     dust   range      sun_gap sat / V   juniper sat / V   wash_low sat / V
+ *     0.12   22.1 km       8% / 17%          9% / 25%          2% / 13%
+ *     0.18   16.4 km       5% / 15%          8% / 21%          2% / 11%
+ *     0.27   11.8 km       5% / 15%          9% / 22%          4% / 11%
+ *     0.56    6.2 km       9% / 19%          8% / 20%          4% / 12%
+ *
+ * There is no corner anywhere in that range. Across 3.6x of extinction the ladder
+ * moves by a few points in either direction, inside a within-frame spread of
+ * 0-40%. The corner has been bought out by the baseline, exactly as predicted,
+ * and extinction is now free to be whatever is physically honest because the
+ * layering no longer depends on it.
+ *
+ * So: 0.15, about 19 km, mid-band in the 15-30 km asked for. Defensible as an
+ * active blowing-dust evening rather than the annual mean, consistent with a
+ * scene that has sand moving across the floor, and 5.8x thinner than the air a
+ * critic called the day after a haboob.
+ *
+ * Note Rayleigh sets a floor on how clear this can get: it does not scale with
+ * the dust dial, and at R_GAIN 0.05 it is 24% of the extinction at this setting.
+ * Taking the dust to zero would still leave about 29 km. */
 const BETA_R = [0.327, 0.570, 1.000];   // x fogDensity, per metre, at any height
 const R_GAIN = 0.05;
 const BETA_M = [1.000, 0.962, 0.905];   // x fogDensity, per metre, at y = Y0
-const M_GAIN = 0.56;
+const M_GAIN = 0.084;                   // 0.56 x 0.15, the swept dial, baked
 
 /* What 15-30 km visual range would need from System 2, with the arithmetic, so
  * the request is checkable rather than a preference.
@@ -137,8 +163,14 @@ const M_GAIN = 0.56;
  * baseline: at 4-8 km it is stronger than anything the scene has now. Far ridges
  * at 2-8 km would let the extinction drop another 2.6x and *gain* contrast at
  * the back. Below that they merely fade. This is the whole of the disagreement
- * about extinction, and it is a geometry request, not an atmosphere dial. */
-const GEOMETRY_NEEDED = 'far ridgelines at 2-8 km to support 15-30 km visual range';
+ * about extinction, and it is a geometry request, not an atmosphere dial.
+ *
+ * DELIVERED. System 2 built four curtains at 2.3, 3.4, 5.0 and 7.3 km, and the
+ * prediction held: the ladder is now flat from 6 km to 22 km of visual range
+ * instead of collapsing below 4 km, so extinction came down 5.8x to 19 km with
+ * no measurable cost. Left in place as the record of a checkable request, since
+ * the arithmetic above is what carried the argument. */
+const GEOMETRY_NEEDED = 'delivered: far ridgelines at 2.3-7.3 km';
 
 /* Scale height of the dust layer, metres, and the datum it is measured from.
  * 210 m is a settled evening boundary layer, and it is chosen against the

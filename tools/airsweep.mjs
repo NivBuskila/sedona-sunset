@@ -55,8 +55,19 @@ if (broken.length) {
   process.exit(1);
 }
 
-/* Green extinction above the near-ground band, per metre, at dial 1. */
-const BETA1 = 0.0019 * (0.570 * 0.05 + 0.962 * 0.40);
+/* Meteorological visual range is computed from the coefficients the shader was
+ * actually built with, read back per setting, rather than from a copy of them
+ * kept here.
+ *
+ * It used to be a hardcoded `0.0019 * (0.570 * 0.05 + 0.962 * 0.40)`, and the
+ * 0.40 was M_GAIN as it stood when this was written. M_GAIN then moved to 0.56
+ * and this did not, so every visual range this tool printed was optimistic by
+ * exactly that ratio, 1.4x — enough to put a setting inside a target band that
+ * was really below it, which is the decision this tool exists to inform. A
+ * constant that has to be kept in step with another file by hand will eventually
+ * not be. */
+const mvrKm = (dens, betaR, betaM) =>
+  3.912 / (dens * (betaR[1] + betaM[1])) / 1000;
 
 /* Framings copied from tools/shoot.mjs, which owns them, so these numbers are
    comparable with the handoff set. */
@@ -88,13 +99,17 @@ await run({ width: W, height: H, waitReady: false }, async ({ page, url, errs })
       }
       const d = window.__AERIAL_DIAG;
       return d && d.installed
-        ? { got: d[which], note: `betaM.g ${d.betaM[1].toExponential(3)}` } : null;
+        ? { got: d[which], betaR: d.betaR, betaM: d.betaM,
+            /* The density the fog chunk is actually scaled by. Third constant
+               this tool used to keep its own copy of; now none of them. */
+            dens: (window.__game._scene.fog || {}).density || 0,
+            note: `betaM.g ${d.betaM[1].toExponential(3)}` } : null;
     }, DIAL);
     if (!baked) throw new Error(`cannot read the ${DIAL} dial back — no diag exposed`);
     if (Math.abs(baked.got - dial) > 1e-3) {
       throw new Error(`dial did not take: asked ${DIAL}=${dial}, baked ${baked.got}`);
     }
-    const km = DIAL === 'dust' ? 3.912 / (BETA1 * dial) / 1000 : null;
+    const km = baked.dens && baked.betaR ? mvrKm(baked.dens, baked.betaR, baked.betaM) : null;
     const tag = `_${DIAL}${String(dial).replace('.', 'p')}`;
     tags.push({ dial, km, tag });
     console.log(`${DIAL}=${dial}${km ? `  visual range ${km.toFixed(2)} km` : ''}  ${baked.note}`);
@@ -122,8 +137,10 @@ await run({ width: W, height: H, waitReady: false }, async ({ page, url, errs })
  * lateral positions, so it can move several points between two builds purely by
  * changing which strip wins. A conclusion that rests on the best strip alone,
  * without the median beside it and without the strip position, is not safe. */
-console.log('\n                      sat: best        median   |  value: best        median');
-console.log(`${DIAL.padEnd(6)} view        cx    steps edge%  edge%  |  cx    steps edge%  edge%`);
+console.log('\n  weighted = pixel-weighted mean over strips with a real sample. Read this one.');
+console.log('  best@cx and spread are printed only to keep visible how unstable that figure is.');
+console.log('\n                   weighted sat  |  weighted V   |  best   spread sat/V');
+console.log(`${DIAL.padEnd(6)} view       edge%  mono  |  edge%  mono  |`);
 const rows = [];
 for (const { dial, km, tag } of tags) {
   for (const [n] of VIEWS) {
@@ -134,16 +151,24 @@ for (const { dial, km, tag } of tags) {
         ['tools/layers.mjs', `shots/${tag}_${n}.png`], { encoding: 'utf8' });
       const b = /best strip cx=([\d.]+)\s+sat steps=(\d+) edge=(\d+)% mono=([-\d.]+)\s+V steps=(\d+) edge=(\d+)% mono=([-\d.]+)/.exec(out);
       const md = /median of \d+ usable strips\s+sat edge=(\d+)%\s+mono=([-\d.]+)\s+V edge=(\d+)%\s+mono=([-\d.]+)/.exec(out);
+      /* The statistic to actually read: a pixel-weighted mean over every strip
+         carrying a real sample, rather than the maximum over nine of them. */
+      const wt = /weighted over \d+ strips[^\n]*?sat edge=(\d+)% mono=([-\d.]+)\s+V edge=(\d+)% mono=([-\d.]+)/.exec(out);
+      const sp = /within-frame spread[^\n]*?sat edge (\d+)%\.\.(\d+)%\s+V edge (\d+)%\.\.(\d+)%/.exec(out);
+      if (wt) {
+        rec.wSat = +wt[1]; rec.wSatMono = +wt[2];
+        rec.wV = +wt[3]; rec.wVMono = +wt[4];
+        if (sp) rec.spread = `${sp[1]}-${sp[2]}/${sp[3]}-${sp[4]}`;
+      }
       if (b) {
         Object.assign(rec, {
           cx: b[1], satSteps: +b[2], satEdge: +b[3], satMono: +b[4],
           vSteps: +b[5], vEdge: +b[6], vMono: +b[7],
           satMed: md ? +md[1] : null, vMed: md ? +md[3] : null,
         });
-        cells = `${b[1].padStart(5)} ${b[2].padStart(5)} ${(b[3] + '%').padStart(5)} ` +
-                `${((md ? md[1] : '?') + '%').padStart(6)}  | ` +
-                `${b[1].padStart(5)} ${b[5].padStart(5)} ${(b[6] + '%').padStart(5)} ` +
-                `${((md ? md[3] : '?') + '%').padStart(6)}`;
+        cells = `${((wt ? wt[1] : '?') + '%').padStart(6)} ${(wt ? wt[2] : '?').padStart(5)}  | ` +
+                `${((wt ? wt[3] : '?') + '%').padStart(6)} ${(wt ? wt[4] : '?').padStart(5)}  | ` +
+                `${(b[3] + '%').padStart(5)}@${b[1]}  ${rec.spread || ''}`;
       } else cells = '  (no reading)';
     } catch (e) { /* keep the failure marker */ }
     rows.push(rec);
@@ -163,8 +188,7 @@ for (const [v, rs] of Object.entries(byView)) {
   const dd = z.dial - a.dial;
   if (!dd) continue;
   console.log(`  ${v.padEnd(10)} ${DIAL} ${a.dial} -> ${z.dial}:  ` +
-    `sat edge ${a.satEdge}% -> ${z.satEdge}%  (${((z.satEdge - a.satEdge) / dd).toFixed(0)} pts per unit)   ` +
-    `V edge ${a.vEdge}% -> ${z.vEdge}%  (${((z.vEdge - a.vEdge) / dd).toFixed(0)} pts per unit)   ` +
-    `V mono ${a.vMono} -> ${z.vMono}`);
+    `weighted sat ${a.wSat}% -> ${z.wSat}%  mono ${a.wSatMono} -> ${z.wSatMono}   ` +
+    `weighted V ${a.wV}% -> ${z.wV}%  mono ${a.wVMono} -> ${z.wVMono}`);
 }
 console.log(`\nframes in shots/_${DIAL}<dial>_<view>.png`);
