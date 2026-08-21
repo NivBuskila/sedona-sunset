@@ -408,6 +408,69 @@ near floor has nearly all of it. At 0.70 a shaded vertical goes **pink, hue 331*
 it reads B/R 1.29 at a 23% channel spread against 1.12 at 11%, and the underside keeps its
 warm bounce — the bounce's *hue* is 21 at every value in the sweep, only its weight moves.
 
+### The sun disc: re-tested under thin air, and geometry is not the constraint at all
+
+**Retested after System 5 took the visual range from 1.76 km to about 19 km, which was the stated
+reason to defer this. The disc still does not read, and the geometry question should not be
+re-opened.** At the shipped sun the disc is *already geometrically clear* in `wash_low` —
+`tools/sundisc.mjs` confirms nothing is in front of it — and measured there against the sky
+immediately around it, it stands **+0.1 code value, 0.0% contrast** graded, and +0.5 cv, 0.2%
+ungraded. That is the whole argument in one number: the disc is unoccluded and invisible, so carving
+a notch in the skyline on the sun's bearing would faithfully reproduce an invisible disc in a second
+view. The far-ridgeline agent should not be commissioned for it.
+
+Why, with the arithmetic, so nobody has to take it on faith. The sky beside the disc sits at 3.40
+scene-linear. ACES puts 0.97 linear at 230 cv and 0.50 at 204 cv, so **the near-sun sky would have
+to come down 6.8× before a 10% step could read at all.** Thinning the air does not do that and was
+never going to: the near-sun brightness there is the forward-scattered Mie aureole, which scales
+with the sun's own radiance rather than with the extinction, and thin air keeps the disc bright
+alongside it. Both land in the shoulder together. The condition for a *defined* disc is the opposite
+of what the far field wants — a sun you can look at is a sun dimmed to where the curve still has
+slope, which is heavy haze and a 2 km visual range, and System 5 has correctly spent that on the
+receding ridgelines instead. **The disc and the far field are competing for the same dial, and the
+far field won on merit.**
+
+So the sun stays implied rather than shown, and the honest version of the brief's requirement is
+what the frame already does: an aureole, a raking beam, and long shadows.
+
+**One methodology trap, recorded because it produced a confident wrong answer for several minutes.**
+The first re-measurement reported the contrast rising from 3% to 20% and looked like vindication. It
+was an artefact: the disc sits within a few pixels of the butte silhouette, so the annulus used as
+"surrounding sky" was averaging in dark rock and flattering the disc by dragging the reference down.
+The azimuthal standard deviation of 37 code values on what should have been clear sky was the tell,
+and it was visible in the number before it was understood. `tools/discprofile.mjs` now takes the
+background from sky-classified pixels only. **A background estimate that includes the thing you are
+measuring against is worse than no measurement, because it comes with a plausible number attached.**
+
+### Measured and declined: azimuth −13 buys the gate and costs the floor
+
+For the record so it is not re-opened as an easy win. At elevation 11, azimuth −13 takes the
+shadow-to-sunlit gate to **0.243 — inside its 0.15–0.25 band for the first time in this project.**
+It costs **62% of the wash floor's level**, taking floor L from 0.137 to 0.052 and floor grad/L from
+0.192 to 0.230, back out of band on the far side.
+
+Declined. The floor is what the player walks on for the whole experience, System 1 spent six rounds
+building structure into it, and it had only just entered its own band from above. 0.07 of a ratio is
+not worth 62% of the thing the eye is on. The gate stays near 0.31 with the toe, and the remaining
+distance is accepted rather than bought.
+
+### Check the incidence before you conclude anything about the fill
+
+The single most expensive mistake of the project, and it is a one-line rule. The wall takes a cosine
+of `-sin(azimuth + 7.5)` on the beam, which at azimuth −9 is **0.026** — the surface the
+shadow-to-sunlit gate is measured on was lit at **88 degrees of incidence**. The measured gate read
+0.428 while this same model's prediction for a *sun-facing* vertical was 0.189, and that factor of
+two-plus was geometry, not light. An entire day went into dimming the fill, rewriting the escarpment
+model, widening penumbras and correcting albedos, all of it aimed at a numerator when the problem
+was that the denominator had almost no sun on it.
+
+The tell was available from the start and was even written down: `atmos.js` printed "wall, cos 0.03
+on beam" in its own predicted-pixels table. It was read as a description and not as a diagnosis.
+
+**So: before concluding anything about a fill, a probe, or a grade from a ratio, check the incidence
+angle on both surfaces the ratio is taken from.** A gate between two faces is only a statement about
+lighting if both faces are actually lit.
+
 ### The sun disc is hidden by two independent things, and geometry is the lesser one
 
 The brief asks three times for a visible sun low in the gap, and `sys7a` does not have
