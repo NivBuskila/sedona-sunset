@@ -179,7 +179,15 @@ function skyTexture() {
     data[i] = THREE.DataUtils.toHalfFloat(lut[i] * SCALE);
     data[i + 1] = THREE.DataUtils.toHalfFloat(lut[i + 1] * SCALE);
     data[i + 2] = THREE.DataUtils.toHalfFloat(lut[i + 2] * SCALE);
-    data[i + 3] = THREE.DataUtils.toHalfFloat(lut[i + 3] * SCALE);
+    /* Alpha carries the Mie integral with its phase function and its colour
+       both divided out, and the shader multiplies both back in. uMieTint
+       already carries the scale, so applying it here as well is a factor of
+       nineteen on the aureole — which is exactly the bug that made the first
+       three captures of this system show a flat white sky at saturation 0.03
+       across the whole frame. The tell was that the model and the render
+       disagreed at the same view direction; the model is the thing that was
+       right. */
+    data[i + 3] = THREE.DataUtils.toHalfFloat(lut[i + 3]);
   }
   const t = new THREE.DataTexture(data, SKY_W, SKY_H, THREE.RGBAFormat, THREE.HalfFloatType);
   t.minFilter = THREE.LinearFilter;
@@ -190,6 +198,29 @@ function skyTexture() {
   t.colorSpace = THREE.NoColorSpace;
   t.needsUpdate = true;
   return t;
+}
+
+/** Brightest scene-scale radiance anywhere in the dome, disc excluded. */
+function aureolePeak() {
+  const { lut, SKY_W, SKY_H } = A;
+  let m = 0;
+  for (let j = 0; j < SKY_H; j++) {
+    for (let i = 0; i < SKY_W; i++) {
+      const o = (j * SKY_W + i) * 4;
+      /* Texel (i,j) is at azimuth i/W of pi from the sun and the row's own
+         elevation; the aureole peak is the first column of the horizon rows, so
+         evaluating the phase at the texel's own angle is enough. */
+      const v = (j + 0.5) / SKY_H, t = (v - 0.5) * 2, y = Math.sign(t) * t * t;
+      const phi = ((i + 0.5) / SKY_W) * Math.PI;
+      const ca = Math.sqrt(Math.max(0, 1 - y * y)) * Math.cos(phi) * Math.cos(SUN_EL)
+        + y * Math.sin(SUN_EL);
+      const ph = phaseHG(ca);
+      for (let k = 0; k < 3; k++) {
+        m = Math.max(m, (lut[o + k] + lut[o + 3] * ph * A.mieTintRGB[k]) * SCALE);
+      }
+    }
+  }
+  return m;
 }
 
 export function buildSky() {
@@ -208,12 +239,12 @@ export function buildSky() {
       uMieTint: { value: new THREE.Vector3(...A.mieTintRGB).multiplyScalar(SCALE) },
       uMieG: { value: MIE_G },
       /* The true radiance of the disc is the beam's irradiance divided by its
-         solid angle, which is forty thousand times the brightest sky texel and
-         is not a number any tone curve is going to do something sensible with
-         before System 7 puts a bloom under it. Capped at sixty times the
-         aureole peak: comfortably clipped, so the disc is white with a warm
-         fringe, without pushing float16 render targets around. */
-      uDisc: { value: 60 * SCALE * 0.24 },
+         solid angle, which is some forty thousand times the brightest sky texel
+         and is not a number any tone curve is going to do something sensible
+         with before System 7 puts a bloom under it. Capped at forty times the
+         measured aureole peak: comfortably clipped, so the disc reads as white
+         with a warm fringe, without pushing float16 targets around. */
+      uDisc: { value: 40 * aureolePeak() },
       uDiscTint: {
         value: new THREE.Vector3(...A.sunRGB).divideScalar(Math.max(...A.sunRGB)),
       },

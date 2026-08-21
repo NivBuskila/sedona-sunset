@@ -70,14 +70,21 @@ export const SUN_DIR = new THREE.Vector3(
    cleaner and less muddy than a sea-level sunset. */
 const SITE_ALT = 1350;
 /* Vertical aerosol optical depth at 550 nm, measured upward from the site.
-   0.055 was the first estimate and is too dirty for here. Rendered, it put the
-   whole sky within thirty degrees of the sun at saturation 0.03 — flat white —
-   because the Mie forward lobe is broad at g = 0.76 and its magnitude on a
-   grazing path is enormous. The Colorado Plateau in clear spring air runs
-   0.025 to 0.04 at this altitude, and 0.032 keeps a tight bright aureole
-   around the disc while letting the blue back in above about fifteen degrees.
-   Below about 0.02 the horizon glow disappears and the sky goes to a hard
-   cyan; above 0.1 the distant buttes vanish into milk. */
+   The Colorado Plateau at 1,350 m in clear spring air runs 0.025 to 0.04, and
+   0.032 gives a tight bright aureole round the disc with the blue coming back
+   above about twenty degrees. Below 0.02 the horizon glow disappears and the
+   sky goes to a hard cyan; above 0.1 the distant buttes vanish into milk.
+
+   Worth recording how this number was arrived at, because the first attempt was
+   an instrument failure of exactly the kind CONTRACT.md warns about. The
+   rendered sky was flat white at saturation 0.03 across the whole frame, the
+   obvious suspect was too much aerosol, and 0.055 came down to 0.032 on that
+   reasoning. It made almost no difference, which was the clue. Evaluating the
+   model and the render at the *same view direction* — 141,161,181 against
+   234,231,223 — showed they disagreed, so the aerosol was never the problem:
+   sky.js was applying the scene scale to the Mie channel twice and running the
+   aureole nineteen times too strong. Diagnose from a disagreement between two
+   instruments before adjusting the thing they are both measuring. */
 const AOD550 = 0.032;
 /* Coarse desert dust is a shallow spectral slope. Fine urban haze would be 1.3. */
 const ANGSTROM = 0.8;
