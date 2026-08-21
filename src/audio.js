@@ -153,7 +153,22 @@ const MODES = {
        both sides instead of making everything louder. A gust should be a change
        in the weather, not an arrival. */
     drive: 0.72,
-    insects: 1.0,
+    /* Insects carry more of the lift than the wind does, and the reason is in
+       the bed spectrum: the wind's energy is nearly all below 200 Hz, so raising
+       it costs a lot of RMS and buys very little audibility, while a few
+       decibels in the two-to-six kilohertz band is where the ear actually
+       decides whether a place is alive. Insects are also the ideal continuous
+       layer — they never arrive, so lifting them raises the audible fraction
+       without touching the startle margin. */
+    insects: 1.9,
+    /* A modest lift, and the small number is the point. It first went to 1.55 to
+       fix seventeen scheduled calls a minute of which the meter saw two — but
+       the meter was broadband and the calls are not, and measuring the excursion
+       in each call's own band showed all seventeen standing fifteen to forty-odd
+       decibels clear of the bed. They were never inaudible. What is left here is
+       a little presence for a bird that should read as nearby, not the four
+       decibels it takes to fix a problem that was in the instrument. */
+    birdLvl: 1.15,
     edge: 0,
     fauna: ['canyonwren', 'rockwren', 'sparrow', 'cactuswren'],
     /* Mean quiet time per species in seconds, then calls per bout and the gap
@@ -176,6 +191,7 @@ const MODES = {
        "ever-present far-field insect floor" and was right about it; it was
        simply far too quiet to be one. */
     insects: 0.22,
+    birdLvl: 1,
     edge: 2.0,
     fauna: ['coyote', 'wren', 'raven'],
     bird: null,
@@ -1566,9 +1582,11 @@ export class Soundscape {
           bearing: 0, dist: 0 };
       }
     }
+    let added = 0;
     for (const kind of this.M.fauna) {
       const s = this.birdState[kind], sp = spec[kind];
       while (s.t < until) {
+        added++;
         if (s.left <= 0) {
           s.left = sp.bout[0] + Math.floor(r() * (sp.bout[1] - sp.bout[0] + 1));
           s.bearing = (r() * 2 - 1) * Math.PI;
@@ -1582,8 +1600,14 @@ export class Soundscape {
           : -sp.quiet * Math.log(1 - r() * 0.999);
       }
     }
-    this.calls.sort((a, b) => a.t0 - b.t0);
-    if (this.calls.length > 256) this.calls.splice(0, 128);
+    /* Only when something was actually queued. This runs every frame, and
+       sorting a few hundred entries each time was costing a hundredfold more
+       main-thread time than the whole rest of the system — 0.42 ms a frame
+       against 0.004 — for a list that changes a couple of times a minute. */
+    if (added) {
+      this.calls.sort((a, b) => a.t0 - b.t0);
+      if (this.calls.length > 256) this.calls.splice(0, 128);
+    }
   }
 
   /**
@@ -1811,6 +1835,7 @@ export class Soundscape {
     const f = v.osc.frequency, g = v.gain.gain;
     this._birdAt(v, t0, bearing, dist, 4 + r() * 12);
     let t = t0;
+    const trim = this.M.birdLvl || 1;
 
     if (kind === 'rockwren') {
       /* A dry buzzy trill on a nearly level pitch, delivered as a run of short
@@ -1820,7 +1845,7 @@ export class Soundscape {
       v.osc.setPeriodicWave(this.birdWave.rockwren);
       const f0 = 2300 + r() * 900;
       const n = 6 + Math.floor(r() * 7);
-      const lvl = 0.030 + r() * 0.016;
+      const lvl = (0.030 + r() * 0.016) * trim;
       for (let i = 0; i < n; i++) {
         const len = 0.026 + r() * 0.014;
         const fc = f0 * (1 + 0.06 * Math.sin(i * 1.9)) * (1 - 0.10 * (i / n));
@@ -1836,7 +1861,7 @@ export class Soundscape {
          subject of the phrase. */
       v.osc.setPeriodicWave(this.birdWave.sparrow);
       const f0 = 3400 + r() * 900;
-      const lvl = 0.034 + r() * 0.018;
+      const lvl = (0.034 + r() * 0.018) * trim;
       for (let i = 0; i < 2; i++) {
         const len = 0.11 + r() * 0.05;
         const fc = f0 * (i ? 0.90 : 1);
@@ -1862,7 +1887,7 @@ export class Soundscape {
       v.osc.setPeriodicWave(this.birdWave.cactus);
       const f0 = 420 + r() * 150;
       const n = 5 + Math.floor(r() * 5);
-      const lvl = 0.028 + r() * 0.014;
+      const lvl = (0.028 + r() * 0.014) * trim;
       let gap = 0.155 + r() * 0.045;
       for (let i = 0; i < n; i++) {
         const len = 0.070 + r() * 0.024;
@@ -1911,7 +1936,8 @@ export class Soundscape {
        rotation is equally close and the "several individuals at different
        distances" is only a stereo effect. Referenced at 150 m, which is where
        this level was originally calibrated. */
-    const lvl = (0.058 + r() * 0.031) * clamp(150 / Math.max(30, dist), 0.6, 2.0);
+    const lvl = (0.058 + r() * 0.031) * clamp(150 / Math.max(30, dist), 0.6, 2.0)
+      * (this.M.birdLvl || 1);
     for (let i = 0; i < n; i++) {
       const u = i / (n - 1);
       const fc = top * Math.pow(bottom / top, Math.pow(u, 0.86));

@@ -338,7 +338,7 @@ function transients(x, sr, riseDb = 6, minGap = 0.22) {
  *                 fifteen decibels here; the first version of this piece ran
  *                 twenty-seven, and was described as creepy.
  */
-function continuity(wl, W, sr, evs, seconds, pc) {
+function continuity(wl, W, sr, evs, seconds, pc, voiceSpans) {
   /* Two thresholds, because the brief names one and the ear cares about the
      other. -45 dBFS is the number the piece is being judged against, so it is
      reported whatever it says. -55 catches the case where the bed sits in the
@@ -352,7 +352,12 @@ function continuity(wl, W, sr, evs, seconds, pc) {
   /* Union of the event spans, not the sum: overlapping events are one stretch
      of "something is happening", and a soundscape busy enough to overlap would
      otherwise be scored above a hundred per cent. */
+  /* Voices come from the per-band audibility pass, not from the broadband
+     detector, because that is what decides whether a bird was heard. Unioned
+     with the detected events rather than replacing them: a gust is a broadband
+     thing and the detector is right about those. */
   const spans = evs.map(e => [e.t, e.t + Math.max(e.dur, 0.05)])
+    .concat((voiceSpans || []).map(v => [v.t, v.t + Math.max(v.dur, 0.05)]))
     .sort((a, b) => a[0] - b[0]);
   let active = 0, gapMax = 0, cursor = 0;
   const gaps = [];
@@ -372,6 +377,7 @@ function continuity(wl, W, sr, evs, seconds, pc) {
   }
   gaps.sort((a, b) => a - b);
   const calls = evs.filter(e => e.kind !== 'wind' && e.kind !== 'step');
+  const nv = (voiceSpans || []).length;
   return {
     abovePct: 100 * above45 / wl.length,
     above55Pct: 100 * above55 / wl.length,
@@ -379,8 +385,16 @@ function continuity(wl, W, sr, evs, seconds, pc) {
     longestGap: gapMax,
     medianGap: gaps.length ? gaps[gaps.length >> 1] : NaN,
     startle: pc(0.99) - pc(0.5),
-    perMin: 60 * evs.length / seconds,
-    callsPerMin: 60 * calls.length / seconds,
+    /* Everything a listener would count as a thing that happened: broadband
+       events plus the voices the per-band pass found. The old figure counted only
+       what the level meter flagged, which in a take of seventeen audible birds
+       and no strong gust came out as zero — a number that says more about the
+       instrument than the soundscape. */
+    perMin: 60 * (evs.length + nv) / seconds,
+    callsPerMin: 60 * (calls.length + nv) / seconds,
+    /* Kept separately for the comparison against the scheduled count, which is
+       specifically about what the broadband detector can and cannot see. */
+    bbCallsPerMin: 60 * calls.length / seconds,
   };
 }
 
@@ -670,6 +684,7 @@ function analyse(x, sr, meta) {
     if (si < stepTimes.length && Math.abs(stepTimes[si] - t) < 0.35) continue;
     quiet.push(f);
   }
+  const audibility = callAudibility(S, sr, quiet, calls);
   const bedSpec = CENTRES.map(fc => {
     const b0 = Math.max(1, Math.round(fc * 0.98 * S.N / sr));
     const b1 = Math.min(S.bins - 1, Math.max(b0, Math.round(fc * 1.02 * S.N / sr)));
@@ -862,7 +877,8 @@ function analyse(x, sr, meta) {
     bed, thr, events: evs, windEvents: windEvs, callEvents: callEvs,
     gapStats: gaps.length
       ? { min: gaps[0], median: gaps[gaps.length >> 1], max: gaps[gaps.length - 1] } : null,
-    continuity: continuity(wl, W, sr, evs, seconds, pc),
+    continuity: continuity(wl, W, sr, evs, seconds, pc,
+      audibility && audibility.spans),
     footsteps: {
       inWalk: stepsIn.length, outsideWalk: stepsOut.length, walkSeconds,
       level: stepLv.length
@@ -874,10 +890,86 @@ function analyse(x, sr, meta) {
       stillSrc,
       decay: stepDecay(x, sr, stepTimes, calls),
     },
-    bedSpec, bedFloorPct: floorBins, quietFrames: quiet.length,
+    bedSpec, bedFloorPct: floorBins, quietFrames: quiet.length, audibility,
     corrBands: CORR_BANDS, corr, corrStill, corrWalk,
     narrow: narrow.slice(0, 8), promNoise, promBar, loudFrames: loud.length,
     winLevel: wl, spec: S, meta,
+  };
+}
+
+/**
+ * How far each scheduled voice stands above the bed *in its own band*.
+ *
+ * The broadband event detector is the wrong instrument for a bird and it was
+ * actively misleading: a hundred-millisecond chirp in a two-hundred-hertz band
+ * hardly moves the broadband RMS of a fifty-millisecond window, so raising the
+ * insect bed made the detector lose calls that had in fact got louder. Judged
+ * that way, seventeen scheduled calls a minute looked like one, and the obvious
+ * conclusion — that the birds were inaudible — was the opposite of the truth.
+ *
+ * What a listener notices is a narrowband excursion over the local bed, so that
+ * is what this measures: for each call, the loudest bin anywhere in the vocal
+ * range against that same bin's median level in the bed. Masking is roughly
+ * within-band, which is why the comparison is per bin and not against a
+ * broadband figure.
+ */
+function callAudibility(S, sr, quiet, calls) {
+  if (!calls || !calls.length || !quiet.length) return null;
+  const b0 = Math.max(1, Math.round(350 * S.N / sr));
+  const b1 = Math.min(S.bins - 1, Math.round(9000 * S.N / sr));
+  /* Per-bin bed median, subsampled: a few hundred frames settle a median to
+     well inside the tenth of a decibel this is quoted to, and the full set is
+     several hundred sorts of a few thousand values for no gain. */
+  const stride = Math.max(1, Math.floor(quiet.length / 400));
+  const bedBin = new Float64Array(S.bins);
+  const scratch = [];
+  for (let k = b0; k <= b1; k++) {
+    scratch.length = 0;
+    for (let i = 0; i < quiet.length; i += stride) scratch.push(S.power[quiet[i] * S.bins + k]);
+    scratch.sort((p, q) => p - q);
+    bedBin[k] = scratch[scratch.length >> 1] || 1e-30;
+  }
+  const out = [];
+  for (const c of calls) {
+    /* A call is a phrase, not an instant, and the peak can fall anywhere in it.
+       Two seconds covers the longest cascade here; frames outside the take are
+       simply absent, which is the right behaviour for a call cued near the end. */
+    const f0 = Math.max(0, Math.floor(c.t * sr / S.hop));
+    const f1 = Math.min(S.frames - 1, Math.ceil((c.t + 2.0) * sr / S.hop));
+    let best = -Infinity, bestHz = 0, audFrames = 0;
+    for (let f = f0; f <= f1; f++) {
+      let frameBest = -Infinity;
+      for (let k = b0; k <= b1; k++) {
+        const e = 10 * Math.log10((S.power[f * S.bins + k] + 1e-30) / bedBin[k]);
+        if (e > frameBest) { frameBest = e; }
+        if (e > best) { best = e; bestHz = k * sr / S.N; }
+      }
+      /* Counted per frame rather than as end-minus-start, so the gaps inside a
+         phrase are not credited as audible. A cascade of nine notes with silence
+         between them is nine short audible stretches, and pretending otherwise
+         would inflate the very figure this exists to make honest. */
+      if (frameBest >= 8) audFrames++;
+    }
+    if (Number.isFinite(best)) {
+      out.push({ kind: c.kind, t: c.t, over: best, hz: bestHz,
+        dur: audFrames * S.hop / sr });
+    }
+  }
+  if (!out.length) return null;
+  const overs = out.map(o => o.over).sort((p, q) => p - q);
+  /* Eight decibels is the bar. Below about six a narrowband event is present in
+     a measurement and arguable by ear; by ten it is unmistakably a bird. */
+  return {
+    n: out.length,
+    median: overs[overs.length >> 1],
+    p10: overs[Math.floor(overs.length * 0.1)],
+    min: overs[0],
+    max: overs[overs.length - 1],
+    clearPct: 100 * out.filter(o => o.over >= 8).length / out.length,
+    quietest: out.slice().sort((p, q) => p.over - q.over).slice(0, 3),
+    /* Spans for the continuity union, so "something sounding" counts the voices
+       a listener can hear rather than the ones a level meter happens to flag. */
+    spans: out.filter(o => o.over >= 8 && o.dur > 0).map(o => ({ t: o.t, dur: o.dur })),
   };
 }
 
@@ -1438,7 +1530,15 @@ function decode(res) {
 const shotsDir = path.join(DIR, 'shots');
 fs.mkdirSync(shotsDir, { recursive: true });
 
-await run({ width: 640, height: 360 }, async ({ page, errs }) => {
+/* No render lock. The lock serialises *rendering*, because concurrent captures
+   contend for the same four cores, and this probe draws nothing: it drives an
+   OfflineAudioContext and reads numbers back. Queueing behind an eight-view
+   capture for the harness's full forty-five-minute timeout, four times over,
+   was the failure mode that made this necessary.
+   Not a general escape hatch. Booting the page is still hundreds of seconds of
+   procedural texture generation on those same four cores, so this runs slowly
+   alongside a capture — it simply runs, instead of timing out. */
+await run({ width: 640, height: 360, lock: false }, async ({ page, errs }) => {
   /* Generous, but finite. This was 0 — no timeout at all — and under CPU
      contention from other agents rendering, the contract check sat for half an
      hour and had to be killed. A measurement tool that can hang is a tool
@@ -1484,6 +1584,16 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
     () => page.evaluate(() => window.__game.audio._bench(4000)), NaN);
   const ctxState = await withTimeout('state read', 15000,
     () => page.evaluate(() => window.__game.audio.state), 'unknown');
+  /* Both non-finite counters, read after everything else has run. `badWrites` is
+     this system refusing to put a NaN into a parameter; `badInput` is another
+     system handing it a NaN position in the first place. They are separate
+     because the fix for each lives somewhere different, and a run that silently
+     recovers from the second is exactly how it would stop being investigated. */
+  const nonFinite = await withTimeout('non-finite counters', 15000,
+    () => page.evaluate(() => {
+      const a = window.__game.audio;
+      return { writes: a.badWrites, input: a.badInput };
+    }), null);
 
   /* The contract check calls __game.probe(), which renders the scene twice on
      a software rasteriser and costs minutes. Worth it on a real measurement
@@ -1514,8 +1624,13 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
 
   /* Named per duration so a long exploratory run cannot clobber the 120 s
      reference the critic works from; the unsuffixed name is still written for
-     the canonical length. */
-  const specFile = path.join(shotsDir, `${tag}_spectrogram_${SECONDS}s.png`);
+     the canonical length.
+     And per mode, because the two soundscapes are the comparison: with a shared
+     name a full-mode run silently overwrote the plain-mode picture, so whichever
+     ran second was the only one on disk and the pair could not be looked at
+     side by side. */
+  const specFile = path.join(shotsDir,
+    `${tag}_spectrogram_${MODE}_${SECONDS}s.png`);
   const marks = (res.calls || []).map(c => ({
     t: c.t, c: c.kind === 'coyote' ? [120, 230, 255]
       : c.kind === 'wren' ? [150, 255, 170] : [255, 160, 200],
@@ -1620,6 +1735,28 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
       `window; under about 15 dB nothing arrives out of nowhere`);
   say(`  event density       ${f1(cont.perMin)} discrete events per minute, of which ` +
       `${f1(cont.callsPerMin)} are voices`);
+  /* Both counts, and then the one that actually decides it. The broadband
+     detector answers "would this register as an event in a level meter", which
+     is the right question for a gust and the wrong one for a bird: it lost calls
+     that had just been made louder, because raising the insect bed raised its
+     threshold faster than a narrowband chirp moves a broadband window. The
+     per-band figure below is the one to read. */
+  if (res.calls) {
+    const sched = 60 * res.calls.length / a.seconds;
+    say(`  voices scheduled    ${f1(sched)} per minute, of which ${f1(cont.bbCallsPerMin)} ` +
+        `also clear the broadband event threshold`);
+  }
+  if (a.audibility) {
+    const ad = a.audibility;
+    say(`  voices over the bed ${f1(ad.median)} dB median in the call's own band ` +
+        `(p10 ${f1(ad.p10)}, range ${f1(ad.min)} to ${f1(ad.max)})`);
+    say(`                      ${f1(ad.clearPct)}% of ${ad.n} calls clear the bed by 8 dB ` +
+        `where it matters — this and not the broadband count is whether a bird is audible`);
+    if (ad.clearPct < 90) {
+      say(`                      quietest: ` + ad.quietest
+        .map(q => `${q.kind}@${f2(q.t)}s ${f1(q.over)} dB at ${Math.round(q.hz)} Hz`).join(', '));
+    }
+  }
   say('');
   say(`── events ──────────────────────────────────────────────`);
   say(`  ${a.events.length} discrete events above the bed: ` +
@@ -1754,6 +1891,12 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
   say(`  DC offset            L ${res.dcL.toExponential(2)}  R ${res.dcR.toExponential(2)}`);
   say(`  longest true silence ${f1(a.longestSilentMs)} ms`);
   say(`  main-thread cost     ${Number.isFinite(perFrameMs) ? perFrameMs.toFixed(4) : 'n/a'} ms per update() call`);
+  if (nonFinite) {
+    say(`  non-finite writes    ${nonFinite.writes} refused` +
+        (nonFinite.writes ? '   ← was throwing from _scheduleWind every frame' : '   (was every frame)'));
+    say(`  non-finite positions ${nonFinite.input} handed in by the player` +
+        (nonFinite.input ? '   ← the origin is upstream of audio.js' : ''));
+  }
   if (contract) {
     say('');
     say(`── contract ────────────────────────────────────────────`);
@@ -1781,6 +1924,7 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
       ? Object.fromEntries(T.map((t, i) => [t, a.stillBelowWinPct[i]])) : null,
     winPercentiles: a.winPercentiles, stillPercentiles: a.stillPercentiles,
     bed: a.bed, events: a.events, gapStats: a.gapStats, continuity: a.continuity,
+    audibility: a.audibility,
     narrow: a.narrow, loudFrames: a.loudFrames,
     footsteps: a.footsteps, scheduledGait: sg,
     gusts: res.gusts, calls: res.calls || res.coyotes,
