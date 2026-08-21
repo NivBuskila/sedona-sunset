@@ -142,6 +142,60 @@ function trace(img, x0, x1, y0, y1) {
   return { ys, miss: miss.length };
 }
 
+/* ---- tracked interior contour ----------------------------------------------
+ *
+ * `trace` re-finds the strongest edge in the band independently in every column,
+ * which is right for a skyline — there is only one sky, so the answer cannot
+ * wander. It is wrong for an interior edge like the floor-to-wall junction: that
+ * band also contains cobbles, shadow edges and bedding, so "strongest in this
+ * column" jumps between features and the trace reads 57 px rms on a still frame.
+ * That is not shimmer and it is not noise either, it is the estimator changing
+ * its mind about which edge it is measuring.
+ *
+ * Tracking fixes it the way any contour follower does: seed on the strongest
+ * gradient anywhere in the region, then walk outward in both directions allowing
+ * the edge to move only a few pixels per column. The result is one continuous
+ * feature measured along its length, which is the only thing a displacement
+ * figure can be about. It also removes the need to know the junction's row in
+ * advance — give it a generous band and it locks onto the dominant contour. */
+function traceTracked(img, x0, x1, y0, y1, win = 3) {
+  const grad = (x, y) => Math.abs(lum(img, x, y + 1) - lum(img, x, y - 1));
+  const sub = (x, y) => {
+    const a = grad(x, y - 1), b = grad(x, y), c = grad(x, y + 1);
+    const den = a - 2 * b + c;
+    const off = Math.abs(den) > 1e-6 ? 0.5 * (a - c) / den : 0;
+    return y + Math.max(-1, Math.min(1, off));
+  };
+
+  let sx = -1, sy = -1, sv = 0;
+  for (let x = x0; x < x1; x++) {
+    for (let y = y0 + 1; y < y1 - 1; y++) {
+      const g = grad(x, y);
+      if (g > sv) { sv = g; sx = x; sy = y; }
+    }
+  }
+  if (sx < 0 || sv < 6) return { ys: [], miss: x1 - x0, seed: null };
+
+  const out = new Map();
+  const walk = (dir) => {
+    let prev = sy;
+    for (let x = sx + dir; x >= x0 && x < x1; x += dir) {
+      let by = -1, bv = 0;
+      for (let y = Math.max(y0 + 1, prev - win); y <= Math.min(y1 - 2, prev + win); y++) {
+        const g = grad(x, y);
+        if (g > bv) { bv = g; by = y; }
+      }
+      if (by < 0 || bv < 6) break;
+      out.set(x, sub(x, by));
+      prev = by;
+    }
+  };
+  out.set(sx, sub(sx, sy));
+  walk(1); walk(-1);
+  const ys = [...out.entries()].sort((a, b) => a[0] - b[0]);
+  return { ys, miss: (x1 - x0) - ys.length, seed: { x: sx, y: sy } };
+}
+
 /** Second difference along x: roughness with smooth geometry removed. */
 function jitter(tr) {
   const m = new Map(tr.ys);
@@ -223,9 +277,20 @@ for (let i = 0; i < off.px.length; i += off.ch) {
 }
 const npx = off.w * off.h;
 
-const tOff = trace(off, x0, x1, y0, y1);
-const tOff2 = trace(off2, x0, x1, y0, y1);
-const tOn = trace(on, x0, x1, y0, y1);
+/* --track follows one continuous interior contour; the default re-finds the
+   strongest edge per column, which is correct only for a skyline. */
+const tracked = argv.includes('--track');
+const tr = tracked
+  ? (im) => traceTracked(im, x0, x1, y0, y1)
+  : (im) => trace(im, x0, x1, y0, y1);
+const tOff = tr(off);
+const tOff2 = tr(off2);
+const tOn = tr(on);
+if (tracked) {
+  const sd = tOff.seed;
+  console.log(`tracked contour: seed x=${sd ? sd.x : '-'} y=${sd ? sd.y : '-'}, ` +
+    `${tOff.ys.length} of ${x1 - x0} columns followed`);
+}
 
 function paired(a, b) {
   const m = new Map(b.ys), out = [], rej = [];

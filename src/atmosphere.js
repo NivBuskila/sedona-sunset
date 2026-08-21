@@ -711,6 +711,8 @@ uniform sampler2D uGround;
 uniform vec4 uBox;
 attribute vec4 aux;
 varying float vA;
+varying vec2 vDir;
+varying float vStreak;
 ${NOISE_GLSL}
 
 const float TILE = ${TILE.toFixed(1)};
@@ -729,7 +731,8 @@ void main() {
      suspended grain is higher in the boundary layer where the wind is faster
      and it is not losing momentum to the bed on every impact, so it runs at
      most of the free-stream speed. */
-  float adv = uT * uSpeed * (susp ? 0.78 : (0.14 + 0.30 * hopLen)) + sd * 137.0;
+  float gspd = uSpeed * (susp ? 0.78 : (0.14 + 0.30 * hopLen));
+  float adv = uT * gspd + sd * 137.0;
   p += uWind * adv;
   p = mod(p - uCam.xz + TILE * 0.5, TILE) - TILE * 0.5 + uCam.xz;
 
@@ -779,22 +782,87 @@ void main() {
 
   vec4 mv = modelViewMatrix * vec4(wpos, 1.0);
   gl_Position = projectionMatrix * mv;
+
+  /* ---- particle phase: from resolvable grains to a continuous sheet --------
+   *
+   * A grain is 390 microns. At ten metres that subtends about a seventeenth of a
+   * pixel, so a 3 px dot is not a grain, it is a two-centimetre pebble, and a
+   * field of them reads as gravel thrown through the air rather than as sand
+   * moving over a bed. But drawing sub-pixel grains honestly is not the answer
+   * either: below a pixel a point stops shrinking, so the sheet would simply be
+   * a scatter of hard dots at whatever the minimum size is.
+   *
+   * What each far sprite has to become instead is a *patch* of the sheet rather
+   * than one grain — a sample of the optical depth field, not an object. That
+   * only requires the alpha to fall as the area the clamp forces on it grows, so
+   * the total optical depth through the layer is whatever the grain count says it
+   * is regardless of how it happens to be packaged into sprites.
+   *
+   * This compensation was linear, and needed to be squared: clamping a sprite
+   * from px up to base multiplies its area by (base/px)^2, not (base/px). Every
+   * grain past the clamp distance was therefore too bright by that ratio, which
+   * is the whole of the 'discrete resolvable particles at high alpha' reading —
+   * the error grows as the grain recedes, so exactly the grains that should have
+   * melted into a sheet were the ones held at full strength.
+   *
+   * With that fixed the minimum can go up rather than down. At 2.2 px the far
+   * sprites overlap into continuous cover instead of stippling, and each one is
+   * faint enough to be a sheet sample: a grain whose true size is 0.3 px lands at
+   * (0.3/2.2)^2, about 2% alpha, over five times the area. Low alpha at high
+   * coverage, which is what a saltation carpet is. */
+  const float MIN_PX = 2.2;
   float px = uPix * aux.z * (susp ? 0.014 : 0.024) / max(0.30, dist);
-  gl_PointSize = max(0.9, px);
-  vA *= min(1.0, px / 0.9);
+  float base = max(MIN_PX, px);
+
+  /* ---- motion streaking ---------------------------------------------------
+   *
+   * A saltating grain crosses its own diameter many times over in a frame, so it
+   * is never imaged as a point; it is imaged as the path it took. Rendering it
+   * round is a shutter-speed claim the rest of the scene does not make, and it is
+   * the other half of why the sheet reads as discrete objects — round dots are
+   * things, streaks are motion.
+   *
+   * The direction is taken by projecting the grain's own velocity, so it is
+   * correct under any view: a grain blowing across the frame streaks sideways, one
+   * blowing away from the camera barely streaks at all, and the ribbons align
+   * with the wind for free. Grains going nowhere stay round, which is the still
+   * air the brief asks to be noticeable. */
+  vec3 vel = vec3(uWind.x, 0.0, uWind.y) * gspd;
+  vec4 c1 = projectionMatrix * (modelViewMatrix * vec4(wpos + vel * 0.055, 1.0));
+  vec2 s0 = gl_Position.xy / max(1e-4, gl_Position.w);
+  vec2 s1 = c1.xy / max(1e-4, c1.w);
+  float aspect = projectionMatrix[1][1] / max(1e-6, projectionMatrix[0][0]);
+  vec2 dv = (s1 - s0) * vec2(aspect, 1.0);
+  float dl = length(dv);
+  vDir = dl > 1e-6 ? dv / dl : vec2(1.0, 0.0);
+  vStreak = clamp(dl * 30.0, 0.0, 2.4);
+
+  gl_PointSize = base * (1.0 + vStreak);
+  vA *= min(1.0, px / base) * min(1.0, px / base);
+  /* Smearing the same grain along a longer path spreads its light over that
+     path rather than adding any, so the streak dims as it lengthens. */
+  vA /= 1.0 + vStreak;
 }`,
     fragmentShader: /* glsl */`
 uniform vec3 uTint;
 uniform float uLevel;
 varying float vA;
+varying vec2 vDir;
+varying float vStreak;
 
 void main() {
   /* Soft, and not very bright. A hard bright dot per grain reads as a spark;
      what a saltation sheet looks like is a slightly luminous fog that happens
      to be made of grains, so each one is a soft blob well under the exposure of
      the lit floor and the sheet is built out of their overlap. */
-  float d = length(gl_PointCoord - 0.5);
-  float a = vA * smoothstep(0.5, 0.08, d);
+  /* Elongated along the direction of travel. The sprite was widened by the same
+     factor in the vertex stage, so this stretches the grain inside its own
+     footprint rather than cropping it, and a stationary grain (vStreak = 0)
+     falls back to exactly the round profile this had before. */
+  vec2 q = gl_PointCoord - 0.5;
+  vec2 e = vec2(dot(q, vDir), dot(q, vec2(-vDir.y, vDir.x)));
+  float r = length(vec2(e.x / (0.5 * (1.0 + vStreak)), e.y / 0.5));
+  float a = vA * smoothstep(1.0, 0.16, r);
   if (a < 0.002) discard;
   gl_FragColor = vec4(uTint * uLevel, a * 0.95);
   #include <tonemapping_fragment>
@@ -897,7 +965,45 @@ function shimmerNoise(n = 128) {
   t.generateMipmaps = false;
   t.colorSpace = THREE.NoColorSpace;
   t.needsUpdate = true;
-  return t;
+
+  /* ---- and its actual moments, which is the whole of why this effect measured
+   * zero for three rounds ---------------------------------------------------
+   *
+   * uAmp is documented as a displacement in pixels and has been reasoned about,
+   * tuned and defended as one. It is not one. The shader forms the displacement
+   * as uAmp * (n - 0.5), and (n - 0.5) is not a unit-amplitude signal: two
+   * octaves of value noise, smoothstep-interpolated and weight-normalised, come
+   * out with a standard deviation near 0.15, so the term multiplying uAmp has an
+   * rms of about 0.167 rather than 1. uAmp = 3 therefore delivers half a pixel,
+   * and at the junction, where the height term takes another factor of two, a
+   * quarter of one. Measured 0.237 px against 0.24 predicted from these numbers.
+   *
+   * Every previous attempt to fix this raised HOT_H or changed the saturation law
+   * — both of which were also wrong, and both of which were found by measurement
+   * — while the units error sat underneath multiplying the answer by a sixth. It
+   * survived because a plausible-looking constant with a plausible-looking
+   * comment reads as calibrated.
+   *
+   * Also worth having: the red channel's mean is 0.4785, not 0.5. Half of the
+   * x displacement was a constant shift of the whole frame rather than a wobble.
+   *
+   * So the moments are measured at bake time and handed to the shader, which
+   * subtracts the real mean and divides by the real sd. uAmp then means pixels
+   * rms at 900 lines, which is what it has always claimed to mean. */
+  const moments = (ch) => {
+    let s = 0, s2 = 0;
+    const N = n * n;
+    for (let i = 0; i < N; i++) s += data[i * 4 + ch] / 255;
+    const mean = s / N;
+    for (let i = 0; i < N; i++) s2 += (data[i * 4 + ch] / 255 - mean) ** 2;
+    return { mean, sd: Math.sqrt(s2 / N) };
+  };
+  const mr = moments(0), mg = moments(1);
+  return {
+    tex: t,
+    mean: new THREE.Vector2(mr.mean, mg.mean),
+    inv: new THREE.Vector2(1 / (mr.sd || 1), 1 / (mg.sd || 1)),
+  };
 }
 
 /* ── shadow-mapped in-scatter: the shafts ──────────────────────────────────
@@ -1280,7 +1386,8 @@ class Shimmer {
     this.rt = null;
     this.enabled = true;
     this.samples = 4;
-    this.noise = shimmerNoise(128);
+    const nz = shimmerNoise(128);
+    this.noise = nz.tex;
 
     this.mat = new THREE.ShaderMaterial({
       uniforms: {
@@ -1289,9 +1396,19 @@ class Shimmer {
         tShaft: { value: null },
         uShaft: { value: 1 },
         tNoise: { value: this.noise },
+        uNMean: { value: nz.mean },
+        uNInv: { value: nz.inv },
         uT: { value: 0 },
         uRes: { value: new THREE.Vector2(1, 1) },
-        uAmp: { value: 3.0 },
+        /* Pixels rms at 900 lines, and now actually that — see the moments note
+           in shimmerNoise. The old 3.0 was delivering 0.50 px at m = 1 and 0.24
+           at the floor-to-wall junction, which is where a critic measured it as
+           indistinguishable from the antialiasing floor and was right to.
+           2.2 puts roughly 2 px on a long grazing sightline over hot floor, under
+           1 px on a mesa skyline 400 m up, and nothing inside six metres. That
+           ordering is the point: an inferior mirage lives on the grazing ray, and
+           the brief rules out a full-screen wobble. */
+        uAmp: { value: 2.2 },
         uCam: { value: new THREE.Vector3() },
         uGroundY: { value: 0 },
         uInvVP: { value: new THREE.Matrix4() },
@@ -1310,6 +1427,8 @@ uniform sampler2D tDepth;
 uniform sampler2D tShaft;
 uniform float uShaft;
 uniform sampler2D tNoise;
+uniform vec2 uNMean;
+uniform vec2 uNInv;
 uniform float uT;
 uniform vec2 uRes;
 uniform float uAmp;
@@ -1384,7 +1503,11 @@ void main() {
     vec2 q = vec2(vUv.x * uRes.x / uRes.y, vUv.y);
     vec2 n1 = texture2D(tNoise, q * 20.0 + vec2(0.09 * uT, -0.55 * uT)).rg;
     vec2 n2 = texture2D(tNoise, q * 44.0 + vec2(-0.16 * uT, -1.15 * uT)).rg;
-    d = (n1 - 0.5) * 1.0 + (n2 - 0.5) * 0.55;
+    /* Normalised to zero mean and unit rms using the texture's measured
+       moments, so uAmp below is genuinely a displacement in pixels. */
+    vec2 a1 = (n1 - uNMean) * uNInv;
+    vec2 a2 = (n2 - uNMean) * uNInv;
+    d = (a1 + a2 * 0.55) / sqrt(1.0 + 0.55 * 0.55);
     /* Vertical displacement dominates: the gradient is vertical, so the
        refraction is too. */
     d.x *= 0.55;
