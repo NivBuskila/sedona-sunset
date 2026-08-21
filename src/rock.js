@@ -526,7 +526,7 @@ function wallGrid(path, terrain, side) {
          legible. Well-cemented massive rock is jointed at *wide* spacing and
          retreats by slabbing off whole plates, so its face stays flat between
          joints; it is the thin friable beds that come apart into buttresses. */
-      const mass = 1 - L.pale * 0.66;
+      const mass = 1 - LAYERS[li].pale * 0.66;
       u += jointOffset(a1, 101, 3.1) * (0.45 + 0.55 * vert) * mass;
       u += jointOffset(a2, 107, 4.6) * 0.7 * mass;
       u += jointOffset(a1 * 1.7 + li * 0.37, 200 + li, 0.85) * mass;
