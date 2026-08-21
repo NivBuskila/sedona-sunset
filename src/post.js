@@ -171,23 +171,40 @@ export const POST_DEFAULTS = {
      the sky's own radiance instead: it is the threshold, not the gain, that
      decides whether an ordinary bright sky counts as a highlight. */
   bloomThresh: 0.55, bloomKnee: 0.35, bloomGain: 0.013,
-  ghostGain: 0.030, veilGain: 0.055, streakGain: 0.030,
-  /* Ceiling on the flare *source*, not on the flare. Every flare term is
-     proportional to the radiance in the bright buffer, which is what makes
-     occlusion free — but it also means the gains above are only meaningful
-     against a known source brightness, and the brightest thing feeding them
-     today is sky glow near the skyline at a linear ~2.
-     System 4 is clearing the solar disc into the gap. A disc is not 2, it is
-     hundreds to thousands, so without a ceiling these three gains would be
-     wrong by three orders of magnitude the moment it appears — the flare would
-     go from invisible to a white frame with no intermediate state, and the
-     numbers below would have to be re-derived rather than nudged.
-     `flareKnee` is set five times above anything in the frame now, so it is an
-     identity on today's capture, and the soft ceiling above it bounds the
-     source at knee+range. A visible sun therefore flares about twenty times
-     harder than the current sky, which is the right direction and the right
-     order, and re-tuning against it is a trim rather than a rebuild. */
-  flareKnee: 20.0, flareRange: 40.0,
+  /* These three were wrong by a factor of twenty and there was no way to know
+   * until the sun's screen position came inside a frame, which it now has.
+   *
+   * The gains were set against a source that never fired. Everything below is
+   * proportional to the radiance in the bright buffer at the sun's position,
+   * which is what makes occlusion free — a butte in front of the sun leaves that
+   * position dark and the flare goes away by itself, with no visibility query.
+   * The cost of that is that the gains are only meaningful against a known
+   * source, and the only source available for tuning was a forced one.
+   *
+   * Measured the first time it fired, on wash_low of the sys7d pair: the veil
+   * added 0.113 in linear radiance at its peak, onto rock sitting at 0.029, and
+   * took a block of shaded floor from 34 to 123 code values. Mean over the whole
+   * frame was +22 cv. Solving back through the tone curve for a +6 cv peak gives
+   * a factor of 0.047, and the three keep their tuned ratios.
+   *
+   * The source there measured about 2.06, which is sky glow and not a disc, so
+   * the ceiling below at knee+range = 60 was never reached and the calibration
+   * would have broken all over again the moment the disc cleared. A ceiling that
+   * is never the operative limit is not a safety bound, it is decoration. So it
+   * now sits just above the sky, at 4: sky glow of 2-3 passes almost unclamped,
+   * so the bloom above is unaffected, and a disc of hundreds clamps to 4, which
+   * is at most a doubling of the veil measured here. Bounded, and it does mean
+   * the flare stops responding to the disc's brightness above the clamp — a fair
+   * trade for an effect whose source is a nine-tap average of a quarter-scale
+   * blur, which is not a flux measurement in the first place. */
+  ghostGain: 0.0014, veilGain: 0.0026, streakGain: 0.0014,
+  /* Ceiling on the flare *source*, not on the flare, and it is the reason the
+     gains above are a calibration rather than a guess. The soft knee is an
+     identity below `flareKnee` and asymptotes at knee+range, so the sky's own
+     2-3 passes through almost untouched while a solar disc of hundreds arrives
+     as 4. The gains are calibrated at that clamp; see above for what happened
+     when they were calibrated against nothing. */
+  flareKnee: 2.0, flareRange: 2.0,
 
   /* Polish, and all three of these were set by an audit rather than by eye.
    *
