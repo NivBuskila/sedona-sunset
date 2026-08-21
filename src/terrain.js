@@ -41,6 +41,11 @@ import { SUN_DIR, SUN_EL } from './sky.js';
    heading so a page with a dead audio context still agrees with itself. */
 const TONIGHT_FALLBACK = 0.12;
 
+/* Scour hollow geometry. SC_IN is where the stone's own footing ends and the pit
+   begins, SC_OUT where the pit dies, both in radii of the stone. SC_CELL is the
+   lookup grid, comfortably wider than the widest footprint. */
+const SC_IN = 0.95, SC_OUT = 2.60, SC_CELL = 4.0;
+
 /** Staircase with hard risers. `sharp` is the fraction of each step spent rising. */
 function stair(v, n, sharp) {
   const f = v * n;
@@ -70,6 +75,82 @@ export class Terrain {
     this.oPan = 0;   // ponded silt coverage
     this.oSheet = 0; // slack-water sand sheet coverage
     this.oFlow = 0;  // flow depth of the last flood, 1 in the thalweg
+    this._scour = null;   // lazily built; see addScour
+  }
+
+  /* ── scour hollows ───────────────────────────────────────────────────────
+   *
+   * "No clast burial or scour geometry" has been named by four critics running,
+   * and the last round answered the burial half — clasts sink, they get a fillet
+   * of banked fines and a depositional tail — while leaving the scour half as
+   * decoration. Nothing was actually *excavated*. A stone sitting in a dish it
+   * dug is a different silhouette from a stone sitting in a dish drawn around
+   * it, and at a low sun the difference is the whole thing: the pit's upstream
+   * wall is a real shadow cast on real ground.
+   *
+   * So this is a genuine deformation of the height field. The shape is the one
+   * an obstacle in alluvium actually produces: a horseshoe open downstream. The
+   * flow divides against the upstream face, the horseshoe vortex scours the
+   * upstream shoulders and both flanks hardest, and the sediment it lifts is
+   * dropped immediately behind in the separation shadow as a low mound. It is
+   * zero directly under the stone, because the stone is *supported* by the bed
+   * there — which is also why this needs no cooperation from the seating code.
+   *
+   * Only boulders qualify, and that is a resolution limit rather than a choice.
+   * The grid is 0.20 m in x but 0.42 m in z, so a hollow has to be a couple of
+   * metres across before the mesh can express it at all; a 0.46 m boulder gives
+   * one 2.4 m across, which is five z-columns. A cobble's would be 1 m across —
+   * two columns, which is a dimple, not a pit. Below that size the fillet and
+   * the burial remain the model, and they are the right model, because a cobble
+   * genuinely does not scour a hole you could see from standing height.
+   *
+   * Registered during the clast scatter and folded into `heightAtQ`, so the
+   * player walks in the hollows and everything placed afterwards — the fillets,
+   * the tails, the collar stones — sits on the excavated bed rather than on the
+   * surface that used to be there. The mesh is built before the clasts exist, so
+   * `applyScour` below re-levels it afterwards.
+   */
+  addScour(x, z, rad, dnX, dnZ, depth) {
+    if (!this._scour) this._scour = new Map();
+    const out = rad * SC_OUT;
+    const s = { x, z, r: rad, dx: dnX, dz: dnZ, d: depth };
+    /* Inserted into every cell its footprint touches, so a query reads exactly
+       one cell and never has to widen to a neighbourhood. */
+    const i0 = Math.floor((x - out) / SC_CELL), i1 = Math.floor((x + out) / SC_CELL);
+    const j0 = Math.floor((z - out) / SC_CELL), j1 = Math.floor((z + out) / SC_CELL);
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        const k = i * 73856093 ^ j * 19349663;
+        let l = this._scour.get(k);
+        if (!l) this._scour.set(k, l = []);
+        l.push(s);
+      }
+    }
+  }
+
+  /** Signed height delta from every registered hollow. Negative is excavated. */
+  scourAt(x, z) {
+    if (!this._scour) return 0;
+    const i = Math.floor(x / SC_CELL), j = Math.floor(z / SC_CELL);
+    const l = this._scour.get(i * 73856093 ^ j * 19349663);
+    if (!l) return 0;
+    let tot = 0;
+    for (let n = 0; n < l.length; n++) {
+      const s = l[n];
+      const dx = x - s.x, dz = z - s.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      const t = dist / s.r;
+      if (t >= SC_OUT || t <= SC_IN) continue;
+      /* Radial envelope: nothing under the stone, a smooth lobe out to SC_OUT. */
+      const env = Math.sin(Math.PI * (t - SC_IN) / (SC_OUT - SC_IN));
+      /* Downstream-ness of this sample about the stone, +1 dead astern. */
+      const c = dist < 1e-5 ? 0 : (dx * s.dx + dz * s.dz) / dist;
+      /* 1 upstream and on the flanks, 0 in the lee. The flanks land near 0.46,
+         which is what makes it a horseshoe rather than a crescent. */
+      const dig = smoothstep(-0.62, 0.72, -c);
+      tot += s.d * env * (0.36 * (1 - dig) - dig);
+    }
+    return tot;
   }
 
   /**
@@ -577,6 +658,11 @@ export class Terrain {
        + ramp * (0.30 * fbm(x * 0.13, z * 0.13, 3, 119)
                + 0.06 * fbm(x * 0.30, z * 0.30, 2, 121));
 
+    /* Last, so the hollows are cut into the finished bed rather than being
+       smoothed over by anything downstream of here. Free until the first
+       boulder registers one. */
+    if (this._scour) h += this.scourAt(x, z);
+
     return h;
   }
 
@@ -683,6 +769,35 @@ export function buildTerrainMesh(terrain, material) {
   mesh.frustumCulled = false;
   mesh.name = 'terrain';
   return mesh;
+}
+
+/**
+ * Re-level the terrain mesh into the scour hollows the clast scatter registered.
+ *
+ * The ordering is unavoidable and this is the cheap way out of it. The clasts
+ * need the finished bed to seat on, so they have to be placed after the mesh
+ * exists; the hollows they dig belong to the mesh, so they have to be applied
+ * before it is drawn. Rather than restructure the boot into two passes and risk
+ * the two disagreeing, the vertices already carry their own x and z, and
+ * `scourAt` is a pure signed delta — so this is one add per vertex and a normal
+ * recompute, and it cannot drift out of step with what `heightAt` reports to the
+ * player because it is literally the same term.
+ */
+export function applyScour(mesh, terrain) {
+  if (!terrain._scour) return;
+  const g = mesh.geometry;
+  const p = g.getAttribute('position');
+  const a = p.array;
+  let moved = 0;
+  for (let k = 0; k < p.count; k++) {
+    const o = k * 3;
+    const d = terrain.scourAt(a[o], a[o + 2]);
+    if (d !== 0) { a[o + 1] += d; moved++; }
+  }
+  if (!moved) return;
+  p.needsUpdate = true;
+  g.computeVertexNormals();
+  g.computeBoundingSphere();
 }
 
 /* ── surface shader ────────────────────────────────────────────────────── */
