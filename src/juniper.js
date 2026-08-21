@@ -664,18 +664,33 @@ function foliageGeometry(clumps, seed) {
     pb.crossVectors(ax, pa).normalize();
 
     const L = cl.size * (cl.interior ? 1.6 : 3.0);
-    const nCards = Math.round(3 + cl.size * 11 + rand() * 2);
+    /* The floor is what stops the spray coming apart, and it is arithmetic
+       rather than taste. A card's half-extent at the tip is 0.38 * size * 0.92,
+       about 0.35 * size, while the spacing between cards is L / nCards, and L is
+       3 * size — so anything under nine cards leaves the last one or two
+       stranded in mid-air with a gap of sky behind them. That is the "detached
+       foliage island" a reviewer found floating clear of the crown: not a
+       misplaced clump, just the thin end of a legitimate spray sampled too
+       coarsely to stay joined. Ratios, not absolute sizes, so it holds for every
+       clump size. */
+    const nCards = Math.max(cl.interior ? 5 : 9,
+                            Math.round(4 + cl.size * 16 + rand() * 2));
     /* The spray's own centre, for the shading normal: a point inside the fan
        rather than at its foot, so the sphere normal still curves the right way. */
     cen.copy(cl.p).addScaledVector(ax, L * 0.42);
 
     for (let k = 0; k < nCards; k++) {
       /* Biased toward the base, where a real fan carries most of its mass. */
-      const t = Math.pow((k + rand()) / nCards, 0.72);
+      /* Even spacing with a jitter, not a power curve. The 0.72 exponent put the
+         mass at the base — which is right — but it did so by *spreading the tip
+         samples apart*, which is exactly where the cards are smallest and can
+         least afford it. The taper on card size below carries the base-heaviness
+         instead, and costs no continuity to do it. */
+      const t = (k + 0.30 + rand() * 0.40) / nCards;
       /* Cone radius: widest at a third, closing to nothing at the point. */
       const rad = cl.size * 0.68 * Math.sin(Math.PI * Math.pow(t, 0.62)) * (0.55 + 0.45 * rand());
       const roll = rand() * TAU;
-      const s = cl.size * (0.80 - 0.50 * t) * (0.78 + rand() * 0.44);
+      const s = cl.size * (0.80 - 0.42 * t) * (0.78 + rand() * 0.44);
       c.copy(cl.p)
         .addScaledVector(ax, L * t)
         .addScaledVector(pa, Math.cos(roll) * rad)
@@ -792,7 +807,7 @@ export function makeBarkMaterial(bark) {
        been darkened to widen its own contrast, and 0.76 against a sunlit key is
        white paint: the snags rendered as blown-out wires. This sits about 2.8x
        the live bark's mean and holds its highlight. */
-    uDeadCol: { value: new THREE.Color(0.445, 0.418, 0.374) },
+    uDeadCol: { value: new THREE.Color(0.470, 0.424, 0.360) },
   };
   mat.userData.uniforms = u;
   mat.onBeforeCompile = (sh) => {
@@ -817,10 +832,16 @@ export function makeBarkMaterial(bark) {
            Weighted mostly to the map's alpha, which carries the long grain. */
         vec3 deadC = uDeadCol * ( 0.82 + 0.32 * mix( pow( g, 0.55 ), bt.a, 0.80 ) );
         diffuseColor.rgb *= mix( bt.rgb * uLiveCol, deadC, vDead );`)
-      /* Shaggy lifted strings against wood polished by grit and rain. */
+      /* Shaggy lifted strings against wood polished by grit and rain — but only
+         so polished. At 0.40 the snags picked up a specular streak down their
+         whole length and rendered as galvanised wire: a thin cylinder carrying a
+         tight highlight across eight radial segments aliases into a dotted
+         bright line, and no amount of correct albedo reads as wood through it.
+         0.62 is still far smoother than the live bark beside it, which is where
+         the material contrast has to come from, and it damps the aliasing. */
       .replace('#include <roughnessmap_fragment>', /* glsl */`
         float roughnessFactor = roughness *
-          mix( texture2D( normalMap, vNormalMapUv ).a, 0.40, vDead );`)
+          mix( texture2D( normalMap, vNormalMapUv ).a, 0.62, vDead );`)
       /* The shredded relief belongs to the bark, so its normal map has to fall
          away with the dead mask — otherwise the silver strips keep the fibre
          texture of the bark that is no longer on them.

@@ -19,6 +19,12 @@ const tag = (args[0] && !args[0].startsWith('--')) ? args[0] : 'run';
 const getf = (k, d) => { const i = args.indexOf('--' + k); return i < 0 ? d : args[i + 1]; };
 const W = Number(getf('w', 1600)), H = Number(getf('h', 900));
 const only = getf('only', '');
+/* Passed through to the page's location hash, which is how the render stages
+   read their own switches — `--hash nopost` gets you the scene without System
+   7's chain. Added because a defect in one stage now contaminates every other
+   stage's handoff frames, and the only way to attribute it is to render with
+   that stage out. Costs nothing when unused. */
+const hash = getf('hash', '');
 
 /* Chosen to cover what each system is judged on: the long view up the wash toward
    the sun, the ground underfoot, a lit butte face, a shadowed crevice, and the
@@ -48,6 +54,14 @@ fs.mkdirSync(shotsDir, { recursive: true });
    we actually have. Nothing in harness.mjs changes and neither does VIEWS. */
 await run({ width: W, height: H, waitReady: false }, async ({ page, errs }) => {
   const t0 = Date.now();
+  if (hash) {
+    /* Reload rather than just assigning the hash: the stages read their
+       switches once, as their module initialises, so a same-document hash
+       change would be read by nobody. */
+    await page.evaluate(h => { location.hash = h; }, hash);
+    await page.reload({ waitUntil: 'commit' });
+    console.log(`  #${hash}`);
+  }
   await page.waitForFunction(() => !!window.__game, null, { timeout: 420_000 });
   console.log(`  boot ${((Date.now() - t0) / 1000).toFixed(0)}s`);
   await page.evaluate(() => window.__game.begin());

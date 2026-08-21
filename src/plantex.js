@@ -399,11 +399,11 @@ const rgb = (c) => `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})`;
  * saturation below are unchanged; every value is down by about a third.
  */
 const FOL = {
-  base: [84, 89, 36],       // 66.4° / 0.596 / 0.349
-  pale: [116, 120, 60],     // 64.0° / 0.500 / 0.471  — sun-bleached crest
-  dark: [49, 54, 20],       // 67.6° / 0.630 / 0.212  — shaded interior
-  bronze: [92, 68, 35],     // 34.7° / 0.620 — last year's bronzed growth
-  dead: [107, 91, 48],      // 43.7° / 0.551 — dead scale still attached
+  base: [83, 89, 33],       // 66.2° / 0.629 / 0.349
+  pale: [115, 120, 55],     // 64.6° / 0.542 / 0.471  — sun-bleached crest
+  dark: [49, 54, 19],       // 68.6° / 0.648 / 0.212  — shaded interior
+  bronze: [92, 83, 37],     // 49.8° / 0.598 — last year's bronzed growth
+  dead: [107, 102, 48],     // 55.1° / 0.551 — dead scale still attached
   berry: [82, 97, 114],
 };
 
@@ -476,10 +476,17 @@ export function makeFoliage(size = 512) {
       /* Dead and bronzed material sits *behind* the green, which is how a real
          spray looks: the interior of the clump is last year's dead scale still
          attached, with the live growth only on the outside. */
-      const deadCols = [rgb(FOL.dead), rgb(FOL.bronze), rgb([78, 64, 34])];
+      const deadCols = [rgb(FOL.dead), rgb(FOL.bronze), rgb([79, 75, 35])];
+      /* Bronze used to be one of the six live colours as well as one of the
+         three dead ones, which double-counted it: measured off the albedo the
+         atlas came out at hue 55.5, well below the 64-68 the reference sits at,
+         because a 46-degree bronze at that weight drags the circular mean down
+         however correct each individual swatch is. The live set is now all
+         olive, and the bronzed growth is left to the pass that is actually
+         about bronzed growth. */
       const liveCols = [
         rgb(FOL.base), rgb(FOL.pale), rgb(FOL.dark),
-        rgb([70, 77, 31]), rgb([95, 99, 43]), rgb(FOL.bronze),
+        rgb([70, 77, 29]), rgb([95, 99, 40]), rgb([94, 102, 39]),
       ];
 
       const bx = ox + cell * 0.5, by = oy + cell * 0.94;
@@ -487,8 +494,13 @@ export function makeFoliage(size = 512) {
       for (let pass = 0; pass < 2; pass++) {
         const cols = pass === 0 ? deadCols : liveCols;
         const scale = pass === 0 ? 0.86 : 1.0;
-        for (let sIdx = 0; sIdx < nStems; sIdx++) {
-          const spread = (sIdx / Math.max(1, nStems - 1) - 0.5) * 1.5;
+        /* One fewer dead stem than live. The dead layer sits behind and shows
+           only where the green does not cover it, and at equal counts that
+           residue was 39% of the atlas's visible pixels — enough to set the
+           measured hue rather than to season it. */
+        const nSt = pass === 0 ? Math.max(2, nStems - 1) : nStems;
+        for (let sIdx = 0; sIdx < nSt; sIdx++) {
+          const spread = (sIdx / Math.max(1, nSt - 1) - 0.5) * 1.5;
           const a = -Math.PI / 2 + spread + (rand() - 0.5) * 0.25;
           sprig(ctx, bx + (rand() - 0.5) * cell * 0.10, by,
                 a, cell * (0.60 + rand() * 0.20) * scale,
