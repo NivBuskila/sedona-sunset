@@ -1495,9 +1495,19 @@ export function buildScatter(terrain, tex) {
      * a round removing, and it will be wrong again the moment the environment
      * changes. Occlude correctly and let System 4 own the colour of the dome. */
     const buried = clamp(sink / Math.max(hTrue, 1e-4), 0, 1);
-    const aoI = clamp((1 - 0.46 * buried)
-                    * (1 - 0.34 * clamp(grad / 0.55, 0, 1))
-                    * (1 - 0.24 * clamp((rad - 0.06) / 0.30, 0, 1)), 0.30, 1.0);
+    /* Coefficients set from a paired capture rather than from first principles,
+       because the first set was calibrated against the wrong baseline. At 0.46
+       and 0.34 a bank gravel came out at 0.65 of the dome, the shaded bank's
+       statistics did not move at all, and the reason is worth recording: the
+       burial fix above roughly doubles the clast area on show, so a 35% dimming
+       spread over twice the area is invisible to a region mean. Two corrections
+       that each work, cancelling. An embedded granule on a bank sees perhaps a
+       third of the sky — it is walled by the bed it is set into and the bank
+       above fills half of what is left — so these now land near 0.30 there
+       while an open-floor stone keeps about 0.55. */
+    const aoI = clamp((1 - 0.58 * buried)
+                    * (1 - 0.46 * clamp(grad / 0.55, 0, 1))
+                    * (1 - 0.24 * clamp((rad - 0.06) / 0.30, 0, 1)), 0.26, 1.0);
     bucket.push({
       ao: aoI,
       dust: dustW,
