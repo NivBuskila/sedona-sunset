@@ -46,12 +46,13 @@ const srv = http.createServer((req, res) => {
 await new Promise(r => srv.listen(0, '127.0.0.1', r));
 const port = srv.address().port;
 
+const dump = process.argv.includes('--dump');
 const browser = await chromium.launch();
 const page = await browser.newPage();
 page.on('pageerror', e => console.error('page error:', e.message));
 await page.goto(`http://127.0.0.1:${port}/`);
 
-const rows = await page.evaluate(async (port) => {
+const rows = await page.evaluate(async ([port, dump]) => {
   const m = await import(`http://127.0.0.1:${port}/src/plantex.js`);
 
   const hsv = (r, g, b) => {
@@ -99,13 +100,51 @@ const rows = await page.evaluate(async (port) => {
              hue: h, sat: s / w, val: v / w };
   };
 
+  if (dump) {
+    /* Composited over mid-grey, because the thing being judged is the *silhouette*
+       and a cutout on a checkerboard or on black tells you much less about
+       whether an edge reads as stipple or as a leaf outline. */
+    const grab = (name, tex) => {
+      const t = tex && tex.image ? tex : (tex.map || tex.albedo);
+      const cv = t.image;
+      const c = document.createElement('canvas');
+      c.width = cv.width; c.height = cv.height;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#787878';
+      ctx.fillRect(0, 0, c.width, c.height);
+      if (cv.data) {
+        const id = new ImageData(new Uint8ClampedArray(cv.data), cv.width, cv.height);
+        const tmp = document.createElement('canvas');
+        tmp.width = cv.width; tmp.height = cv.height;
+        tmp.getContext('2d').putImageData(id, 0, 0);
+        ctx.drawImage(tmp, 0, 0);
+      } else {
+        ctx.drawImage(cv, 0, 0);
+      }
+      return { name, url: c.toDataURL('image/png') };
+    };
+    return [grab('foliage', m.foliageTex()), grab('grass', m.grassTex()),
+            grab('scrub', m.scrubTex())];
+  }
+
   return [
     one('foliage', m.foliageTex(), 0.55),
     one('grass', m.grassTex(), 0.45),
     one('scrub', m.scrubTex(), 0.45),
     one('succulent', m.succTex(), 0.45),
   ];
-}, port);
+}, [port, dump]);
+
+if (dump) {
+  for (const r of rows) {
+    const f = path.join(DIR, 'shots', `atlas_${r.name}.png`);
+    fs.writeFileSync(f, Buffer.from(r.url.split(',')[1], 'base64'));
+    console.log(`wrote ${f}`);
+  }
+  await browser.close();
+  srv.close();
+  process.exit(0);
+}
 
 console.log('measured off the albedo, alpha-weighted, above the alpha test');
 console.log('target for juniper foliage: hue 64-68, sat 0.63, low value\n');

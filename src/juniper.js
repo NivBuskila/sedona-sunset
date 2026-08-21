@@ -38,7 +38,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rng, fbm, clamp, smoothstep, mix } from './noise.js';
 import { SUN_DIR } from './sky.js';
-import { barkTex, foliageTex, grassTex } from './plantex.js';
+import { barkTex, deadTex, foliageTex, grassTex } from './plantex.js';
 
 const TAU = Math.PI * 2;
 
@@ -222,7 +222,18 @@ function limbGeometry(pts, radii, seg, prof, twistRate, s0, flute, deadBase = 0,
          groove four centimetres deep and two wide sees very little of the sky,
          and that is what actually draws the fluting on an overcast or shadow-side
          trunk. */
-      const ao = 0.42 + 0.58 * Math.pow(shape, 0.85);
+      /* But not on the deadwood, or not nearly as much. This term was written for
+         bark and applied to everything, and it was quietly costing the deadwood
+         most of its brightness: a groove darkens to 0.42, and since the dead
+         strips follow the flute ridges and the flute is deep, a good half of the
+         bleached surface was being multiplied down by up to 58%. The rendered
+         dead-to-live value ratio came out at 1.61x against a target of 3.5x, and
+         this is a large part of the missing factor. Bare weathered wood has lost
+         the deep fibrous grooves along with the bark, so its cavity term is much
+         shallower — the fissures it does have are in its own normal map. */
+      const dm = dead[k];
+      const ao = mix(0.42 + 0.58 * Math.pow(shape, 0.85),
+                     0.84 + 0.16 * Math.pow(shape, 0.85), dm);
       vcol[k * 3] = ao; vcol[k * 3 + 1] = ao; vcol[k * 3 + 2] = ao;
     }
   }
@@ -242,6 +253,10 @@ function limbGeometry(pts, radii, seg, prof, twistRate, s0, flute, deadBase = 0,
   g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   g.setAttribute('aDead', new THREE.BufferAttribute(dead, 1));
   g.setAttribute('color', new THREE.BufferAttribute(vcol, 3));
+  /* The ring layout, so a probe can recover girth from the vertices without the
+     builder having to record it separately. Dropped by mergeGeometries, which is
+     fine: only the pre-merge geometries are ever measured. */
+  g.userData = { cols, rings: n };
   g.setIndex(new THREE.BufferAttribute(idx, 1));
   g.computeVertexNormals();
 
@@ -263,6 +278,25 @@ function limbGeometry(pts, radii, seg, prof, twistRate, s0, flute, deadBase = 0,
 }
 
 /* ── the tree ──────────────────────────────────────────────────────────────*/
+
+/* How high the sediment mound stands above the surrounding terrain, `r` metres
+ * from the trunk. One definition, used by the mound mesh, by the limb floor that
+ * stops branches burrowing into it, and by the litter that lies on it.
+ *
+ * It lived in three places before, and they drifted: widening the mound raised
+ * its crest to 0.29 m while the tree's mesh origin stayed at 0.10 m above the
+ * terrain, which buried 0.19 m of a 0.30 m root collar. Only 0.11 m of trunk was
+ * ever above ground — which is why a reviewer at 14x magnification could find no
+ * collar at all and read every member of the tree as one gauge. The crest is
+ * lower now and the collar much taller, but the real fix is that there is one
+ * formula to change. */
+export function moundAt(r) {
+  return 0.185 * Math.exp(-Math.pow(r / 0.98, 1.85))
+       + 0.055 * Math.exp(-Math.pow(r / 2.30, 3.0));
+}
+/* The tree mesh's origin, above the terrain at the trunk. The collar has to
+ * clear moundAt(0) by enough to read as a flared base and not as a stub. */
+const TREE_LIFT = 0.10;
 
 /* Radial segments. The lowest two were 10 and 7, which is a decagon and a
    heptagon — enough to be round at a distance, but these are the branches that
@@ -308,8 +342,7 @@ export function buildTree(seed) {
      killing the downward component turns that into a limb that lies along the
      mound, which is the shape it should have had. */
   function floorAt(x, z) {
-    const r = Math.hypot(x, z);
-    return -0.10 + 0.235 * Math.exp(-Math.pow(r / 0.95, 1.85)) + 0.055;
+    return moundAt(Math.hypot(x, z)) - TREE_LIFT + 0.055;
   }
 
   /**
@@ -319,7 +352,7 @@ export function buildTree(seed) {
   function grow(p0, dir0, len, r0, r1, depth, deadness, s0, prof, twistRate) {
     const nSeg = [16, 11, 8, 6, 5][depth];
     const pts = [p0.clone()];
-    const radii = [r0];
+    const radii = [Math.max(0.006, r0)];
     const d = dir0.clone().normalize();
     const step = len / nSeg;
     const wob = rand() * 100;
@@ -338,21 +371,39 @@ export function buildTree(seed) {
       d.addScaledVector(wind, wb * step * 6);
       const n1 = fbm(t * 2.4 + wob, 3.1, 3, (seed + depth * 7) | 0);
       const n2 = fbm(t * 2.4 + wob, 9.7, 3, (seed + depth * 13) | 0);
-      const kink = depth >= 2 && deadness > 0.5 ? 2.1 : 1.0;
+      /* Kinks. Dead wood keeps the crooks it grew and gains more as it checks and
+         splits, so it wanders far more than a live shoot does — and it does it in
+         discrete bends at the nodes rather than as a smooth curve. The extra term
+         fires on alternate stations, which is what makes it read as a kink
+         instead of as more noise. */
+      const kink = deadness > 0.5 ? (depth >= 2 ? 2.4 : 1.7) : 1.0;
       d.x += n1 * 0.16 * kink * (1 + depth * 0.35);
       d.z += n2 * 0.16 * kink * (1 + depth * 0.35);
+      if (deadness > 0.5 && i % 2 === 0) {
+        d.x += (fbm(i * 3.7 + wob, 1.3, 2, seed | 0)) * 0.30;
+        d.z += (fbm(i * 3.7 + wob, 5.9, 2, (seed + 3) | 0)) * 0.30;
+        d.y += (fbm(i * 3.7 + wob, 8.1, 2, (seed + 7) | 0)) * 0.16;
+      }
       d.normalize();
       const prev = pts[pts.length - 1];
       const nx = prev.x + d.x * step, ny = prev.y + d.y * step, nz = prev.z + d.z * step;
       const fl = floorAt(nx, nz);
       if (ny < fl) { d.y = Math.max(d.y, 0.02); d.normalize(); }
       pts.push(new THREE.Vector3(nx, Math.max(ny, fl), nz));
-      /* Dead limbs taper, but to a broken stub rather than to a hair. At 0.55
-         the exponent took a snag to a needle a few millimetres across, and a
-         needle catching direct sun along its whole length is a bright wire, not
-         a branch. The floor keeps a snapped end with some width to it. */
-      const taper = deadness > 0.5 ? Math.max(0.30, Math.pow(1 - t, 0.34)) : 1;
-      radii.push(mix(r0, r1, Math.pow(t, 0.78)) * mix(1, taper, deadness));
+      /* Dead limbs taper hard and then snap. The floor was 0.30 with an exponent
+         of 0.34, which holds most of the radius until nearly the end and then
+         stops — a rod of near-constant diameter, which is exactly how a reviewer
+         described the result. A real snag loses girth steadily and ends in a
+         broken stub, so: a steeper exponent for the taper, and a much lower floor
+         so the stub is a stub and not a shoulder. */
+      const taper = deadness > 0.5 ? Math.max(0.13, Math.pow(1 - t, 0.85)) : 1;
+      /* Twigs are floored at 6 mm radius whether alive or dead. Below that a limb
+         is thinner than the pixel it lands in at twenty metres, which costs
+         geometry for nothing and — worse — leaves the foliage spray it carries
+         with no visible wood to be attached to. That is the residual "detached
+         cluster floating in clear sky": the spray was joined all along, to a
+         branch too thin to draw. */
+      radii.push(Math.max(0.006, mix(r0, r1, Math.pow(t, 0.78)) * mix(1, taper, deadness)));
     }
 
     const seg = SEG_BY_DEPTH[depth];
@@ -392,12 +443,17 @@ export function buildTree(seed) {
 
     /* Children. Side branches part way along, and a fork at the tip. */
     const tipDir = new THREE.Vector3().subVectors(pts[nSeg], pts[nSeg - 1]).normalize();
-    /* A snag keeps a fork or two and then stops. Left on the live branching
-       rule a dead limb grew a full four-level subtree, which spent triangles on
-       twigs nothing hangs from and pushed a bare spike three metres clear of
-       the crown instead of the half metre that reads as a snag. */
+    /* Dead limbs fork on the same statistics as live ones, one short.
+       They were cut to a single fork at depth 0-1 and none beyond, to stop a
+       dead subtree pushing a bare spike three metres clear of the crown. That
+       worked and produced a worse problem: "long, gently curved, unbranched,
+       near-constant-diameter rods radiating in a parallel fan". Real juniper
+       deadwood is a tangled thicket that forks repeatedly and kinks at every
+       node. The spike was never the branching — it was the taper floor above
+       holding girth to the very end, and the length, both now fixed, so the
+       forking can come back. */
     const nSide = deadness > 0.5
-      ? (depth <= 1 ? 1 : 0)
+      ? [2, 2, 1, 1, 0][depth] + (rand() < 0.35 ? 1 : 0)
       : [2, 2, 2, 1, 0][depth] + (rand() < 0.45 ? 1 : 0);
     const kids = [];
     for (let i = 0; i < nSide; i++) {
@@ -472,8 +528,14 @@ export function buildTree(seed) {
    * hummock. Height comes out around four metres against a crown five or six
    * across, which is the right way round for the species.
    */
-  const COLLAR = 0.30;
-  const nT = 8;
+  /* 0.62, not 0.30. The mound's crest stands moundAt(0) above the terrain and
+     the mesh origin only TREE_LIFT, so the first 0.13 m of this is below ground
+     no matter what: a 0.30 m collar left 0.11 m of visible trunk on a 3.89 m
+     tree, which is a stub, and "everything is the same thickness" follows
+     directly. This clears the mound by nearly half a metre while still dividing
+     well below knee height, which is what makes a clump a clump. */
+  const COLLAR = 0.62;
+  const nT = 11;
   const tp = [], tr = [];
   const lean = new THREE.Vector3(wind.x, 0, wind.z).multiplyScalar(0.05);
   for (let i = 0; i <= nT; i++) {
@@ -482,8 +544,14 @@ export function buildTree(seed) {
     tp.push(new THREE.Vector3(lean.x * t * t, y, lean.z * t * t));
     /* Root flare: the collar swells hard at the ground, which is also what
        buries it into the hummock convincingly. */
-    const flare = 1 + 0.62 * Math.exp(-y / 0.20) + 0.20 * Math.exp(-y / 0.62);
-    tr.push(mix(0.375, 0.330, Math.pow(t, 0.8)) * flare);
+    /* The flare's length scale is stretched from 0.20 to 0.26 so that it is
+       spread across the collar that is now *above* ground rather than spent in
+       the 0.13 m that the mound covers. Radius runs 0.53 m at the soil to 0.32 m
+       at the fork — a bole a metre across tapering to two thirds of that — which
+       against a 0.02 m twig is the twenty-fold gauge difference an old tree is
+       supposed to show. */
+    const flare = 1 + 0.62 * Math.exp(-y / 0.26) + 0.20 * Math.exp(-y / 0.62);
+    tr.push(mix(0.355, 0.290, Math.pow(t, 0.8)) * flare);
   }
   geoms.push(limbGeometry(tp, tr, SEG_BY_DEPTH[0], trunkProf, twist, 0,
                           FLUTE_BY_DEPTH[0], 0, SHRED_BY_DEPTH[0]));
@@ -679,6 +747,18 @@ function foliageGeometry(clumps, seed) {
        rather than at its foot, so the sphere normal still curves the right way. */
     cen.copy(cl.p).addScaledVector(ax, L * 0.42);
 
+    /* Rust. Every real juniper carries patches of dead scale leaf still attached
+       — a distinct orange-brown, not the bronzed olive of last year's growth —
+       and it is one of the cheapest strong species cues available. Done per
+       *spray* rather than per card, because on a real tree it kills a whole
+       shoot at a time, and as a tint on the vertex colour rather than as a
+       colour in the atlas: the atlas's measured hue is now inside the reference
+       band and verified against the frame, and painting rust into it would drag
+       that measurement back down for no gain. Olive albedo times this ratio
+       lands near hue 36 degrees. */
+    const rust = rand() < 0.13;
+    const rr = rust ? 1.42 : 1, rg = rust ? 0.80 : 1, rb = rust ? 0.42 : 1;
+
     for (let k = 0; k < nCards; k++) {
       /* Biased toward the base, where a real fan carries most of its mass. */
       /* Even spacing with a jitter, not a power curve. The 0.72 exponent put the
@@ -750,9 +830,17 @@ function foliageGeometry(clumps, seed) {
           sh += density(px + S.x * t, py + S.y * t, pz + S.z * t) * (t < 1.2 ? 1 : 0.7);
         }
         const sun = Math.exp(-0.32 * sh);
-        const f = clamp(0.46 + 0.54 * amb, 0.44, 1);
-        vcol.push(f, f, f);
-        vsun.push(clamp(0.04 + 0.96 * sun * (0.35 + 0.65 * amb), 0.03, 1));
+        /* Floors raised, both of them. Internal crown contrast measured 5.2:1
+           against a real juniper's 2.4:1 — the shaded sprays were crushing to
+           near-black, so the crown read as bright chips floating in holes rather
+           than as a body with a shaded side. A juniper spray is one or two
+           millimetres thick and it *transmits*: an interior shoot is lit from
+           behind by its neighbours as well as from the sky, and neither of those
+           paths existed here. Ambient floor 0.44 -> 0.60 and sun floor 0.03 ->
+           0.10, which together roughly halve the range. */
+        const f = clamp(0.62 + 0.38 * amb, 0.60, 1);
+        vcol.push(f * rr, f * rg, f * rb);
+        vsun.push(clamp(0.12 + 0.88 * sun * (0.42 + 0.58 * amb), 0.10, 1));
       }
       idx.push(v, v + 1, v + 2, v, v + 2, v + 3);
       v += 4;
@@ -782,32 +870,40 @@ export function makeBarkMaterial(bark) {
     dithering: true,
   });
   /*
-   * Living bark against bleached deadwood, and the size of the gap between them
-   * is the whole point.
+   * Living bark against bleached deadwood — two materials, and now two maps.
    *
-   * The first build set the dead colour to 0.300 linear and the live multiplier
-   * to 1.00 on a bark map averaging about 0.20 — so the deadwood came out within
-   * about fifteen percent of the living bark's value. The mechanism was fully
-   * implemented and completely invisible; a reviewer found the strip only by
-   * brightening the image three times and counting flutes. Photographs of
-   * weathered juniper put the ratio at **three to four times**, not fifteen
-   * percent: silver-grey heartwood at 0.70–0.75 linear against dark fibrous bark
-   * at 0.18–0.20. That is a value difference you can see from across a wash, and
-   * it is the single strongest species cue the tree has.
+   * The history is worth keeping because both wrong answers were arrived at by
+   * reasoning that sounded right. Attempt one tinted the bark albedo and landed
+   * within 15% of the living bark's value: fully implemented, completely
+   * invisible, found by a reviewer only after brightening the frame three times.
+   * Attempt two took the "three to four times" ratio literally *and* smoothed
+   * the relief, because weathered wood is polished where fibrous bark is shaggy.
+   * The result measured hue 223.6 — steel blue — and was described as galvanised
+   * pipe, and the smoothing was the larger of the two mistakes: strip-bark
+   * deadwood is the *most* textured surface on the tree, not the least.
    *
-   * It is also a change of *material*, not just tone, so three channels move
-   * together: albedo (below), roughness (deadwood is polished by grit and rain
-   * where bark is shaggy), and normal strength (the shredded relief belongs to
-   * the bark and must not survive on to the bare wood).
+   * So deadwood gets its own albedo, its own normal and its own roughness out of
+   * `makeDeadwood`, and the blend is by the dead mask. Normal strength on the
+   * dead side is now *above* the bark's, not a fifth of it.
    */
+  const dead = deadTex();
   const u = {
     uLiveCol: { value: new THREE.Color(0.92, 0.82, 0.74) },
-    /* 0.42 linear, not the 0.76 the ratio argument first suggested. Three to
-       four times the bark's value is the right target, but the bark had already
-       been darkened to widen its own contrast, and 0.76 against a sunlit key is
-       white paint: the snags rendered as blown-out wires. This sits about 2.8x
-       the live bark's mean and holds its highlight. */
-    uDeadCol: { value: new THREE.Color(0.470, 0.424, 0.360) },
+    /* A tint on top of the deadwood map, which already carries the measured
+       warm-bone hue and level. Kept as a uniform because the target is a
+       *rendered* value ratio against live bark and that can only be reached by
+       measuring frames and iterating — the albedo ratio is not the thing being
+       judged, as the last two rounds established twice. */
+    uDeadCol: { value: new THREE.Color(1.30, 1.30, 1.30) },
+    uDeadMap: { value: dead.albedo },
+    uDeadNrm: { value: dead.normal },
+    /* Debug only, and zero unless a probe sets it. `tools/deadratio.mjs` flips it
+       to write the dead mask instead of the shaded surface, so the dead and live
+       pixels of a *rendered* frame can be partitioned without a human deciding
+       which pixels are which. The target for this material is a ratio of rendered
+       values and it has been missed twice by measuring the albedo ratio instead;
+       one branch in a debug path is a cheap way to stop making that mistake. */
+    uDebugMask: { value: 0 },
   };
   mat.userData.uniforms = u;
   mat.onBeforeCompile = (sh) => {
@@ -818,33 +914,26 @@ export function makeBarkMaterial(bark) {
       .replace('#include <begin_vertex>',
         '#include <begin_vertex>\nvDead = aDead;');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>',
-        '#include <common>\nvarying float vDead;\nuniform vec3 uLiveCol;\nuniform vec3 uDeadCol;')
+      .replace('#include <common>', '#include <common>\n' +
+        'varying float vDead;\nuniform vec3 uLiveCol;\nuniform vec3 uDeadCol;\n' +
+        'uniform sampler2D uDeadMap;\nuniform sampler2D uDeadNrm;\nuniform float uDebugMask;')
+      .replace('#include <opaque_fragment>',
+        '#include <opaque_fragment>\n' +
+        'if ( uDebugMask > 0.5 ) gl_FragColor = vec4( vec3( vDead ), 1.0 );')
       .replace('#include <map_fragment>', /* glsl */`
         vec4 bt = texture2D( map, vMapUv );
-        float g = dot( bt.rgb, vec3( 0.2126, 0.7152, 0.0722 ) );
-        /* Deadwood: the fibre detail is gone, the long grain remains, and the
-           whole thing is lifted and cooled by two decades of ultraviolet. The
-           modulation band is deliberately narrow — 0.82 to 1.14 — because bare
-           weathered heartwood is *smooth and sinuous*, and letting the bark
-           map's contrast through here is what made the strip read as a tonal
-           wash over the same shaggy surface rather than as different stuff.
-           Weighted mostly to the map's alpha, which carries the long grain. */
-        vec3 deadC = uDeadCol * ( 0.82 + 0.32 * mix( pow( g, 0.55 ), bt.a, 0.80 ) );
-        diffuseColor.rgb *= mix( bt.rgb * uLiveCol, deadC, vDead );`)
-      /* Shaggy lifted strings against wood polished by grit and rain — but only
-         so polished. At 0.40 the snags picked up a specular streak down their
-         whole length and rendered as galvanised wire: a thin cylinder carrying a
-         tight highlight across eight radial segments aliases into a dotted
-         bright line, and no amount of correct albedo reads as wood through it.
-         0.62 is still far smoother than the live bark beside it, which is where
-         the material contrast has to come from, and it damps the aliasing. */
+        vec4 dt = texture2D( uDeadMap, vMapUv );
+        diffuseColor.rgb *= mix( bt.rgb * uLiveCol, dt.rgb * uDeadCol, vDead );`)
+      /* Both sides rough. The contrast between them is carried by value and by
+         the *character* of the relief, not by gloss — which is the correction
+         this round is mostly about. */
       .replace('#include <roughnessmap_fragment>', /* glsl */`
-        float roughnessFactor = roughness *
-          mix( texture2D( normalMap, vNormalMapUv ).a, 0.62, vDead );`)
-      /* The shredded relief belongs to the bark, so its normal map has to fall
-         away with the dead mask — otherwise the silver strips keep the fibre
-         texture of the bark that is no longer on them.
+        float roughnessFactor = roughness * mix(
+          texture2D( normalMap, vNormalMapUv ).a,
+          texture2D( uDeadNrm, vNormalMapUv ).a, vDead );`)
+      /* Two normal maps, blended by the dead mask, with the deadwood's amplitude
+         *raised* to 1.55 against the bark's 1.0. Dropping it to 0.18 last round
+         was exactly backwards and is what produced the tubing.
          This one needs the chunk expanded by hand. `onBeforeCompile` hands over
          a shader whose `#include` directives are still unresolved, so replacing
          text that lives *inside* a chunk silently matches nothing and the edit
@@ -852,8 +941,12 @@ export function makeBarkMaterial(bark) {
          `THREE.ShaderChunk`, patching the string, and substituting the whole
          include works, and is checked against the installed three (r180). */
       .replace('#include <normal_fragment_maps>',
-        THREE.ShaderChunk.normal_fragment_maps.replace(
-          'mapN.xy *= normalScale;', 'mapN.xy *= normalScale * mix( 1.0, 0.18, vDead );'));
+        THREE.ShaderChunk.normal_fragment_maps
+          .replace('vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;',
+                   'vec3 mapN = mix( texture2D( normalMap, vNormalMapUv ).xyz,\n' +
+                   '                 texture2D( uDeadNrm, vNormalMapUv ).xyz, vDead ) * 2.0 - 1.0;')
+          .replace('mapN.xy *= normalScale;',
+                   'mapN.xy *= normalScale * mix( 1.0, 1.55, vDead );'));
   };
   mat.customProgramCacheKey = () => 'juniper-bark';
   return mat;
@@ -900,7 +993,14 @@ export function makeFoliageMaterial(map) {
        yellow pedestal on a correctly exposed one, and it was a good part of why
        the crown went lime. */
     uTrans: { value: new THREE.Color(1.35, 1.12, 0.58) },
-    uTransAmt: { value: 0.80 },
+    uTransAmt: { value: 1.15 },
+    /* An isotropic share of the transmission, which the first version did not
+       have: it was all forward phase, so a spray only glowed when it happened to
+       sit between the camera and the sun. Real foliage two millimetres thick
+       leaks in every direction, and it is that leak — not the backlit rim — that
+       keeps a crown's shaded interior from going black. Warm, because what the
+       light passes through on the way is dead scale. */
+    uTransIso: { value: 0.30 },
     uDirCap: { value: 0.50 },
   };
   mat.userData.uniforms = u;
@@ -913,7 +1013,7 @@ export function makeFoliageMaterial(map) {
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>',
         '#include <common>\nvarying float vSun;\nuniform vec3 uSunDir;\nuniform vec3 uTrans;\n' +
-        'uniform float uTransAmt;\nuniform float uDirCap;')
+        'uniform float uTransAmt;\nuniform float uTransIso;\nuniform float uDirCap;')
       /* A foliage card is not a sheet, and the difference is not cosmetic.
          It stands in for a volume of two-millimetre cords pointing in every
          direction, so its sub-pixel average response to a directional source
@@ -947,7 +1047,7 @@ export function makeFoliageMaterial(map) {
              the knee, so the backlit rim is the one thing allowed to be bright. */
           float back = clamp( -dot( normalize( normal ), sunV ) * 0.5 + 0.55, 0.0, 1.0 );
           reflectedLight.directDiffuse +=
-            diffuseColor.rgb * uTrans * ( phase * back * uTransAmt );
+            diffuseColor.rgb * uTrans * ( phase * back * uTransAmt + uTransIso );
         }
         #include <opaque_fragment>`);
   };
@@ -978,8 +1078,7 @@ function hummock(terrain, cx, cz, seed) {
       const base = terrain.heightAt(x, z);
       /* Trapped sediment: a broad low mound with a steeper shoulder against the
          root flare, plus surface roughness from the litter caught in it. */
-      const m = 0.235 * Math.exp(-Math.pow(r / 0.95, 1.85))
-              + 0.055 * Math.exp(-Math.pow(r / 2.30, 3.0));
+      const m = moundAt(r);
       const grain = 0.026 * fbm(x * 2.6, z * 2.6, 3, 4411) + 0.012 * fbm(x * 7.0, z * 7.0, 2, 4413);
       const edge = 1 - smoothstep(0.80, 1.0, t);
       pos.push(x, base + (m + grain * (0.25 + 0.75 * edge)) * (0.12 + 0.88 * edge) + 0.006, z);
@@ -1063,7 +1162,7 @@ export function buildJuniper(terrain, tex) {
   const base = terrain.heightAt(JUNIPER_XZ.x, JUNIPER_XZ.z);
   /* Sunk slightly, because the root flare should emerge from the hummock rather
      than stand on top of it. */
-  const y0 = base + 0.10;
+  const y0 = base + TREE_LIFT;
 
   const trunk = new THREE.Mesh(woody, makeBarkMaterial(bark));
   trunk.position.set(JUNIPER_XZ.x, y0, JUNIPER_XZ.z);
@@ -1125,9 +1224,7 @@ export function buildJuniper(terrain, tex) {
        cares about nothing else. */
     if (rand() > (dripLine ? 0.72 : 0.26 + 0.74 * bias)) continue;
     const x = JUNIPER_XZ.x + Math.cos(th) * rr, z = JUNIPER_XZ.z + Math.sin(th) * rr;
-    const m = 0.235 * Math.exp(-Math.pow(rr / 0.95, 1.85))
-            + 0.055 * Math.exp(-Math.pow(rr / 2.30, 3.0));
-    const y = terrain.heightAt(x, z) + m - 0.02;
+    const y = terrain.heightAt(x, z) + moundAt(rr) - 0.02;
     /* Shed duff lies flat and low; caught grass stands up. */
     const h = dripLine ? 0.05 + rand() * 0.08 : 0.13 + rand() * 0.24;
     cardTuft(x, y, z, (dripLine ? 0.26 : 0.20) + rand() * 0.26, h,

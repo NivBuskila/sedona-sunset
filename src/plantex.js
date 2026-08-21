@@ -31,6 +31,7 @@ export function setPlantAnisotropy(n) { maxAniso = n; }
 const _cache = new Map();
 const memo = (k, f) => { if (!_cache.has(k)) _cache.set(k, f()); return _cache.get(k); };
 export const barkTex = () => memo('bark', () => makeBark(512));
+export const deadTex = () => memo('dead', () => makeDeadwood(512));
 export const foliageTex = () => memo('fol', () => makeFoliage(512));
 export const grassTex = () => memo('grass', () => makeGrass(512));
 export const scrubTex = () => memo('scrub', () => makeScrub(256));
@@ -206,6 +207,129 @@ export function makeBark(size = 512) {
       const l = h[y * size + w(x - 1)], r = h[y * size + w(x + 1)];
       const d = h[w(y - 1) * size + x], u = h[w(y + 1) * size + x];
       let nx = (l - r) * 6.0, ny = (d - u) * 6.0;
+      const inv = 1 / Math.sqrt(nx * nx + ny * ny + 1);
+      const i = (y * size + x) * 4;
+      nrm[i] = (nx * inv * 0.5 + 0.5) * 255;
+      nrm[i + 1] = (ny * inv * 0.5 + 0.5) * 255;
+      nrm[i + 2] = (inv * 0.5 + 0.5) * 255;
+      nrm[i + 3] = clamp(rough[y * size + x], 0, 1) * 255;
+    }
+  }
+
+  return { albedo: dataTex(alb, size, size, true), normal: dataTex(nrm, size, size, false) };
+}
+
+/* ── strip-bark deadwood ───────────────────────────────────────────────────
+ *
+ * Its own map, because it is its own substance and the first two attempts to
+ * fake it from the bark map both failed in instructive ways.
+ *
+ * Attempt one tinted the bark albedo paler and called it a dead strip: 15% value
+ * contrast, and a reviewer could not see it at all. Attempt two pushed the tint
+ * to a 3x ratio *and smoothed the relief*, on the reasoning that weathered wood
+ * is polished where fibrous bark is shaggy. That produced "silver-metal
+ * branches" and "galvanised pipe" — and the reasoning was simply wrong. Strip-
+ * bark deadwood is the *most* textured surface on the tree, not the least:
+ * exposed heartwood weathers into spiral grain, deep longitudinal fissures and
+ * transverse checking, and it is that relief which stops it reading as tubing.
+ * So the relief here is stronger than the bark's, not weaker.
+ *
+ * Two measurements set the colour, both taken off real junipers by the reviewer:
+ * hue 26.7 degrees and value 0.643, against live bark at 0.180 — a warm bone,
+ * three and a half times the bark's value. The hue matters more than it sounds:
+ * a render measured 223.6 degrees, steel blue, because at value 0.22 the sky's
+ * specular reflection was out-competing a warm but very dark diffuse. Value and
+ * hue turn out to be the same fix.
+ */
+export function makeDeadwood(size = 512) {
+  const N = size * size;
+  const h = new Float32Array(N);
+  const fiss = new Float32Array(N);
+  const check = new Float32Array(N);
+
+  const PU = 26, PV = 3;
+
+  for (let y = 0; y < size; y++) {
+    const v = y / size;
+    for (let x = 0; x < size; x++) {
+      const u = x / size;
+      const i = y * size + x;
+
+      /* Spiral. Weathered juniper heartwood twists visibly — the grain wraps the
+         stem — and a shear that grows with v produces that on a tile that still
+         has to close on itself. Stronger than the bark's 0.10. */
+      const shear = 0.26 * (afbm(u * 2, v * 1.5, 2, 1.5, 3, 401) - 0.5) * 2;
+      const uu = u + shear * v;
+
+      /* Grain: many fine longitudinal fibres, low amplitude, high frequency. */
+      const g = aridged(uu * PU * 3.1, v * PV * 0.7, PU * 3.1, PV * 0.7, 3, 409);
+      /* Fissures: few, deep, long. These hold the shadow and are most of what
+         reads at twenty metres. */
+      const f = aridged(uu * PU * 0.5, v * PV * 0.35, PU * 0.5, PV * 0.35, 2, 419);
+      const fs = Math.pow(smoothstep(0.55, 0.97, f), 1.5);
+      /* Checking: short cracks *across* the grain. The one feature that cannot
+         be mistaken for bark fibre, and so the strongest cue that this is bare
+         wood. Gated to appear in patches rather than everywhere. */
+      const ck = Math.pow(aridged(uu * PU * 0.8, v * PV * 9.0, PU * 0.8, PV * 9.0, 2, 431), 2.2)
+               * smoothstep(0.45, 0.80, afbm(uu * 3, v * 2, 3, 2, 2, 437));
+
+      fiss[i] = fs; check[i] = ck;
+      h[i] = 0.62 * (1 - fs) + 0.26 * g + 0.16 * (1 - ck);
+    }
+  }
+
+  const hb = blurWrap(h, size, size, 3);
+  const hb2 = blurWrap(h, size, size, 11);
+
+  const alb = new Uint8Array(N * 4);
+  const rough = new Float32Array(N);
+
+  /* Warm bone. Linear-light triples; the sRGB encode happens below. The channel
+     *ratio* is held constant and only the level varies, which is what keeps a
+     bright crest from drifting toward white and a fissure from drifting toward
+     blue — the drift that made the last attempt read as metal. */
+  const HUE = [1.0, 0.876, 0.786];        // hue 27.2 deg
+  const LEVEL_DARK = 0.115;               // deep in a fissure
+  const LEVEL_MID = 0.470;
+  const LEVEL_PALE = 0.900;               // sun-bleached crest of the grain
+
+  for (let i = 0; i < N; i++) {
+    const x = i % size, y = i / size | 0;
+    const ao = clamp(1 - (hb[i] - h[i]) * 4.2, 0, 1) * 0.62
+             + clamp(1 - (hb2[i] - h[i]) * 2.2, 0, 1) * 0.38;
+    let t = clamp((h[i] - 0.30) * 1.85, 0, 1);
+    t = t * (0.30 + 0.70 * ao);
+    /* Weathering blotches: grey where water sits, warmer where the sun gets it.
+       Kept narrow so the hue measurement does not wander. */
+    const blotch = 0.5 + 0.5 * (afbm(x / size * 4, y / size * 3, 4, 3, 3, 443) - 0.5) * 1.6;
+    const lvl = t < 0.5
+      ? mix(LEVEL_DARK, LEVEL_MID, clamp(t * 2, 0, 1))
+      : mix(LEVEL_MID, LEVEL_PALE, clamp(t * 2 - 1, 0, 1));
+    for (let k = 0; k < 3; k++) {
+      const c = lvl * HUE[k] * (0.86 + 0.28 * blotch);
+      alb[i * 4 + k] = clamp(Math.pow(clamp(c, 0, 1), 1 / 2.2), 0, 1) * 255;
+    }
+    /* Alpha carries the inverse fissure mask, so the shader can keep the deepest
+       grooves from being lifted by the ambient term. */
+    alb[i * 4 + 3] = clamp(1 - fiss[i], 0, 1) * 255;
+
+    /* Rough, and roughest where it is checked and fissured. Nothing goes below
+       0.72: a sheen at 0.62 is what finished the job of turning these branches
+       into pipe. */
+    rough[i] = clamp(0.94 - 0.14 * clamp(t, 0, 1) + 0.06 * check[i], 0.72, 1);
+  }
+
+  const nrm = new Uint8Array(N * 4);
+  const wr = (a) => ((a % size) + size) % size;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const l = h[y * size + wr(x - 1)], r = h[y * size + wr(x + 1)];
+      const d = h[wr(y - 1) * size + x], u = h[wr(y + 1) * size + x];
+      /* 12 across the grain against the bark map's 6, and 7 along it. The relief
+         is genuinely deeper — a fissure in bare heartwood is a centimetre where a
+         lifted bark string is a few millimetres — and the anisotropy between the
+         two axes *is* what grain looks like. */
+      let nx = (l - r) * 12.0, ny = (d - u) * 7.0;
       const inv = 1 / Math.sqrt(nx * nx + ny * ny + 1);
       const i = (y * size + x) * 4;
       nrm[i] = (nx * inv * 0.5 + 0.5) * 255;
@@ -408,12 +532,16 @@ const FOL = {
 };
 
 function shootChain(ctx, x, y, ang, len, wid, rand, cols) {
-  const steps = Math.max(3, Math.round(len / 3.0));
+  const steps = Math.max(3, Math.round(len / 2.4));
   const dl = len / steps;
   let a = ang;
   for (let i = 0; i < steps; i++) {
     const t = i / steps;
-    const w = wid * (1 - 0.55 * t);
+    /* Per-bead width jitter, not just a smooth taper. A cord of constant width
+       strokes out to a clean-edged line; the appressed scales on a real shoot
+       make it visibly lumpy, and that lumpiness is the whole reason the mass
+       reads as stipple rather than as foliage with an outline. */
+    const w = wid * (1 - 0.40 * t) * (0.78 + rand() * 0.52);
     a += (rand() - 0.5) * 0.22;
     const nx = x + Math.cos(a) * dl, ny = y + Math.sin(a) * dl;
     /* Each segment is one scale: a short thick round-capped dash, and the
@@ -430,24 +558,35 @@ function shootChain(ctx, x, y, ang, len, wid, rand, cols) {
   return { x, y, a };
 }
 
-function sprig(ctx, x, y, ang, len, wid, depth, rand, cols) {
-  const segs = Math.max(2, Math.round(len / 16));
+/* One whipcord shoot.
+ *
+ * This replaces a routine that branched at 0.55–1.10 radians, alternating sides
+ * down a central axis — which is the construction of a *pinnate compound leaf*,
+ * and that is exactly how it read: "four to six pointed lobes along a central
+ * rib". Juniper has no leaf outline at all. Its foliage is a bundle of thin
+ * cylindrical whipcords sheathed in appressed scales, and at twenty metres a
+ * juniper crown has no resolvable leaf shapes anywhere in it — it is a granular,
+ * beaded, mossy mass, closer to stipple than to any drawn edge.
+ *
+ * So the branch angle drops to 0.16–0.38 radians, which keeps a fork reading as
+ * two cords running alongside each other rather than as a leaflet pair, and the
+ * fork happens at most once or twice rather than at every station. The shape of
+ * the *mass* comes from drawing many of these, not from the outline of one.
+ */
+function whipcord(ctx, x, y, ang, len, wid, depth, rand, cols) {
+  const segs = Math.max(2, Math.round(len / 10));
   const dl = len / segs;
   let a = ang;
   let px = x, py = y;
   for (let i = 0; i < segs; i++) {
     const t = (i + 1) / segs;
-    const w = wid * (1 - 0.5 * t);
+    const w = wid * (1 - 0.30 * t);
     const e = shootChain(ctx, px, py, a, dl, w, rand, cols);
-    px = e.x; py = e.y; a = e.a + (rand() - 0.5) * 0.10;
-    if (depth > 0 && i > 0) {
-      const side = (i % 2 === 0) ? 1 : -1;
-      const n = 1 + (rand() < 0.35 ? 1 : 0);
-      for (let k = 0; k < n; k++) {
-        const br = 0.55 + rand() * 0.55;
-        sprig(ctx, px, py, a + side * br * (k ? -1 : 1), len * (0.34 + rand() * 0.26),
-              w * 0.78, depth - 1, rand, cols);
-      }
+    px = e.x; py = e.y; a = e.a + (rand() - 0.5) * 0.14;
+    if (depth > 0 && i > 0 && rand() < 0.40) {
+      const side = rand() < 0.5 ? 1 : -1;
+      whipcord(ctx, px, py, a + side * (0.16 + rand() * 0.22),
+               len * (0.40 + rand() * 0.30), w * 0.88, depth - 1, rand, cols);
     }
   }
   return { x: px, y: py };
@@ -489,22 +628,32 @@ export function makeFoliage(size = 512) {
         rgb([70, 77, 29]), rgb([95, 99, 40]), rgb([94, 102, 39]),
       ];
 
-      const bx = ox + cell * 0.5, by = oy + cell * 0.94;
-      const nStems = 3 + (rand() * 2 | 0);
+      /* A bundle, not a frond. Three to five thick stems with wide-angle
+         branching gave a cell with a readable leaf outline; thirty-odd thin
+         cords fanning through a narrow cone give a mass whose edge is made of
+         cord ends, which is what stipple is. The cords are a third the width
+         they were — about 2.5 texels at this cell size, so a couple of pixels
+         once the card is on screen — and the count carries the coverage that the
+         width used to. */
+      const bx = ox + cell * 0.5, by = oy + cell * 0.95;
+      const nCord = 26 + (rand() * 9 | 0);
       for (let pass = 0; pass < 2; pass++) {
         const cols = pass === 0 ? deadCols : liveCols;
-        const scale = pass === 0 ? 0.86 : 1.0;
-        /* One fewer dead stem than live. The dead layer sits behind and shows
-           only where the green does not cover it, and at equal counts that
-           residue was 39% of the atlas's visible pixels — enough to set the
-           measured hue rather than to season it. */
-        const nSt = pass === 0 ? Math.max(2, nStems - 1) : nStems;
-        for (let sIdx = 0; sIdx < nSt; sIdx++) {
-          const spread = (sIdx / Math.max(1, nSt - 1) - 0.5) * 1.5;
-          const a = -Math.PI / 2 + spread + (rand() - 0.5) * 0.25;
-          sprig(ctx, bx + (rand() - 0.5) * cell * 0.10, by,
-                a, cell * (0.60 + rand() * 0.20) * scale,
-                cell * 0.030 * scale, 2, rand, cols);
+        const scale = pass === 0 ? 0.84 : 1.0;
+        /* The dead layer sits behind and shows only where the green does not
+           cover it, and at equal counts that residue was 39% of the atlas's
+           visible pixels — enough to set the measured hue rather than season it. */
+        const nC = pass === 0 ? Math.round(nCord * 0.55) : nCord;
+        for (let k = 0; k < nC; k++) {
+          /* Fanned within a cone, with the density biased to the middle so the
+             bundle has a spine without having a rib. */
+          const u = (k + rand()) / nC;
+          const spread = (u - 0.5) * 1.22 * (0.55 + 0.45 * Math.abs(u - 0.5) * 2);
+          const a = -Math.PI / 2 + spread + (rand() - 0.5) * 0.20;
+          whipcord(ctx, bx + (rand() - 0.5) * cell * 0.16,
+                   by - rand() * cell * 0.22,
+                   a, cell * (0.44 + rand() * 0.30) * scale,
+                   cell * 0.0105 * scale, 1, rand, cols);
         }
       }
 
