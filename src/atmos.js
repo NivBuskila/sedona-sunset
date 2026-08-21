@@ -54,8 +54,25 @@ export const SUN_EL_DEG = 8.0;
    right-hand wall's inward normal bears -97.5 and the cosine on the beam is
    -sin(azimuth + 7.5). At -10.5 degrees that is 0.05, not the 0.18 the idealised
    formula promised — a factor of four, and the difference between a lit wall and
-   a wall lit only by the sky. -22 gives 0.25, which puts the lit face at value
-   0.72 and hue +26, both inside their measured targets.
+   a wall lit only by the sky.
+   That correction argued for going a long way round, and -22 was tried on it.
+   Measured, it is worse on everything, for a reason the arithmetic could not see:
+   at -22 the beam meets this wall nearly frontally, the promontories stop
+   shadowing each other, and the raking bands that are most of what makes a cliff
+   read as rock go away. Measured on the lit population of the wall_lit crop:
+
+       azimuth    hue    B/G     V     grad/L
+        -10.5    18.8   0.62   0.56    0.121
+        -13      21.5   0.58   0.70    0.134
+        -22      13.3   0.80   0.32    0.069
+
+   -13 wins on all four, and the one it wins by most is the surface-structure
+   metric that CONTRACT.md says decides photorealism. So -13, and the brightness
+   the idealised formula was chasing turns out to have been the wrong thing to
+   chase: the wall takes only a 0.10 cosine here and the crop *average* is low,
+   but the average is the wrong statistic for a surface that is half in its own
+   shadow. The lit half sits at value 0.70 and hue +21.5, which is the population
+   the reference band actually describes.
 
    ---- and what that costs, which is worth stating plainly ----
    The brief asks for the sun to sit in the gap straight up the wash. It cannot
@@ -63,7 +80,7 @@ export const SUN_EL_DEG = 8.0;
    degrees, because the wash heading there is +9 and the camera looks along it;
    the wall needs the sun at -8 or further. The two windows do not overlap and no
    azimuth satisfies both.
-   The disc is behind the left crest at every azimuth in that window in any case.
+   The disc is behind the left crest at every azimuth in either window in any case.
    That was checked directly rather than assumed: three renders were spent
    hunting a missing sun disc, including one with the disc widened sixfold, and
    the answer is that at -10.5 the beam direction lands at frame position
@@ -73,7 +90,7 @@ export const SUN_EL_DEG = 8.0;
    is a real thing the composition is missing, and it needs the left wall's crest
    to drop or the wash's heading near d = 120 to change, neither of which is
    System 4's to touch. */
-export const SUN_AZ_DEG = -22.0;
+export const SUN_AZ_DEG = -13.0;
 
 const DEG = Math.PI / 180;
 export const SUN_EL = SUN_EL_DEG * DEG;

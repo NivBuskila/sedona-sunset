@@ -310,7 +310,7 @@ export function buildSky() {
    admits a 58 m wall top standing beside the player and -66 reaches 480 m of
    floor up-canyon, which is past where the haze closes in.
    x is horizontal and perpendicular to the sun's azimuth — and since the sun is
-   eighteen degrees off the corridor, a point 300 m up the wash is displaced 93 m
+   thirteen degrees off the corridor, a point 300 m up the wash is displaced 67 m
    along x as well. That is why the x range is offset rather than
    centred: the corridor leans across it, and a symmetric box would waste half
    its texels on the side the wash never reaches.
