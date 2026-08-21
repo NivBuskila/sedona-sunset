@@ -332,10 +332,20 @@ function colAt(arr, y) {
  * back. An evenly distributed offset gives a wall that undulates; this gives
  * fins with clefts between them.
  */
+/* The panel is not a plane, though, and that was the last thing in the set that
+   read as a boolean operation rather than as a fracture. A joint face is a
+   *fracture surface*: it is rough at every scale, because the crack propagated
+   through a rock whose grain and cement varied along its path, and it has since
+   retreated unevenly. Two octaves of that, kept gentle enough — sixteen degrees
+   and twenty-four — that they stay well inside the weld threshold and so add
+   surface to the panel without adding a single new crease to it. The arête at the
+   block boundary is untouched; that discontinuity is the point of this function. */
 function jointOffset(a, seed, amp) {
   const i = Math.floor(a), t = a - i;
   const v0 = hash1(i, seed), v1 = hash1(i + 1, seed);
-  return mix(v0 * v0, v1 * v1, t) * amp;
+  const rough = (fbm(a * 3.1, seed * 0.013, 3, seed + 7) - 0.5) * 0.22
+              + (fbm(a * 11.0, seed * 0.021, 2, seed + 13) - 0.5) * 0.085;
+  return (mix(v0 * v0, v1 * v1, t) + rough) * amp;
 }
 
 /* ── the wall curtain ──────────────────────────────────────────────────────── */
