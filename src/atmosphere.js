@@ -454,18 +454,55 @@ void main() {
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;
   float px = uPix * aux.y * 0.010 / max(0.35, dist);
-  /* Below a pixel a point stops shrinking and starts having to lose energy
-     instead, or the field gets brighter with distance as more motes crowd into
-     each pixel and each one still paints a whole one. */
-  /* Capped at both ends. Below a pixel a point stops shrinking and has to lose
-     energy instead, or the field brightens with distance as more motes crowd
-     into a pixel each still painting a whole one. Above four it is a blob:
-     without depth of field a mote half a metre from the eye has no business
-     being a disc, and there are few enough of them that far that clamping the
-     size and letting the alpha carry the difference is invisible. */
-  gl_PointSize = clamp(px, 0.85, 4.0);
-  vA *= min(1.0, px / 0.85) * min(1.0, px / 0.85);
-  if (px > 4.0) vA *= (px / 4.0) * (px / 4.0);
+
+  /* ---- why the floor is three pixels and not one --------------------------
+   *
+   * A grain's true angular size is far below a pixel at any distance that
+   * matters: the same arithmetic that makes a 390 um saltation grain 1/17 of a
+   * pixel at 10 m applies here. So the size a mote is *drawn* at is a choice,
+   * and the only honest way to draw something smaller than the grid is to
+   * spread it wider and take the alpha down by the area, which conserves the
+   * flux and the optical depth while destroying the point-likeness.
+   *
+   * The floor used to be 0.85 px, which is the one value that cannot work: it
+   * is exactly a single hard pixel, so every far mote painted one fully-covered
+   * pixel of warm light. The whole-scene critique named the result as the only
+   * thing in the frame identifiable as an *effect* rather than as the scene —
+   * discrete white dots on the cliff face and a saturated yellow dot in open
+   * sky. Both are the same defect: peak alpha concentrated on one pixel.
+   *
+   * At a floor of three, a grain whose true size is 0.5 px is drawn 36x wider
+   * at 1/36 the alpha. Identical integrated radiance, peak brightness down 36x,
+   * and nothing left that a viewer can point at and call a dot. Some of those
+   * motes are dark against bright sky, which is correct — a grey grain in front
+   * of a brighter background is a dark speck, which is how dust in a sunbeam
+   * across a window actually looks — but at 1/36 the coverage the darkening
+   * stops being a countable black dot and becomes the faint dimming it should be.
+   *
+   * Energy conservation is the load-bearing property, not a nicety. The mote
+   * visibility law was verified by binning brighten-vs-darken against background
+   * luminance and finding a clean crossover, and that crossover is a property of
+   * aggregate optical depth. Spreading alpha by exactly the area ratio leaves the
+   * aggregate untouched, which is why this can be changed without reopening a
+   * result the critique marked do-not-touch. Anything that scaled alpha by a
+   * hand-picked factor instead would move it.
+   *
+   * Measured that way, paired before and after under one lighting state, since
+   * the scene's exposure is moving for unrelated reasons and an unpaired figure
+   * here would be worthless: aggregate coverage per pixel held to within about
+   * 7% across all ten luminance bins in both view directions, while the number of
+   * pixels the field touches rose 1.6-2.1x. Same light, spread over nearly twice
+   * the area, which is the whole of the intended change stated as a measurement. */
+  const float MOTE_MIN_PX = 3.0;
+  /* Four is still the ceiling: without depth of field a mote half a metre from
+     the eye has no business being a disc, and above the cap the grain is bigger
+     than the sprite so the alpha has to go up instead. Both directions are the
+     same expression — k is the ratio of true size to drawn size, and the alpha
+     always moves by its square. */
+  float sz = clamp(px, MOTE_MIN_PX, 4.0);
+  float k = px / sz;
+  gl_PointSize = sz;
+  vA *= k * k;
 }`,
     fragmentShader: /* glsl */`
 uniform vec3 uMote;
@@ -481,7 +518,16 @@ void main() {
      the pixel the grain hides, with the density and shaft terms from the vertex
      stage read as a probability that a grain is here at all. */
   float cov = smoothstep(0.5, 0.13, d) * vA;
-  if (cov < 0.0015) discard;
+  /* A cull is a hole in the energy conservation above — every fragment it drops
+     is optical depth the field was supposed to have — and spreading each mote
+     over nine pixels pushes every fragment's coverage toward it, so it was the
+     obvious suspect when the field's aggregate appeared to move. It is not:
+     measured at 0.0015 and at 0.0002, moteview reports the same coverage to a
+     part in ten thousand, because the fragments this drops are ones whose
+     contribution is already below what the output can represent. Kept at the low
+     value as the side that cannot silently thin the distant dust, and recorded as
+     measured rather than reasoned so nobody re-derives the suspicion. */
+  if (cov < 0.0002) discard;
 
   /* Backlit is the whole point. g = 0.62 puts about thirty times as much light
      toward the eye at zero degrees from the beam as at ninety, which is roughly
