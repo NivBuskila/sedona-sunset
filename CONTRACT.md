@@ -1700,6 +1700,57 @@ amplitude.
 
 **Pass condition for rock: `hf/lf` ≥ 0.55**, the bottom of the real range.
 
+#### `hf/lf` moves with render resolution, so quote the resolution with the number
+
+`wall_lit` midwall read **0.49 against the 0.55 gate** in System 7's ungraded control, with
+their whole chain accounting for 0.01 of it — so the shortfall was upstream and it came to
+System 2 as a rock defect. It is not one. Three ablations, each toggled inside a single page
+load through a declared uniform so the pair differs by one bit and nothing else:
+
+| | midwall `hf/lf` | upper `hf/lf` |
+| --- | --- | --- |
+| as shipped, 1600×900 | 0.49 | 0.61 |
+| registration warp off (`uWarpK` 0) | **0.49** | 0.60 |
+| joint traces off (`uJointK` 0) | 0.50 | 0.62 |
+| as shipped, **3200×1800** | **0.54** | 0.63 |
+
+The registration warp is exonerated to two decimals — it was the leading suspect, on the
+sound reasoning that a domain warp is a local rescaling and a local rescaling of a
+high-frequency octave can cost high-frequency energy while leaving the low-frequency term
+alone. It does not, here: its summed gradient is 0.23, the stretch stays under a quarter, and
+the number does not notice. Joints are exonerated too, and removing them *raises* the figure
+slightly, so no surface term the shader evaluates is holding it down.
+
+**Doubling the render resolution moves it 0.49 → 0.54 with the rock byte-identical.** That is
+five sixths of the shortfall, bought with no change to any surface. The reason is scale:
+`tools/_cropdist.mjs` raycasts the crops and finds the midwall at 41.2 m median with **one
+pixel covering 60.8 mm of wall** at 1600×900, and the upper crop at 39.7 m and 54.2 mm. The
+rock albedo's fine octave is metres-tiled and a pixel spans tens of texels, so at this
+framing the grain is being resolved by the mip chain and not by the shader, and `hf/lf`'s
+"high" band is reading whatever relief happens to fall near the 1-pixel scale — which is a
+function of how many pixels the wall is drawn into.
+
+Two consequences, both standing:
+
+- **Quote the resolution alongside any `hf/lf` figure**, and compare only figures shot at the
+  same resolution. The 0.54–0.75 reference band was measured on photographs at their own
+  pixels-per-metre; it is not a resolution-free constant and a 0.06 gap at 1600×900 is inside
+  the instrument's own sensitivity to framing.
+- **Do not buy this number with amplitude.** At 60 mm per pixel the map cannot deliver it —
+  the filter is upstream of the eye. Anything that did move it would be metre-scale relief
+  added to make a pixel-scale statistic happier, which is the pebble-dash failure recorded
+  below under *Amplitude is not structure*.
+
+So 0.49 is **accepted**. The wall is the best-reviewed rock in the project and a critic
+singled it out as convincing; the rule that where a measurement and the experience disagree
+the experience wins applies exactly here. Left undone deliberately, not overlooked.
+
+`uWarpK` joins `uJointK` as a permanently declared probe scalar, left at 1.0 by everything
+except `tools/_warppair.mjs` — one multiply on a frame that is fill-bound on texture fetches,
+and it is the difference between ablating a suspect in forty seconds and arguing about it.
+Declared in the shader source rather than injected by the tool, because an undeclared debug
+uniform failed the rock shader's compile and cost a full capture round the same night.
+
 **The 0.12–0.16 `grad/L` band is a *floor* figure, not a wall one.** It came from measuring
 real arroyo ground and it is what System 1 is held to. Walls have their own reference: real
 Sedona cliff faces measure **0.088–0.201 `grad/L`**, so a wall at 0.200 is at the top of the

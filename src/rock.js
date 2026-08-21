@@ -1593,6 +1593,15 @@ uniform vec3 uSunDir;
    fixes, so the term has to be switchable from a probe rather than argued
    about. Left at 1.0 by everything except the probe. */
 uniform float uJointK;
+/* Scales the registration warp, for the same reason and by the same rule: the
+   warp is a local rescaling of the sampling domain, and a local rescaling of a
+   high-frequency octave is exactly the thing that can cost high-frequency energy
+   without touching the low-frequency term — which is the shape of a falling
+   hf/lf. So it has to be ablatable inside one page load rather than reasoned
+   about, since two captures are not a pair. Left at 1.0 by everything except the
+   probe, and declared here rather than injected by a tool: an undeclared debug
+   uniform cost this project a capture round tonight. */
+uniform float uWarpK;
 varying vec3 vWPos;
 varying vec3 vWNrm;
 varying vec4 vRock;
@@ -1822,7 +1831,7 @@ triW /= max(triW.x + triW.y + triW.z, 1e-4);
    different places instead of being locked, so the *combination* varies across
    the cliff even where each layer alone is repeating. Six sines and no fetch,
    which is what this frame can afford — it is fill-bound at 1440p. */
-vec2 wrp = vec2(
+vec2 wrp = uWarpK * vec2(
   sin(aS * 0.0561 + 1.7) * 1.9 + sin(aS * 0.0233 - 0.6) * 2.6
     + sin(y * 0.0417 + 2.3) * 1.4,
   sin(y * 0.0331 + 0.9) * 1.7 + sin(aS * 0.0187 + 2.8) * 2.2
@@ -2464,6 +2473,7 @@ export function makeRockMaterial(tex, detail = 1.0) {
        lighting is three's and System 4's. */
     uSunDir: { value: SUN_DIR.clone() },
     uJointK: { value: 1.0 },
+    uWarpK: { value: 1.0 },
   };
 
   mat.onBeforeCompile = (shader) => {
