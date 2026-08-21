@@ -182,6 +182,63 @@ moved: generate at lower resolution first and refine, defer textures not needed 
 first frame, move generation into workers, or cache into IndexedDB after the first visit.
 Unowned and unscheduled; worth doing before this is ever shown to anyone.
 
+## The composition the brief asks for is a geometry constraint, and it can be measured
+
+The walk ended in a bowl at ground L 14.5/255 against 63.6 where it starts, so the
+payoff was the darkest part of the experience — the exact inverse of a brief that
+says the sun sits ahead in a gap between formations and *pulls you forward*.
+
+The useful part is that "is the composition the brief describes physically possible
+from here" is a **measurable question**, and answering it took one offline probe and
+no renders. Ray-march the height field from the walk's centreline along the sun's
+horizontal bearing and record the maximum elevation angle of anything you pass; the
+station is lit if that angle is below the sun's elevation. It names the occluder's
+position and height as well as the verdict:
+
+| station | occlusion before | after |
+|---|---|---|
+| −260 | 16.5° shade | 9.5° LIT |
+| −300 | 21.8° shade | 16.1° shade (plunge-pool pocket, wanted) |
+| −340 | 27.1° shade | 11.6° LIT |
+
+It named the culprit as System 1's own amphitheatre, cut one round earlier: the
+headwall's west flank at z = −355 to −396 and 40–50 m up. **A change made to fix one
+critique closed the aperture another one depends on**, and nothing in either critique
+could have said so, because one is about form and the other about light.
+
+Two notes on the fix worth keeping:
+
+- **Cut along the sun's bearing, not the axis.** The sun is at azimuth −9°, so an
+  axial notch misses the sight line by fourteen metres at the far end. Keying the cut
+  to perpendicular distance from the bearing line follows the sight line exactly and
+  is the only shape that opens the aperture without flattening the bowl on the other
+  three sides.
+- **It has to be honest terrain, not a lighting cheat.** A wash head *is* a drainage
+  col — the water that cut the wash came over it — so the one place the headwall
+  should be low is where the drainage comes from. Exposure and albedo were not
+  touched, which matters while the tone curve is in flight.
+
+## A no-op change and a change that did not help look identical
+
+A regular diamond lattice of dark dots in `far_270` was diagnosed as the
+footprint-locked grit aliasing at extreme anisotropy, and a gate was added to fade
+the layer where the footprint ratio exceeds ten. The re-render was **byte-identical**
+in the artefact region *and* in the metrics. That is not a fix that failed to help;
+it is a gate that never fired, which additionally establishes a fact worth having:
+the anisotropy ratio does not exceed ten anywhere in these framings, so the
+geometric-mean lock is never stressed and needs no ratio gate. Reverted. Check that a
+change is *active* before concluding anything from the fact that it changed nothing.
+
+## Open, unowned: a regular dot lattice on the far_270 bank
+
+A perfectly periodic diamond grid of dark dots, roughly 24 cm apart in world terms,
+in a band across a sunlit bank at about 40 m. Periodic, so a sampling artefact rather
+than content. **Excluded so far:** the terrain's footprint-locked grit (ablated, no
+change); System 1's clast placement, which draws `s` and `u` from the rng with no
+grid; and the post chain, since the ungraded `--hash nopost` control shows it too.
+The spacing is close to the terrain mesh's row spacing in that zone, so per-vertex
+shading or shadow-map acne on the mesh grid is the leading remaining candidate.
+
 ## Open, for System 2: the wash head's amphitheatre is behind a rock ledge
 
 `far_320` is the last framing of the walk and it was called the failure that matters
