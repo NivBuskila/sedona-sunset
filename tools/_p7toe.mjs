@@ -42,7 +42,17 @@ function crop(file, r) {
    luminance contrast, untouched, because that is what every colour figure in
    CONTRACT.md was measured through. Below `A` it is a cubic Hermite matching
    that curve's value and slope at A and pinned at the origin with slope `s0`,
-   so there is no subtractive black point anywhere and nothing can clip to zero.
+   so there is no subtractive black point anywhere.
+
+   That is not the same as nothing clipping, and the difference is what this tool
+   previously got wrong. The curve is injective on (0, 1], so in floating point no
+   positive value maps to zero — but the deliverable is 8-bit, and a value rounds
+   to zero when it falls below half a code value. Near the origin the curve is
+   te ~ s0 * e, so **every input below 0.5/s0 code values rounds to black**: at the
+   s0 of 0.20 that shipped, that is everything under 2.5 code values, against 0.5
+   in the control. A whole-frame count found 0.03% of wall_shade at literal zero
+   ungraded and 1.38% graded, and it is this, not the curve. The `crush` column
+   below is that threshold, and it is the figure to tune against.
    Because the mean slope over [0, A] is forced to vA/A < 1 while the slope at A
    is k, a low s0 buys slope above 1 in the middle of the band — the level comes
    down and the local gradient goes up, which is the pair the gate and the
@@ -120,25 +130,25 @@ const struct = crop(shadeFile, STRUCT);
 const litStruct = crop(litFile, [0.16, 0.30, 0.20, 0.20]);
 
 const P = { p: 0.5, k: 1.03 };
+/* Sweeping s0 at the shipped anchor, because s0 alone sets the crush threshold
+   and the anchor is where the curve rejoins the contrast line. s0 = 1 is the one
+   value that adds no clipping at all — unit slope at the origin means the first
+   code value maps to itself — and it still darkens, because the curve has to
+   reach vA = 0.0994 at A = 0.111 and so must sag below the 45 degree line to get
+   there. The question the sweep answers is what that costs the gate. */
+const S0 = [0.20, 0.40, 0.60, 0.80, 1.00];
 const CANDIDATES = [
-  ['ungraded', e => e],
-  ['shipping (clips)', e => current(e, P)],
-  ['A .090 s0 .30', e => curve(e, { ...P, A: 0.090, s0: 0.30 })],
-  ['A .111 s0 .35', e => curve(e, { ...P, A: 0.111, s0: 0.35 })],
-  ['A .111 s0 .20', e => curve(e, { ...P, A: 0.111, s0: 0.20 })],
-  ['A .130 s0 .30', e => curve(e, { ...P, A: 0.130, s0: 0.30 })],
-  ['A .130 s0 .20', e => curve(e, { ...P, A: 0.130, s0: 0.20 })],
-  ['A .140 s0 .20', e => curve(e, { ...P, A: 0.140, s0: 0.20 })],
-  ['A .170 s0 .20', e => curve(e, { ...P, A: 0.170, s0: 0.20 })],
-  ['A .170 s0 .10', e => curve(e, { ...P, A: 0.170, s0: 0.10 })],
-  ['A .220 s0 .10', e => curve(e, { ...P, A: 0.220, s0: 0.10 })],
-  ['A .280 s0 .05', e => curve(e, { ...P, A: 0.280, s0: 0.05 })],
+  ['ungraded', e => e, null],
+  ['no toe (clips at 3.7)', e => current(e, P), null],
+  ...S0.map(s0 => [`A .111 s0 ${s0.toFixed(2)}`, e => curve(e, { ...P, A: 0.111, s0 }), s0]),
+  ['A .150 s0 1.00', e => curve(e, { ...P, A: 0.150, s0: 1.00 }), 1.00],
+  ['A .080 s0 1.00', e => curve(e, { ...P, A: 0.080, s0: 1.00 }), 1.00],
 ];
 
 console.log(`shaded ${shadeFile}   sunlit ${litFile}`);
 console.log('curve              gate   | shaded face: cv  grad  grad/L  =0%  p1  lvl ' +
-            '| lit midwall: cv  grad/L');
-for (const [name, f] of CANDIDATES) {
+            '| lit midwall: cv  grad/L | crush');
+for (const [name, f, s0] of CANDIDATES) {
   const sh = stats(gateShade, f).meanCV / 255;
   const su = stats(gateLit, f).meanCV / 255;
   const st = stats(struct, f);
@@ -148,5 +158,8 @@ for (const [name, f] of CANDIDATES) {
               `${st.meanCV.toFixed(2).padStart(14)} ${st.gradCV.toFixed(2).padStart(5)} ` +
               `${(st.gradCV / st.meanCV).toFixed(3).padStart(6)} ${st.at0.toFixed(1).padStart(4)} ` +
               `${String(st.p1).padStart(3)} ${String(st.levels).padStart(4)} | ` +
-              `${lt.meanCV.toFixed(1).padStart(13)} ${(lt.gradCV / lt.meanCV).toFixed(3).padStart(7)}`);
+              `${lt.meanCV.toFixed(1).padStart(13)} ${(lt.gradCV / lt.meanCV).toFixed(3).padStart(7)} | ` +
+              (s0 ? (0.5 / s0).toFixed(2).padStart(5) : '  0.5'));
 }
+console.log('\ncrush: input code values below this round to literal black. The control');
+console.log('is 0.5, so anything above that is clipping this chain is adding.\n');

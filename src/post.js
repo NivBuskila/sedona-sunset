@@ -117,11 +117,26 @@ export const POST_DEFAULTS = {
      dark, it reads as a hole, and System 4 was being asked to dim into it.
      So below `toeTop` the curve is replaced by a cubic Hermite that matches the
      contrast line's value and slope at toeTop and is pinned at the origin with
-     slope `toeSlope`. Nothing can clip, and because the mean slope over the toe
-     is forced below one while the slope at the top of it is k, a low toeSlope
-     buys slope *above* one in the middle of the band — the level comes down,
-     which is what the shadow-to-sunlit gate wants, and the local gradient goes
-     up, which is what the structure metric wants.
+     slope `toeSlope`.
+
+     **`toeSlope` is the slope at the origin and it is a clipping threshold, not
+     a shape parameter.** This was the mistake, it shipped, and a critique found
+     it: the curve is injective, so in floating point nothing positive maps to
+     zero, and that was taken as "nothing can clip". The output is 8-bit. Near
+     the origin the curve is te ~ toeSlope * e, so every input below
+     0.5/toeSlope code values rounds to black — at the 0.20 that shipped, that is
+     everything under 2.5 code values against 0.5 in the control. Whole-frame,
+     that took wall_shade from 0.03% at literal zero to 1.38% and bend from 0.88%
+     to 1.81%, and it is what turned flat shaded clasts into holes. A tone curve
+     is only non-clipping to the precision it is written into.
+
+     So toeSlope is 1.0, which is the only value that adds no clipping at all:
+     unit slope at the origin means the first code value maps to itself. It still
+     darkens, because the curve has to arrive at (A-p)k+p at the anchor, which is
+     below A, so it sags to get there. Measured through tools/_p7toe.mjs, that
+     costs the gate 0.205 -> 0.228 and buys the shaded face back 9.8 -> 11.2 code
+     values with the whole-frame zero count at the control's figure.
+
      Where the knee sits matters more than how deep it is, and this is the whole
      tuning rule: the shaded face has to land on the steep flank, not inside the
      toe. Measured on two ungraded builds through tools/_p7toe.mjs, the same
@@ -129,8 +144,11 @@ export const POST_DEFAULTS = {
      face sat at 33 code values and -10% on one whose face sat at 14. So
      **toeTop wants to be about two and a half times the shaded face level**,
      and it needs revisiting whenever the fill moves. At the present face of
-     ~15 code values that is 0.111. `#toe=` and `#toes=` sweep it. */
-  toeTop: 0.111, toeSlope: 0.20,
+     ~13 code values 0.111 would be right, and 0.080 is deliberately under it:
+     with the slope at the origin given up, a shallower anchor is the only
+     remaining way to hold the gate near the middle of its band rather than at
+     the top. `#toe=` and `#toes=` sweep it. */
+  toeTop: 0.080, toeSlope: 1.00,
 
   /* Defocus. A physical thin-lens circle of confusion, so the shape of the
      falloff is not a free parameter: 24 mm at f/11 focused at 20 m on a 24 mm
@@ -219,8 +237,24 @@ export const POST_DEFAULTS = {
    * radial ramp that size is nameable by anyone who thinks to look at a corner,
    * so this is deliberately sub-physical: 0.05 is 3.8 cv at worst, under a
    * smoothstep that leaves the middle of the frame untouched, which is a corner
-   * that measures darker and does not read as darkening. */
-  vignette: 0.05,            // linear light lost at the extreme corner
+   * that measures darker and does not read as darkening.
+   *
+   * That measurement was taken at mid grey and it was the wrong place. A
+   * critique found the top corners of `wash_mid` at 0.735 of the ungraded frame
+   * and read it as a graduated filter on bright sky; the corners are at 18 code
+   * values, so it is the dark end, and the reason a 5% light loss lands as 31%
+   * there is two amplifications the mid-grey probe could not see. The encode is
+   * the first: enc = 1.055*L^(1/2.4) - 0.055, and that constant offset is a large
+   * fraction of a small encoded value, so a 5% loss in L is 4.6% of enc at 12 cv
+   * against 2.0% at 200. The toe was the second and much the larger, and it is
+   * fixed above. tools/_p7name.mjs --attrib separates the two by tabulating the
+   * graded/ungraded ratio against level *and* radius, which is the measurement
+   * that should have been taken: a light loss is flat in level and falls with
+   * radius, a tone curve is the reverse, and this scene's dark corners and bright
+   * centre confound the two in exactly the way that makes the second look like
+   * the first. 0.025 is 1.9 cv at mid grey and holds the dark corner inside 2%
+   * of the ungraded frame once the toe is not multiplying it. */
+  vignette: 0.025,           // linear light lost at the extreme corner
   /* Off, and the code path stays. At 0.9 the extreme corner split 0.90 px at
      900 lines and 1.44 px at 1440 — over a pixel is exactly where a colour
      fringe resolves as a fringe, and it was the most nameable term in the list.
@@ -237,6 +271,13 @@ export const POST_DEFAULTS = {
      contour spacing from 14.5 rows to 10.5 and the distinct-colour count up
      with it. */
   grain: 0.013,
+  /* Code values, peak of a triangular distribution, at the 8-bit boundary. One
+     is the textbook figure and it is not a taste setting: below 1 LSB peak the
+     rounding error stays partly correlated with the signal and the contour comes
+     back faintly, above it the noise starts to be resolvable on a flat surface.
+     See the resolve shader for why this is a separate term from the grain rather
+     than more of it. `#dith=` sweeps it; 0 is the control. */
+  dither: 1.0,
 
   /* The silhouette resolve, and it is worth explaining why a fifth polish term
    * exists at all when restraint is the theme of the whole project.
@@ -489,6 +530,9 @@ export function createPost({ renderer, camera, atmo, sun }) {
      contribution gets separated from the rest of the grade. */
   P.toeTop = num('toe', P.toeTop);
   P.toeSlope = num('toes', P.toeSlope);
+  /* `#dith=0` is the control for the banding measurement, which needs the run
+     lengths with the dither out and everything else identical. */
+  P.dither = num('dith', P.dither);
   /* The toe cannot be placed arbitrarily low, and the failure is not graceful.
      The contrast line it has to meet at toeTop crosses zero at p(k-1)/k, which
      is 0.0146 encoded at the shipped values; at or below that the Hermite's top
@@ -1116,6 +1160,7 @@ void main() {
       uGrain: { value: P.grain },
       uGrainOff: { value: new THREE.Vector2() },
       uGrainSwz: { value: 0 },
+      uDither: { value: P.dither / 255 },
     },
     vertexShader: VERT,
     fragmentShader: /* glsl */`
@@ -1128,10 +1173,21 @@ uniform sampler2D tGrain;
 uniform float uGrain;
 uniform vec2 uGrainOff;
 uniform float uGrainSwz;
+uniform float uDither;
 
 varying vec2 vUv;
 
 float lum(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+
+/* Uncorrelated between neighbours and stable in time, which is the whole
+   requirement for a dither. Integer pixel coordinates up to 3840 stay well
+   inside the mantissa at this scale, so there is no coordinate range in play
+   where the fract chain degenerates into stripes. */
+float h21(vec2 p) {
+  vec3 q = fract(vec3(p.xyx) * 0.1031);
+  q += dot(q, q.yzx + 33.33);
+  return fract((q.x + q.y) * q.z);
+}
 
 void main() {
   vec3 c = texture2D(tSrc, vUv).rgb;
@@ -1192,6 +1248,46 @@ void main() {
   vec3 gn = mix(vec3(mono), n, 0.28);
   float ly2 = lum(gl_FragColor.rgb);
   gl_FragColor.rgb += gn * (uGrain * (0.45 + 0.55 * (1.0 - ly2)));
+
+  /* ── dither, which is not the same thing as the grain ─────────────────────
+   *
+   * The grain was carrying the dither and a critique found that it cannot. The
+   * reasoning that put it there was about amplitude: 0.44 code values rms
+   * against a quantisation step of 1.0, therefore under the step, therefore
+   * enough. Amplitude is the wrong axis. What dither has to do is decorrelate
+   * one pixel's rounding error from its neighbour's, and the grain plate is
+   * *smoothed* value noise — that smoothing is exactly what stops it reading as
+   * digital noise on a surface, and it also means neighbouring pixels get almost
+   * the same offset, so a smooth ramp still crosses a code boundary in one
+   * place and the contour survives. Measured down a sky column: runs of 13 to 17
+   * pixels at one code value in sun_gap and wash_mid, with and without the
+   * grain.
+   *
+   * So the two terms are separated, because they have opposite requirements.
+   * Grain has to stay invisible on a surface, which forces it low-frequency and
+   * small. Dither only has to break a contour, and for that it wants to be pure
+   * white noise at the Nyquist limit, where the eye's contrast sensitivity is at
+   * its floor and a per-pixel offset of one code value cannot be resolved as
+   * anything at all.
+   *
+   * Triangular PDF at one code value peak: the sum of two independent uniforms,
+   * which is the standard result that the rounding error becomes independent of
+   * the signal for steps up to 1 LSB, where a single uniform only whitens it.
+   * Costs 0.41 cv rms on top of the grain's 0.44 and removes the staircase.
+   *
+   * Seeded from gl_FragCoord alone, so it is a fixed screen-space pattern: a
+   * pure function of pixel position is deterministic by construction, which is
+   * what the capture pipeline needs, and it also cannot crawl, because there is
+   * nothing in it that advances. It is two hashes inside a pass that already
+   * runs, so there is no tier rung on which removing it buys anything.
+   *
+   * Applied last, after the encode and after the grain, because dither has to
+   * be the final thing before the quantiser it is dithering. Anything that
+   * filters the image afterwards — the along-edge blend above, in particular —
+   * would average adjacent samples and undo the independence that is the whole
+   * point. */
+  vec2 dpx = gl_FragCoord.xy;
+  gl_FragColor.rgb += vec3((h21(dpx) + h21(dpx + vec2(37.13, 91.71)) - 1.0) * uDither);
 }`,
     depthTest: false, depthWrite: false, toneMapped: false,
   });
