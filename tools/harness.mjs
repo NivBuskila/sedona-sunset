@@ -95,6 +95,14 @@ const RASTER_ARGS = USE_GPU
 export const LAUNCH_ARGS = [
   ...RASTER_ARGS,
   '--disable-lcd-text',
+  /* The scene has a soundscape, and a headless capture is still a browser: with
+     autoplay allowed it happily plays it out of the user's speakers while they
+     are doing something else. Muting is unconditional because no capture has
+     ever needed audible output — the audio system is measured by rendering its
+     graph offline through an OfflineAudioContext, not by listening to a render.
+     Autoplay stays allowed so the audio code still runs and can still throw a
+     page error we want to see. */
+  '--mute-audio',
   '--autoplay-policy=no-user-gesture-required',
   // One renderer process rather than one per frame/site. Chromium sizes its
   // process and thread pools from the machine's core count, then fights
