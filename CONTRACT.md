@@ -435,19 +435,37 @@ a stated cause — including one stated by the coordinator.
    floor, and it is System 4's.** Between `sys2f` and the first frame under the new light,
    every ground region lost a factor of 3.5–3.9 in `L`: `wash_mid` floor 0.395 → 0.122,
    `bend` sand 0.432 → 0.136, `ground` floor 0.224 → 0.118. That is far larger than the
-   `hf/lf` drop it was reported as, and it is not a fill washing out microshadow — in the
-   same frames the `wash_mid` *wall* went the other way, 0.193 → 0.354. Wall bright, floor
-   dark, at a floor/wall ratio of 0.34: the floor is in the bank's shadow, which at 8°
-   elevation is 140 m long from a 20 m bank.
+   `hf/lf` drop it was reported as, and it is directional rather than global — in the same
+   frames the `wash_mid` *wall* went the other way, 0.193 → 0.354. Against `tools/atmos.mjs`
+   the floor's own model predicts `L` 0.416 sunlit and 0.184 shaded; it measures 0.122, so
+   the sampled floor is not merely grazed by an 8° sun, it is below the model's own shaded
+   figure. Sun-relative-to-wash-axis and shadow-cascade coverage are both still open as the
+   mechanism; the arithmetic above rules out "correctly exposed grazing floor" and nothing
+   more.
 
-   Two consequences worth separating. The shadow *level* is fine — 0.34 of the lit
-   neighbour, against a brief asking for 0.15–0.25 — so the fill is not the problem. And
-   `hf/lf` falling from 0.58 to 0.52 on a floor that moved into shade is the **correct**
-   response, not a regression: a hemispherical source fills one-pixel relief that a raking
-   beam would carve, so shaded granular ground genuinely measures flatter. Chasing that
-   ratio by weakening the skylight would be chasing physics. The thing to fix is that the
-   floor the metric samples is shaded at all, which is a question of where the sun is
-   relative to the wash axis, not of how the ground is lit once it is there.
+   `hf/lf` falling from 0.58 to 0.52 on a floor that moved into shade is at least partly
+   the **correct** response rather than a regression: a hemispherical source fills the
+   one-pixel relief a raking beam would carve, so shaded granular ground genuinely measures
+   flatter. But it is not the whole story, because the fill is measurably too strong. On the
+   same surface in the same frame — `sys4c` `wall_lit`, brightest 40% against darkest 40% —
+   shade sits at **0.347** of sun in HSV V, against a brief asking 0.15–0.25.
+
+   **That target needs a colour space before it can be met.** The same fill measures 0.072
+   of sunlit in linear luminance, 0.30 encoded, and 0.45 as the predictor's rock V ratio —
+   one is far below the band, one is at its top, two are above it. Until it is stated which,
+   the number cannot be aimed at, and I would rather say so than pick the reading that
+   flatters the render. What *is* unambiguous is the fill's chroma: the probe's away-from-sun
+   irradiance is [0.0294, 0.0300, 0.0330], a 12% spread. It is described as violet and is
+   numerically grey, and a near-neutral fill on red rock is a desaturating wash — which is
+   the mechanism behind shaded rock losing 0.16 of saturation where lit rock lost 0.06.
+
+   One dead end, so nobody repeats it: raising the escarpment coverage (`COVER_MAX`,
+   `COVER_TOP` in `atmos.js`) to the geometry its own comment derives — solid walls to 53°
+   rather than 0.46 of the horizon to 31° — moves the ratio the **wrong** way, 0.452 → 0.535,
+   and darkens the sunlit wall with it. Replacing sky with sunlit red rock adds more red
+   bounce to a red face than the blue it takes away. The comment also overstates what the
+   code does: cosine-weighted, the present coverage removes about 3% of the upward
+   irradiance, not "a little over half the dome".
 5. Heat haze and atmosphere — including **wind-driven sand at ground level** (saltation):
    low ribbons of grains skipping across the wash floor, snaking around cobbles and pouring
    off the lee edge of bank crests. Distinct from the airborne dust in the sunbeams, and
