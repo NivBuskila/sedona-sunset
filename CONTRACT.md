@@ -561,12 +561,47 @@ Not forgiven, only deferred. Revisit these after System 4 and System 7.
   which is why real desert talus has red tops and pale sides, while a pebble is
   turned over by every flood and keeps its own lithology.
 
-  **Still open, and it is now a lithology question rather than a surface one.** The
-  loudest object in `p1c_ground` is a `slab`/`block` plate on the talus apron at
-  V 0.702, hue 24.6°, B/G 0.655, against bed at V 0.524, hue 20.3°, B/G 0.608 — so
-  a third brighter than its bed. Those classes draw from `CDF_B`, the buff
-  sandstone mix, and pale Coconino talus below a Coconino wall is correct geology.
-  If it is still wrong at that value then the *mix* is wrong, not the material.
+- **The pale clasts are a requested feature, and the defect was their distribution.**
+  Ruled on by the coordinator with history nobody downstream had, and worth keeping
+  because the temptation to delete them will recur. The *first* critique of this
+  project listed "zero lithological variety in the clasts — every stone in every
+  frame is the same tan-grey chip" among its most damaging defects and asked for
+  buff-white Coconino by name, calling the polychrome scatter "one of the most
+  recognisable signatures of the place"; the first terrain critique noted that
+  locals specifically remark on "the big off-white boulders sitting incongruously
+  on the red soil". **Do not remove the buff mix.** Three rounds of work bought
+  that variety.
+
+  What was wrong was measured: a `slab`/`block` plate at V 0.702 against a bed at
+  0.524, a third brighter, and a field of them spread evenly across the apron.
+  Too many, too clean, too even. So in `sys1q`, three changes and no palette edit:
+
+  - **Dusted much harder on the pale end specifically.** Fresh Coconino is
+    off-white; Coconino that has lain in a wash weathers to a duller browner buff
+    and carries the same red film as everything around it. The sky-facing dust
+    weight now scales with the instance's own lithology luminance as well as its
+    size, so a pale block takes about three and a half times the film of a dark
+    one, capped at two thirds — past that it stops being dusty Coconino and
+    becomes a lump of bed, which deletes the lithology instead of weathering it.
+  - **Confined to the apron toe, in lobes.** Coconino is the *cap*, so a pale
+    block started its fall from the top of the wall, and how far a block leaves
+    the wall scales with how far it fell — the coarse pale fraction belongs at
+    talPos 0, not spread up the ramp. Combined with `pile`, which describes
+    rockfall as episodic, this rejects about four in five pale coarse draws. The
+    survivors are pushed *up* in size, which is the point rather than a side
+    effect: a few big conspicuous pale blocks read as Sedona, many medium ones
+    read as builders' rubble. Same pale area, concentrated.
+  - **`pile` sharpened** from a floor of 0.10 to 0.02 and its wavelength raised
+    from 18 m to 25 m. The old floor was small but never zero, so the lobes were a
+    modulation on top of an even field rather than the whole story; now the ground
+    between heaps is genuinely swept. One gully, one event, one lobe.
+
+  Also, and this was a separate bug rather than a taste question: the `bankF` gate
+  started at eleven degrees of slope, and the pale ovals a critic found on the
+  shaded bank in `wash_low` were on a bank *toe*, which is gentler than that. None
+  of the provenance logic was firing on them — they drew from the general mix and
+  skipped the matrix blend, which is exactly the polka-dot mechanism on a surface
+  the gate could not see. Onset now six degrees.
 - Shadow ambient is warm grey and red-dominant — needs a hemispherical skylight term so
   shadows go cool/violet. **System 4 owns this.**
 - **Ground `hf/lf` regressed when the new lighting landed** and needs re-checking once
@@ -782,6 +817,16 @@ The "exposure problem" was actually a grazing-angle specular veil, which raises 
 crushes saturation exactly as over-exposure does. Critics are reliable about *what looks
 wrong* and unreliable about *why*. Always re-diagnose from magnified crops before acting on
 a stated cause — including one stated by the coordinator.
+
+**And the converse, which has now happened three times: a measurement can be fully
+satisfied by something that looks wrong.** The clast grit layer at full normal amplitude
+turned a grazing sun into a binary lit/unlit decision per grain, and a binary field has an
+excellent one-pixel gradient — the metric was measuring the right band and saying nothing
+about what was in it. Same shape as the narrow-peak detector that found a harmonic series
+in its own variance, and as the `hf/lf` figure quoted against a floor the eye cannot
+resolve. **A metric bounds a defect; it does not certify a fix.** Every number in this file
+that moved in the right direction was also looked at magnified before it was believed, and
+the two that were not are both in the failure list above.
 
 1. Terrain and wash path
 2. Red rock buttes — **COMPLETE on its metric**, pending a post-lighting review. Three
