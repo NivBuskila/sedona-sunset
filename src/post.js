@@ -377,6 +377,22 @@ export function createPost({ renderer, camera, atmo, sun }) {
      contribution gets separated from the rest of the grade. */
   P.toeTop = num('toe', P.toeTop);
   P.toeSlope = num('toes', P.toeSlope);
+  /* The toe cannot be placed arbitrarily low, and the failure is not graceful.
+     The contrast line it has to meet at toeTop crosses zero at p(k-1)/k, which
+     is 0.0146 encoded at the shipped values; at or below that the Hermite's top
+     endpoint is zero or negative and the curve stops being monotone, which does
+     not read as a dark frame, it reads as posterised bands with an inverted one
+     at the bottom. Swept at 8192 steps, monotonicity actually fails below about
+     0.020, so the clamp sits at three times the crossing — 0.044 — to stay well
+     clear of it, and it says so rather than silently moving a swept parameter
+     out from under whoever swept it. 0 still means off. */
+  if (P.toeTop > 0) {
+    const floor = 3 * P.contrastPivot * (P.contrast - 1) / P.contrast;
+    if (P.toeTop < floor) {
+      console.warn(`[post] toeTop ${P.toeTop} is below the monotone limit; using ${floor.toFixed(4)}`);
+      P.toeTop = floor;
+    }
+  }
   let disabled = /(^|[#&])nopost(\b|$|&)/.test(hash);
 
   const plate = grainPlate(256);

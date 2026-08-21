@@ -65,6 +65,20 @@ function current(e, { k, p }) {
   return Math.max(0, Math.min(1, (e - p) * k + p));
 }
 
+/* A non-monotone transfer curve does not read as a bad grade, it reads as
+   posterised bands with an inverted one at the bottom, and it is reachable from
+   a plausible-looking toeTop. Checked here so a swept parameter is rejected in
+   the sweep rather than in a capture. */
+function monotone(f) {
+  let prev = -1;
+  for (let i = 0; i <= 4096; i++) {
+    const v = f(i / 4096);
+    if (v < prev - 1e-9) return false;
+    prev = v;
+  }
+  return true;
+}
+
 function stats({ L, w, h }, f) {
   const O = Float64Array.from(L, f);
   let sum = 0;
@@ -129,7 +143,7 @@ for (const [name, f] of CANDIDATES) {
   const su = stats(gateLit, f).meanCV / 255;
   const st = stats(struct, f);
   const lt = stats(litStruct, f);
-  const flag = (sh / su) >= 0.15 && (sh / su) <= 0.25 ? '*' : ' ';
+  const flag = !monotone(f) ? 'X' : ((sh / su) >= 0.15 && (sh / su) <= 0.25 ? '*' : ' ');
   console.log(`${name.padEnd(18)} ${(sh / su).toFixed(3)}${flag} | ` +
               `${st.meanCV.toFixed(2).padStart(14)} ${st.gradCV.toFixed(2).padStart(5)} ` +
               `${(st.gradCV / st.meanCV).toFixed(3).padStart(6)} ${st.at0.toFixed(1).padStart(4)} ` +
