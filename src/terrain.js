@@ -803,10 +803,37 @@ export class Terrain {
        It is also backlit, the sun being up-wash, so the near face is in shadow
        by construction — that is correct for this hour and is why it wants to be
        read against sky rather than made to fill the frame. */
-    const wall = smoothstep(-340, -400, z);
+    /* ---- an amphitheatre, not a berm ----
+     * Reported as "a ruler-straight, slightly tilted ledge running the full
+     * width of frame with uniform horizontal striping and zero erosional
+     * variation… it reads as a retaining wall", and that is a fair description
+     * of what a function of z alone has to look like. The rise was
+     * smoothstep(-340, -400, z) with only a 48 m fBm on top, so every contour of
+     * the headwall was a line of constant z — which from a camera standing on the
+     * centreline is a horizontal straight edge across the whole frame.
+     *
+     * A real wash head closes in from the sides before it closes across the
+     * middle, because the tributary slopes are eating into it from three
+     * directions at once. So the onset is displaced in z by how far out you are:
+     * the flanks reach full height twenty-six metres sooner than the axis, which
+     * curves the contours around the viewer into a bowl. A plan-form fBm on top
+     * of that stops the bowl being a parabola. */
+    const ax = Math.abs(x);
+    const zw = z - 26.0 * smoothstep(3.0, 30.0, ax)
+                 - 16.0 * fbm(x * 0.028, z * 0.010, 3, 431);
+    const wall = smoothstep(-340, -400, zw);
+    /* The pour-off. A wash head is where the water comes *over*, so the one place
+     * the headwall is not a wall is on the axis: a notch cut back into it with
+     * the plunge below. Without this the channel simply runs into the slope. */
+    const notch = 9.5 * (1.0 - smoothstep(2.0, 9.5, ax)) * smoothstep(-332, -374, z);
+    /* Side gullies converging on the head, which is the other half of "zero
+     * erosional variation" — a colluvial slope this size is drained, and the
+     * drainage is what gives it its vertical grain. */
+    const gully = 3.4 * wall * (ridged(x * 0.085, z * 0.016, 2, 437) - 0.52);
     return ramp * ramp * 10.0
          + wall * (26.0 + 11.0 * fbm(x * 0.021, z * 0.021, 3, 421)
-                        + 6.0 * (ridged(x * 0.034, z * 0.034, 2, 423) - 0.5));
+                        + 6.0 * (ridged(x * 0.034, z * 0.034, 2, 423) - 0.5))
+         - notch - gully;
   }
 
   /** Height at the far-field crossover, so the blend starts from something
@@ -1700,7 +1727,15 @@ gM.r *= 1.0 - ck.r * panW * 0.40 * (0.30 + 0.70 * crkF);
 /* Banks only, never the canyon wall — vWall separates them — and only on the
    steep part, in patches. Run across every moderate slope in the scene it stops
    being stratification and becomes pinstripe. */
+/* Never on the wash head. Stratification is a *section* — it means you are
+   looking at a face the channel has cut down through flood deposits — and the
+   head is the opposite thing, a colluvial slope built up by material coming down
+   it. Run there it drew horizontal bands keyed to world height straight across a
+   surface with no beds in it, which is the "uniform horizontal striping" half of
+   the retaining-wall read. */
+float headM = smoothstep(-286.0, -322.0, vWPos.z);
 float bankW = smoothstep(0.28, 0.52, slope) * (1.0 - wallM) * (1.0 - sandW)
+            * (1.0 - headM)
             * smoothstep(0.34, 0.68, mac2.r * 0.7 + vr.b * 0.5);
 if (bankW > 0.004) {
   /* Bed thickness is itself variable — from about 8 cm to about 40 cm — because
