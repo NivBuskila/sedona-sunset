@@ -524,7 +524,9 @@ export function buildScatter(terrain, tex) {
 
     shader.vertexShader = ('uniform float uVpH;\nuniform vec3 uFarCol;\n' +
       'varying float vFar;\nvarying float vFarN;\nvarying vec3 vSeat;\n' +
-      'varying float vMeso;\nattribute float aDust;\n' + shader.vertexShader)
+      'varying float vMeso;\nattribute float aDust;\n' +
+      'varying float vAO;\nvarying float vUp;\nattribute float aAO;\n' +
+      shader.vertexShader)
       /* ---- constant texel density across three orders of size ----
          The hull UVs are per-face box projections normalised into the unit square,
          so every facet gets exactly one tile of the surface map however large the
@@ -642,10 +644,18 @@ export function buildScatter(terrain, tex) {
            one deliberately conflates size with paleness and this one must not.
            See the sky-occlusion note in the fragment shader for what it is for. */
         vMeso = smoothstep(0.07, 0.26, iRad);
+        vAO = aAO;
+        /* Height of this vertex above the instance origin, in units of the
+           instance's own plan radius, so a fragment down at the bed can be told
+           from one up on the crown. Taken through the instance matrix rather
+           than from position.y so that a clast tilted by imbrication reports
+           the height it actually has in the world rather than in its own frame. */
+        vUp = (mat3(instanceMatrix) * position).y / max(iRad, 1e-4);
       `);
 
     shader.fragmentShader = ('varying float vFar;\nvarying float vFarN;\n' +
       'varying vec3 vSeat;\nvarying float vMeso;\n' +
+      'varying float vAO;\nvarying float vUp;\n' +
       'uniform vec3 uSunDir;\nuniform sampler2D uGrit;\n' +
       'float cTone = 1.0;\nfloat cCav = 1.0;\nfloat cDust = 0.0;\n' + shader.fragmentShader)      /* ---- two different fades, and only one of them existed ----
        * vFarN handles the *instance* shrinking below a pixel, which is the
@@ -880,9 +890,20 @@ export function buildScatter(terrain, tex) {
          * dome is the blue-violet part of the light budget, so an over-filled
          * facet is desaturated as well as bright, and a desaturated warm surface
          * beside a saturated red one reads as grey card however dark it is. */
-        float mesoAO = mix(1.0, 0.58, vMeso);
-        reflectedLight.indirectDiffuse *= mesoAO;
-        reflectedLight.indirectSpecular *= mesoAO;
+        /* aAO carries burial, bank membership and size together, computed per
+           instance on the CPU where all three are known exactly. vMeso is kept
+           only as a small extra for the largest blocks, which are wedged among
+           neighbours in a way the per-instance terms do not fully capture. */
+        float mesoAO = vAO * mix(1.0, 0.86, vMeso);
+        /* Contact darkening. A stone sitting in a bed occludes its own base and
+           the bed occludes it back, and that dark line where the two meet is
+           most of what makes a clast look bedded rather than dropped. The
+           critique asked for it as a ring on the ground; done here on the clast
+           instead, which costs no extra geometry and cannot misregister. Narrow
+           — a third of a radius — because it is a contact, not a shadow. */
+        float contact = mix(0.46, 1.0, smoothstep(-0.40, 0.06, vUp));
+        reflectedLight.indirectDiffuse *= mesoAO * contact;
+        reflectedLight.indirectSpecular *= mesoAO * contact;
       `)
       /* ---- the blue chips were here ----
        * This was an additive Rayleigh-spectrum constant, vec3(0.012, 0.024,
@@ -981,6 +1002,14 @@ export function buildScatter(terrain, tex) {
       const hz = terrain.heightAt(x, z + e) - terrain.heightAt(x, z - e);
       nrm.set(-hx / (2 * e), 1, -hz / (2 * e)).normalize();
       if (1 - nrm.y > cl.maxSlope) continue;
+      /* Ground gradient under the clast, kept for the seat below. A stone rests
+         on the highest ground beneath it, not on the ground under its centre,
+         and the difference is the clast's own radius times the slope — which is
+         nothing on the wash floor and several centimetres on a bench. Seating
+         everything at its centre height is the second reason the benches grew
+         shards: half of every clast on a slope was under the surface before
+         burial was applied at all. */
+      const grad = Math.hypot(hx, hz) / (2 * e);
 
       let rad = cl.rMin + Math.pow(rand(), cl.sizeP || 1.7) * (cl.rMax - cl.rMin);
       if (cl.taper) rad *= 0.40 + 0.60 * (1 - fc.talPos);
@@ -1064,7 +1093,7 @@ export function buildScatter(terrain, tex) {
          thinning belongs in the placement gate above; the size distribution was
          already right. */
 
-      emit(cl, buckets[placed % cl.variants], x, y, z, rad, lith, rand, th, nrm, bankF);
+      emit(cl, buckets[placed % cl.variants], x, y, z, rad, lith, rand, th, nrm, bankF, grad);
       placed++;
 
       if (cl.scour && sizeFr > cl.scourFrom) {
@@ -1213,7 +1242,7 @@ export function buildScatter(terrain, tex) {
   return meshes;
 
   /* ── placement of one instance ── */
-  function emit(cl, bucket, x, y, z, rad, lith, rand, th, n, bankF = 0) {
+  function emit(cl, bucket, x, y, z, rad, lith, rand, th, n, bankF = 0, grad = 0) {
     if (cl.imbricate > 0 && rand() < cl.imbricate) {
       /* Imbrication: platy clasts stack like roof shingles, their flat faces
          dipping upstream and their long axes across the flow. It is the single
@@ -1288,8 +1317,45 @@ export function buildScatter(terrain, tex) {
      * thickness, "sunk to the shoulders" means the same thing for both.
      */
     const halfH = rad * yf;
-    let sink = halfH * (cl.sink[0] + rand() * (cl.sink[1] - cl.sink[0]));
-    if (cl.deepSink && rand() < cl.deepSink) sink = halfH * (0.92 + rand() * 0.16);
+    /* ---- and measured against the thickness the clast actually has ──────────
+     * The comment above is right about what burial should be measured against
+     * and then measures it against the wrong number, which is how the scene
+     * ended up with "dozens of thin flat triangular plates standing straight up
+     * out of the bench, like glass shards stuck in dirt".
+     *
+     * `halfH` is the instance's *y scale*, not its half-height. The geometry it
+     * scales has already been flattened by `cl.flat` — `ay = flat` in
+     * angularClast, `v.y *= flatten` in roundedClast — so the clast's true
+     * vertical half-extent is `halfH * flat`, and flat runs 0.42 to 0.86. Sink
+     * fractions of 0.5 to 1.0 were therefore delivering 1.0 to 2.3 in the units
+     * that matter:
+     *
+     *   class      flat   nominal sink   actual, in half-heights
+     *   gravel     0.50   0.52 - 0.96    1.04 - 1.92
+     *   cobble     0.42   0.54 - 0.98    1.29 - 2.33
+     *   block      0.62   0.52 - 0.94    0.84 - 1.52
+     *   boulder    0.86   0.56 - 0.94    0.65 - 1.09
+     *
+     * **Nearly the whole population was seated at or below its own top surface.**
+     * What survived into the frame was not the clasts but the places where the
+     * ground happened to fall away beside one, which exposes a corner of a
+     * convex hull clipped by a sloping plane — a thin triangle with no body
+     * behind it. Hence shards, hence "dozens", hence worst on a bench where the
+     * ground is doing the most falling away. It also explains why the floor
+     * looked as though it had pebbles resting *on* it: a cap emerging from a
+     * buried stone is the same shape as a small stone lying on the surface, and
+     * there was no contact shadow to tell them apart.
+     *
+     * The hard cap is the part to keep. Burial is a distribution and a
+     * distribution has a tail, but a clast buried past its own top is not a
+     * deeply bedded clast — it is an invisible one that bills for a draw call
+     * and occasionally emits a shard. */
+    const flatY = (cl.kind === 'angular' ? cl.flat : cl.flatten) || 1;
+    const hTrue = halfH * flatY;
+    let sink = hTrue * (cl.sink[0] + rand() * (cl.sink[1] - cl.sink[0]));
+    if (cl.deepSink && rand() < cl.deepSink) sink = hTrue * (0.74 + rand() * 0.16);
+    sink = Math.min(sink, hTrue * 0.90);
+    sink -= grad * rad * 0.55;
     /* Per-instance value spread, times a per-class factor: talus is dusty and
        sits in the wall's own shadow half the day, and pale blocks at that scale
        read as builders' rubble unless they are knocked back. */
@@ -1402,7 +1468,38 @@ export function buildScatter(terrain, tex) {
      * instance, which is cheaper than the varying it replaces was to get wrong. */
     const resid = clamp((rad - 0.075) / 0.16, 0, 1);
     const dustW = resid * (0.30 + 2.85 * clamp((paleL - 0.33) / 0.19, 0, 1));
+    /* ---- how much sky this stone can actually see ──────────────────────────
+     * The most frequent single tell in the whole set: "the wash floor's pebble
+     * layer is lit as if the shadows weren't there", and a shaded bank that
+     * reads as salt-and-pepper static rather than as ground. Measured off
+     * `sys7e_nopost_wash_low`, a pale clast on the shaded bank stands about 4x
+     * its matrix, against 1.6x for the same pair in sun — so the clasts are not
+     * ignoring the shadow map, they are taking far more *fill* than the bed they
+     * are lying in, and in shade fill is all there is.
+     *
+     * The previous round found the gap and closed a quarter of it: terrain.js
+     * multiplies its indirect by tAO and the clasts had nothing, so a
+     * size-keyed factor went in. But it keyed on size alone, which means gravel
+     * — 16500 of the 24000 instances and the entire "pebble layer" the critique
+     * is talking about — got 1.0 and kept the full unoccluded dome.
+     *
+     * Size is only one of three reasons a stone sees less sky than open ground,
+     * and it is the weakest. A stone worked into the bed is walled by the bed;
+     * a stone on a bank has half its horizon filled by the bank; a big one is
+     * wedged among its neighbours. All three are known here on the CPU, exactly
+     * and per instance, so there is no reason to guess at them in a shader.
+     *
+     * No tint is applied with it, deliberately. The measurement also says floor
+     * shadows carry no sky colour, which is true and is not mine to fix: a
+     * hand-rolled blue fill on a clast is precisely the blue-chip defect I spent
+     * a round removing, and it will be wrong again the moment the environment
+     * changes. Occlude correctly and let System 4 own the colour of the dome. */
+    const buried = clamp(sink / Math.max(hTrue, 1e-4), 0, 1);
+    const aoI = clamp((1 - 0.46 * buried)
+                    * (1 - 0.34 * clamp(grad / 0.55, 0, 1))
+                    * (1 - 0.24 * clamp((rad - 0.06) / 0.30, 0, 1)), 0.30, 1.0);
     bucket.push({
+      ao: aoI,
       dust: dustW,
       x, y: y - sink, z,
       q: quat.clone(),
@@ -1416,6 +1513,7 @@ export function buildScatter(terrain, tex) {
   function makeMesh(geom, material, list, name, shadow) {
     const im = new THREE.InstancedMesh(geom, material, list.length);
     const dust = new Float32Array(list.length);
+    const aoA = new Float32Array(list.length);
     im.castShadow = shadow;
     im.receiveShadow = true;
     im.name = name;
@@ -1428,8 +1526,10 @@ export function buildScatter(terrain, tex) {
       col.setRGB(o.r, o.g, o.b);
       im.setColorAt(i, col);
       dust[i] = o.dust || 0;
+      aoA[i] = o.ao === undefined ? 0.86 : o.ao;
     });
     geom.setAttribute('aDust', new THREE.InstancedBufferAttribute(dust, 1));
+    geom.setAttribute('aAO', new THREE.InstancedBufferAttribute(aoA, 1));
     im.instanceMatrix.needsUpdate = true;
     if (im.instanceColor) im.instanceColor.needsUpdate = true;
     im.computeBoundingSphere();

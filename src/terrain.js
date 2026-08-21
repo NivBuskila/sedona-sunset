@@ -254,6 +254,41 @@ export class Terrain {
     out.ws = out.wt + 0.55 + 2.0 + 5.0 *
       (0.5 + 0.5 * fbm(s * 0.016, side > 0 ? 31 : 63, 3, 71))       // toe of the talus
       + 2.4 * fbm(x * 0.038, z * 0.038, 2, 62);
+
+    /* ── the head of the wash ────────────────────────────────────────────────
+     * Every drainage starts somewhere. This one did not: the cross-section was a
+     * function of arc length with no terminating condition, so the channel ran
+     * on past the end of the path table as a uniform extrusion, and a walker who
+     * used the number keys to jump to the far end of the walk arrived at the
+     * edge of the built world and stared straight at it.
+     *
+     * Closing it is done by taking the widths to nothing rather than by putting
+     * a wall across, because a wall across a channel is a dam and reads as one.
+     * A real wash head is a place where the channel simply runs out: the flow
+     * that cut it was collected from a slope rather than delivered by an
+     * upstream reach, so the bed shallows, the banks lose their height, the
+     * whole section narrows to a scour line and then to nothing, and what is
+     * left is the hillside the water came off. Everything below is the same
+     * cross-section machinery with its widths driven to zero, which means the
+     * transition cannot seam — there is no second landform to blend into.
+     *
+     * Driven from z rather than from s deliberately. Arc length comes from the
+     * path table, which clamps at its last row, so every s-dependent term in
+     * this file freezes there and freezing is the one behaviour a terminating
+     * condition must not have. z keeps counting. */
+    const hd = z > -274 ? 0 : smoothstep(-274, -332, z);
+    out.hd = hd;
+    if (hd > 0) {
+      /* The channel goes first and fastest — a wash head is recognisable
+         because the thing you have been walking in disappears from under you. */
+      out.wc *= 1 - 0.88 * hd;
+      out.wt *= 1 - 0.80 * hd;
+      out.ws *= 1 - 0.62 * hd;
+      out.dc *= 1 - 0.94 * hd;
+      /* Cut banks need flow against an outside bend to exist and there is no
+         flow left up here, so they die with the channel that made them. */
+      out.hb *= 1 - hd;
+    }
     return out;
   }
 
@@ -357,7 +392,7 @@ export class Terrain {
              + 20 * fbm(x * 0.0062, z * 0.0062, 3, 409);
       const far2 = smoothstep(680, 1500, av);
       if (far2 > 0.001) fh = mix(fh, 20 + 34 * ridged(x * 0.0009, z * 0.0009, 3, 419), far2);
-      const h = mix(near, fh, far);
+      const h = mix(near, fh, far) + this._headRise(x, z);
       this.oRef = h / BED_T;
       this.oWall = 1;
       return h;
@@ -732,7 +767,36 @@ export class Terrain {
        boulder registers one. */
     if (this._scour) h += this.scourAt(x, z);
 
-    return h;
+    return h + this._headRise(x, z);
+  }
+
+  /**
+   * The hillside the wash comes off, added on top of everything else.
+   *
+   * Two parts. A ramp, which is the drainage's own long profile steepening as it
+   * approaches its source — every stream bed does this and it is the reason a
+   * wash head is uphill rather than merely absent. Then the slope above it,
+   * which is what the water was collected from.
+   *
+   * Applied to the far-field branch as well as the corridor, and tapered in z
+   * only. That is the whole reason it cannot seam: a term that faded out
+   * laterally would leave the corridor thirty metres higher than the ground
+   * beside it and put a scarp down each side of the wash for its full length.
+   * Ground that rises across its entire width is a hillside; ground that rises
+   * only in the middle is an embankment.
+   *
+   * The plan form is broken up with noise at twenty and thirty metres, because a
+   * head that closes on a clean line across the channel is a dam. Real ones
+   * close in bays and buttresses, and the noise is enough to give the rim a
+   * profile rather than a horizon.
+   */
+  _headRise(x, z) {
+    if (z > -274) return 0;
+    const ramp = smoothstep(-274, -330, z);
+    const wall = smoothstep(-322, -372, z);
+    return ramp * ramp * 10.0
+         + wall * (30.0 + 12.0 * fbm(x * 0.021, z * 0.021, 3, 421)
+                        + 6.0 * (ridged(x * 0.034, z * 0.034, 2, 423) - 0.5));
   }
 
   /** Height at the far-field crossover, so the blend starts from something
