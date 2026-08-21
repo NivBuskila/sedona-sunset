@@ -493,13 +493,22 @@ function smoothstep(a, b, x) {
    the middle of a measured gust. A saltation sheet is dense — thousands of
    grains a square metre in a real ribbon — and it is near-field, because a
    half-millimetre grain past thirty metres is nothing. */
-const SALT_TILE = 60;
+/* Two layers, and the reason is projection. A saltation sheet has to be dense
+ * enough at three metres to read as sand rather than as sparks, and it has to
+ * reach far enough up the wash to exist at all in a view along the corridor —
+ * and one tile cannot do both, because a uniform world density projects to a
+ * screen density that falls as the square of the range. Measured: 8 grains a
+ * square metre over 60 m changed 0.27% of the pixels at full drive, and the
+ * whole of the `ground` view is inside five metres. So there is a near layer
+ * sized for the ground at your feet and a far one for the band up the wash,
+ * each with its own radial fade, and they cost one draw call each. */
+const SALT_NEAR = 22, SALT_FAR = 76;
 
-function buildSaltation(count, ground, sunTint) {
+function buildSaltation(count, TILE, seed, ground, sunTint) {
   const g = new THREE.BufferGeometry();
   const pos = new Float32Array(count * 3);
   const aux = new Float32Array(count * 4);
-  let s = 0x5a17d;
+  let s = seed;
   const rnd = () => {
     s = (s + 0x6d2b79f5) | 0;
     let t = Math.imul(s ^ (s >>> 15), 1 | s);
@@ -507,9 +516,9 @@ function buildSaltation(count, ground, sunTint) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
   for (let i = 0; i < count; i++) {
-    pos[i * 3] = rnd() * SALT_TILE;
+    pos[i * 3] = rnd() * TILE;
     pos[i * 3 + 1] = 0;
-    pos[i * 3 + 2] = rnd() * SALT_TILE;
+    pos[i * 3 + 2] = rnd() * TILE;
     aux[i * 4] = rnd();                        // seed / hop phase
     /* Hop length is strongly skewed: most grains creep, a few take long
        trajectories, and the tail is what you actually see as a streak. */
@@ -533,7 +542,7 @@ function buildSaltation(count, ground, sunTint) {
       uGround: { value: ground },
       uBox: { value: new THREE.Vector4(GX0, GZ0, 1 / (GX1 - GX0), 1 / (GZ1 - GZ0)) },
       uTint: { value: sunTint.clone() },
-      uLevel: { value: 0.16 },
+      uLevel: { value: 0.115 },
     },
     vertexShader: /* glsl */`
 uniform float uT;
@@ -548,7 +557,7 @@ attribute vec4 aux;
 varying float vA;
 ${NOISE_GLSL}
 
-const float TILE = ${SALT_TILE.toFixed(1)};
+const float TILE = ${TILE.toFixed(1)};
 
 void main() {
   vec2 p = position.xz;
@@ -599,7 +608,7 @@ void main() {
 
   vec4 mv = modelViewMatrix * vec4(wpos, 1.0);
   gl_Position = projectionMatrix * mv;
-  float px = uPix * aux.z * 0.020 / max(0.30, dist);
+  float px = uPix * aux.z * 0.024 / max(0.30, dist);
   gl_PointSize = max(0.9, px);
   vA *= min(1.0, px / 0.9);
 }`,
@@ -609,10 +618,14 @@ uniform float uLevel;
 varying float vA;
 
 void main() {
+  /* Soft, and not very bright. A hard bright dot per grain reads as a spark;
+     what a saltation sheet looks like is a slightly luminous fog that happens
+     to be made of grains, so each one is a soft blob well under the exposure of
+     the lit floor and the sheet is built out of their overlap. */
   float d = length(gl_PointCoord - 0.5);
-  float a = vA * smoothstep(0.5, 0.15, d);
+  float a = vA * smoothstep(0.5, 0.04, d);
   if (a < 0.002) discard;
-  gl_FragColor = vec4(uTint * uLevel, a * 0.95);
+  gl_FragColor = vec4(uTint * uLevel, a * 0.85);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`,
@@ -628,6 +641,9 @@ void main() {
   pts.name = 'saltation';
   return pts;
 }
+
+/** Push one uniform onto every saltation layer. */
+function eachSalt(layers, fn) { for (const l of layers) fn(l.material.uniforms); }
 
 /* ── heat shimmer ──────────────────────────────────────────────────────────
  *
@@ -879,8 +895,12 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
   const bakeMs = performance.now() - t0;
 
   const dust = buildDust(26000, sunDir, sunTint);
-  const salt = buildSaltation(30000, ground, sunTint);
-  scene.add(dust, salt);
+  const salt = [
+    buildSaltation(24000, SALT_NEAR, 0x5a17d, ground, sunTint),
+    buildSaltation(17000, SALT_FAR, 0x2c91b, ground, sunTint),
+  ];
+  salt[1].name = 'saltation_far';
+  scene.add(dust, ...salt);
 
   const shimmer = new Shimmer(renderer, camera);
 
@@ -904,36 +924,37 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
   let frozen = false;
 
   function applyWind() {
-    const d = dust.material.uniforms, s = salt.material.uniforms;
+    const d = dust.material.uniforms;
     d.uWind.value.set(W.dirX, W.dirZ);
     d.uSpeed.value = W.speed;
     /* Dust density lifts with the wind but not much and not fast: suspended
        load has a settling time of minutes, so the air does not clear between
        gusts the way the bed does. */
     d.uDrive.value = 0.72 + 0.55 * W.gust;
-    s.uWind.value.set(W.dirX, W.dirZ);
-    s.uSpeed.value = W.speed;
-    s.uSal.value = W.sal;
+    eachSalt(salt, (s) => {
+      s.uWind.value.set(W.dirX, W.dirZ);
+      s.uSpeed.value = W.speed;
+      s.uSal.value = W.sal;
+    });
   }
 
   function setClock(t) {
     clock = t;
     wind.at(t, W);
     dust.material.uniforms.uT.value = t;
-    salt.material.uniforms.uT.value = t;
+    eachSalt(salt, (s) => { s.uT.value = t; });
     applyWind();
   }
 
   function syncCamera() {
     const gy = camera.position.y - EYE;
-    const d = dust.material.uniforms, s = salt.material.uniforms;
-    d.uCam.value.copy(camera.position);
-    d.uGroundY.value = gy;
-    s.uCam.value.copy(camera.position);
     const h = renderer.domElement.height || 800;
     const px = h / (2 * Math.tan(camera.fov * Math.PI / 360));
+    const d = dust.material.uniforms;
+    d.uCam.value.copy(camera.position);
+    d.uGroundY.value = gy;
     d.uPix.value = px;
-    s.uPix.value = px;
+    eachSalt(salt, (s) => { s.uCam.value.copy(camera.position); s.uPix.value = px; });
     return gy;
   }
 
@@ -1030,7 +1051,18 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
        separate sky from ground. Points drawn through a mesh material come out
        as stray single texels, and in a 1/8-scale mask a stray texel is a whole
        region — so the particles step out of that pass. */
-    setHidden(b) { dust.visible = !b; salt.visible = !b; },
+    setHidden(b) { dust.visible = !b; for (const l of salt) l.visible = !b; },
+    /* For System 7's quality ladder. perf.js currently reaches in by name and
+       finds only the near saltation layer, which leaves the far one at full
+       count on every rung; this does both clouds and every layer of each, and
+       is the supported way to spend them. The particle attributes are hashed by
+       index, so any prefix is still an even scatter. */
+    setParticleFraction(dustF, saltF) {
+      const cut = (o, f) => o.geometry.setDrawRange(0,
+        Math.max(1, Math.round(o.geometry.attributes.position.count * f)));
+      cut(dust, dustF);
+      for (const l of salt) cut(l, saltF);
+    },
     _diag: {
       bakeMs,
       sunDir: [sunDir.x, sunDir.y, sunDir.z],
@@ -1042,7 +1074,7 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
         return { d, t: +t.toFixed(2), gust: +w.gust.toFixed(3), sal: +w.sal.toFixed(3) };
       }),
       dust: dust.geometry.attributes.position.count,
-      salt: salt.geometry.attributes.position.count,
+      salt: salt.reduce((n, l) => n + l.geometry.attributes.position.count, 0),
       get wind() { return { ...W, clock, frozen }; },
       gusts: () => wind.gusts.length,
     },
