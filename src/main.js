@@ -26,6 +26,7 @@ import {
 import { createAudio } from './audio.js';
 import { installAerial } from './aerial.js';
 import { buildAtmosphere } from './atmosphere.js';
+import { createPerf } from './perf.js';
 
 const EYE = 1.65;
 const DEG = Math.PI / 180;
@@ -37,7 +38,19 @@ document.body.appendChild(canvas);
 
 const renderer = new THREE.WebGLRenderer({
   canvas,
-  antialias: true,
+  /* Off, and nothing is given up by it while System 5's shimmer pass owns the
+     frame. The scene is drawn into that pass's own offscreen target, which
+     carries four samples of its own; the canvas then receives exactly one
+     full-screen quad covering every pixel. Multisampling a primitive with no
+     interior edges produces the same pixels it would without — every sample in
+     a pixel holds the same value — so this was buying an identical picture in
+     exchange for a multisampled RGBA8 backbuffer allocated at the window size
+     and resolved every single frame.
+     The one setting where it mattered is the bottom of System 7's quality
+     ladder, which switches the shimmer pass off entirely; a tier that gives up
+     the heat haze to stay above thirty is not a tier that wants to be paying
+     for multisampling either. */
+  antialias: false,
   alpha: false,
   powerPreference: 'high-performance',
   preserveDrawingBuffer: false,   // required by the harness capture path
@@ -198,6 +211,26 @@ const atmo = buildAtmosphere({
   scene, camera, renderer, terrain, path, sun, audio: audio.api,
 });
 
+/* The frame probe's scratch target, declared here rather than beside the probe
+   because the governor's onResize below invalidates it during construction and
+   a `let` at its old position was still in the temporal dead zone at that
+   point — a ReferenceError that stopped the page building at all. */
+let maskRT = null;
+
+/* ── System 7: the quality governor ────────────────────────────────────────
+ *
+ * Down here because it reaches into the atmosphere and into the particle clouds
+ * by name, so both have to exist first. It is deliberately inert at boot: under
+ * a software rasteriser it pins the top tier and disables adaptation, so every
+ * capture in shots/ is a picture of what a GPU draws rather than of whatever
+ * SwiftShader's frame time talked it into. Its top tier is byte-identical to
+ * the settings this scene has always had.
+ */
+const perf = createPerf({
+  renderer, scene, camera, atmo, sun, sunNear,
+  onResize() { syncViewport(); maskRT = null; },
+});
+
 /* ── first-person controls (human only; never touched by walkTo) ───────── */
 
 const keys = Object.create(null);
@@ -211,13 +244,10 @@ addEventListener('mousemove', e => {
   player.yaw += e.movementX * 0.0022;
   player.pitch = Math.max(-1.45, Math.min(1.45, player.pitch - e.movementY * 0.0022));
 });
-addEventListener('resize', () => {
-  renderer.setSize(window.innerWidth, window.innerHeight, false);
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  syncViewport();
-  maskRT = null;
-});
+/* Sizing goes through the governor, because the render scale is a factor on it
+   and two places computing the buffer size independently is how a frame ends up
+   blitted into a corner of the screen. */
+addEventListener('resize', () => perf.resize());
 
 function step(dt) {
   const f = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
@@ -253,7 +283,6 @@ function step(dt) {
 
 /* ── frame probe ───────────────────────────────────────────────────────── */
 
-let maskRT = null;
 /* renderer.info is reset per render() call, so info() has to know whether the
    last thing drawn was a real frame or the 1/8-scale mask pass. */
 let lastRenderWasMask = false;
@@ -354,10 +383,17 @@ function frame(t) {
   if (paused) { last = t; return; }
   const dt = Math.min(0.05, (t - last) / 1000 || 0.016);
   last = t;
+  /* The governor owns the frame cap, the GPU timer bracket and the adaptive
+     tier. It returns false only when an explicit #fps cap says this rAF tick is
+     not owed a frame — uncapped, which is the default, it is always true, so
+     nothing about the existing loop changes. */
+  if (!perf.beginFrame(dt)) return;
+  const t0 = performance.now();
   step(dt);
   audio.update(dt, player);
   atmo.update(dt, Math.hypot(player.vx, player.vz) > 0);
   renderOnce();
+  perf.endFrame(performance.now() - t0, dt);
   const inst = 1 / Math.max(1e-4, dt);
   fpsSmoothed = fpsSmoothed ? fpsSmoothed * 0.9 + inst * 0.1 : inst;
   api.fps = fpsSmoothed;
@@ -404,6 +440,9 @@ const api = {
     };
   },
   probe,
+  /* System 7. tools/bench.mjs drives the tier ladder through this, and F3 opens
+     the live readout without any tooling at all. */
+  perf,
   audio: audio.api,
   // handy while developing; not part of the contract
   _scene: scene, _camera: camera, _terrain: terrain, _path: path, _atmo: atmo,
