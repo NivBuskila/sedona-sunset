@@ -406,17 +406,41 @@ export function createPost({ renderer, camera, atmo, sun }) {
   function allocate(w, h, div) {
     if (sceneRT && W === w && H === h && LODIV === div) return;
     W = w; H = h; LODIV = div;
-    if (sceneRT) { sceneRT.dispose(); sceneRT = null; }
+    if (sceneRT) {
+      if (sceneRT.depthTexture) sceneRT.depthTexture.dispose();
+      sceneRT.dispose();
+      sceneRT = null;
+    }
     for (const t of [loA, loB]) if (t) t.dispose();
     loA = loB = null;
 
+    /* A depth *texture*, not a renderbuffer, and it is readable by anyone.
+     *
+     * Two reasons. The near one: in the fallback path, where System 5's stage is
+     * off and the scene is drawn straight in here, this is the only depth there
+     * is, and with a renderbuffer nothing could read it — so the defocus was
+     * silently off on that path rather than degraded. Now it is not.
+     *
+     * The far one is a handover. System 5's shimmer displacement is disabled by
+     * user instruction, but its target correctly still runs, because the marched
+     * in-scatter that makes the light shafts needs a depth texture to know where
+     * each ray stops and that target is where the depth lives. So the scene is
+     * currently going through an RGBA16F MSAA buffer whose only surviving
+     * purpose is to carry depth — the single largest bandwidth item in the frame,
+     * for a texture this target can supply for free. Pointing their march at
+     * `post._sceneDepth()` lets that buffer go.
+     *
+     * Two things a migration still needs and this change deliberately does not
+     * assume, because they are theirs to decide: `samples` has to come with the
+     * scene draw or the frame loses its only antialiasing, and something has to
+     * composite the shaft buffer once their blit is no longer there to do it.
+     * The second is a texture and a gain, which is a chain, not an absorption. */
+    const depth = new THREE.DepthTexture(w, h, THREE.UnsignedIntType);
+    depth.format = THREE.DepthFormat;
     sceneRT = new THREE.WebGLRenderTarget(w, h, {
       type: THREE.HalfFloatType,
-      /* Needed only by the fallback path, where the shimmer stage is off and
-         the scene is drawn straight in here. A renderbuffer, not a texture:
-         nothing in this chain reads depth out of it — the defocus reads System
-         5's depth texture, which is the same depth from the same pass. */
       depthBuffer: true,
+      depthTexture: depth,
       samples: 0,
     });
     sceneRT.texture.minFilter = THREE.LinearFilter;
@@ -1033,10 +1057,17 @@ void main() {
       haveSceneInfo = true;
     }
 
-    /* Depth: System 5's, when its stage ran. Without it there is no defocus
-       and no depth-aware anything, which is the bottom tier by design. */
+    /* Depth: System 5's when its stage ran, otherwise this chain's own.
+       `haveSceneInfo` is exactly the right test and not a proxy for one — it is
+       true only on the branch above that drew the scene into sceneRT itself,
+       which is the only branch on which sceneRT's depth holds this frame. The
+       composite blit writes colour with depthWrite off, so on the normal path
+       sceneRT's depth is whatever was last cleared and reading it would put a
+       plane of defocus at the near clip. */
     const shim = atmo._shimmerMaterial;
-    const depth = shim ? shim.uniforms.tDepth.value : null;
+    const depth = haveSceneInfo
+      ? sceneRT.depthTexture
+      : (shim ? shim.uniforms.tDepth.value : null);
 
     const fu = finalMat.uniforms;
     fu.tScene.value = sceneRT.texture;
@@ -1150,6 +1181,18 @@ void main() {
        measurable question rather than an argued one. */
     setEnabled(b) { disabled = !b; },
     get level() { return { ...level }; },
+
+    /* The scene depth, for System 5's marched in-scatter.
+     *
+     * Offered so its shimmer target can be retired: that buffer is RGBA16F with
+     * four samples and its displacement is disabled, so what it is currently
+     * spending the frame's largest bandwidth item on is a depth texture, which
+     * this one already has. Null before the first frame and whenever the chain
+     * is off, so a caller has to handle both — and it is only *written* on the
+     * branch where this chain draws the scene itself, so a migration means the
+     * scene draw moving here rather than just the read moving there. See
+     * allocate() for the two things that have to come with it. */
+    _sceneDepth() { return sceneRT ? sceneRT.depthTexture : null; },
 
     /** Advance the grain, on the same freeze rule the atmosphere uses. */
     update(dt, moving) {
