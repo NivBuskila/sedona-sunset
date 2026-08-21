@@ -59,15 +59,33 @@ const A = computeAtmosphere();
  */
 const SCALE = 19.0;
 
-/* Lifted from the derived 1.0 after measurement. The derivation puts a flat
-   lit wall face at value 0.62, dead centre of the reference band, but the frames
-   it produces have a median luminance in the high twenties because at this sun
-   angle most of what is on screen is self-shadowed rock and floor in the left
-   wall's shadow. 1.15 puts the lit face at 0.71 and the sunlit floor at 0.55
-   with saturation 0.53 — every one of those inside its measured target — at the
-   cost of clipping facets that stand square to the beam, which is what a
-   photograph exposed for a golden-hour cliff does anyway. */
-export const EXPOSURE = 1.15;
+/* Lifted from the derived 1.0 after measurement, then brought back down to 0.95.
+   1.15 was fitted at sun elevation 11, and raising the sun to 15 to get the wash
+   floor off the ground moved everything it was balancing: the lit wall face went
+   to V 0.808 against its 0.59-0.73 target and the sunlit floor to 0.610 against
+   0.55, so the level was over on both counts and clipping facets square to the
+   beam rather than merely risking it.
+   Measured at 0.95 against 1.15 in the same windows, sun disc aside: the lit face
+   comes back to 0.693, inside band; the wash floor to 0.562 against its 0.55
+   reference, so it lands on the figure rather than 11% over it; the floor's
+   grad/L *rises* 0.137 to 0.143, because a darker floor sits on a steeper part of
+   the curve; and saturation gains about 4% everywhere, since less of the frame is
+   in the shoulder having its chroma compressed. The shadow gate is the constraint
+   that binds, and tools/expose.mjs measures its elasticity to global exposure at
+   only 0.3, which prices this cut at 0.010 of it - 0.222 to a predicted 0.212,
+   inside the 0.15-0.25 band.
+   This is *not* justified by the sun disc, and the record needs to say so because
+   the first version of this comment claimed it was. The claim rested on an
+   analytic figure from the sky LUT putting the sky within a degree of the sun at
+   244 cv, from which it followed that ACES had no shoulder left to separate the
+   disc's pinned 255 from it. tools/discprofile.mjs measures that sky at 120 cv
+   with the disc at 169, a contrast of +40.5% standing 1.3 sigma clear - so there
+   was shoulder to spare and the analytic model was wrong by a factor of two. What
+   actually hides the disc is butte0: 173 m tall at 324-413 m, its crest
+   subtending 22.8-28.0 degrees from every camera position and straddling the sun's
+   bearing from -8.7 to +27.1. No exposure reaches through that, and neither does
+   any elevation short of 28 degrees, which is not golden hour. */
+export const EXPOSURE = 0.95;
 
 /* ── the fog colour ────────────────────────────────────────────────────────
  * Aerial perspective is System 5's, but scene.fog needs a colour now and the

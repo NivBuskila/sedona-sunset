@@ -1734,7 +1734,9 @@ walls occupy is 51–68% blocked by rock. Correcting the fit perfectly moves the
 | 0.27, a perfect fit to the raycast | 0.645 | 7.9° |
 | 0.75, what saturation 0.45 would need | ~0.45 | 5.9° |
 
-**0.021 of the 0.20 of saturation needed, and none of the hue.** The hue half is not a
+**0.021 of the 0.20 of saturation needed, and none of the hue.** (That 0.021 was later withdrawn
+as well — see below. It was measured against one lateral normal rather than against the joint
+target the ramp is fitted to, and the shipped fit is already optimal.) The hue half is not a
 question of magnitude at all: rock hue turns cool only once the incident light's B/G clears
 the albedo's own G/B of 1.335, and a **fully open sky delivers 1.285**. No aperture, however
 large, flips the sign, because the fill is multiplied by rock albedo and the albedo throws the
@@ -1803,12 +1805,29 @@ and pulls warm. So it cannot cool this wall, and no distance term will: the fram
 wall is *near*. Airlight is what separates shaded rock at kilometres, which is the depth
 ladder, and that is a different complaint.
 
-**What System 4 owns here totals about 0.04 of the 0.15 needed**, in two corrections that are
-each independently right: the ramp re-fit (0.021, above) and the escarpment albedo ignoring
-varnish. `uVarnish` is 0.058 0.042 0.033 at up to 0.34 coverage, so the wall the renderer
-draws is ~17% darker than the clean `LAYERS` mean the escarpment proxy is built from, which
-makes the bounce ~17% too strong — worth another ~0.02, since varnish darkens far more than
-it desaturates. A third lever was tested and is empty: raising the opposite wall's own sky
+**Both of the two corrections System 4 claimed to own were withdrawn on inspection, and neither
+was landed.** They are recorded here because the wrong figures were quoted upward first.
+
+*The ramp re-fit, claimed at 0.021, is not a bug.* `tools/probefit.mjs` fits a free exponent at
+1.46 for rms 0.045 and the pinned 1.5 gives rms 0.045 — identical, so the shipped ramp is
+already the best two-parameter fit to the raycast table. The 0.021 came from comparing it
+against the `away` normal alone. Against both lateral normals, which is what a single scalar
+has to serve, the delivered visibility is 0.03 *low* on `away` and 0.03 *high* on `across` at
+every height: a symmetric compromise, not a systematic error. Re-fitting toward `away` would
+move `across` equally wrong in the other direction. That is choosing a favourite normal, and
+rms 0.045 is already level with the 0.02–0.05 the skyline calibration itself achieves.
+
+*The varnish correction, claimed at ~17%, was off by an order of magnitude.* 0.34 is a
+per-fragment ceiling on a **sparse** feature, not a coverage: `src/rock.js` builds varnish as
+plates in cells about 9.5 m along the wall, half the cells carrying one, each 5.5–25.5% of its
+cell wide and tapering over 5–12 m. The area-weighted mean is low single digits, so the effect
+on a bounce integral is of order 1%, not 17%. There *is* a larger real effect nearby — the lit
+wall's area mean sits 28.5% below its own non-dark parts, measured on `sys4m_wall_lit` — but
+that number conflates varnish with the wall's self-shadowing, which `WALL_LIT` and the lit
+fraction ramp already model, so applying it would double-count. Separating them needs more
+than an estimate and was not worth the remaining time against a defect that is 1% wide.
+
+A third lever was tested and is empty: raising the opposite wall's own sky
 visibility from 0.20 to 0.85 moves rock saturation 0.666 to 0.669, because **everything
 arriving via the opposite wall is multiplied by rock albedo first and therefore arrives red**,
 however blue the sky lighting it was. That is the trap in this geometry and it is worth
@@ -1849,6 +1868,79 @@ to make.**
 Also checked and reverted rather than kept: pushing `NEAR_Z` from 40 to −1340 to capture the
 1,225 m of up-sun `terrain` that sits in front of the near plane left the patch at 2,291
 pixels against 2,297, so nothing being culled there was casting anything that mattered.
+
+## That fix was right and it exposed the real defect: butte0 stands in front of the sun
+
+The one line landed as `0e9f46c` and the patch went. Then every view in the next capture round
+came back with a ground median of 9–13 against the high twenties before it, **sky unchanged at
+226** — light lost on the ground and only on the ground, which is a new shadow rather than a
+new level. `tools/_buttecost.mjs` toggles `castShadow` at runtime and prices it:
+
+| window | buttes casting | not casting | delta |
+| --- | --- | --- | --- |
+| wash floor, V | 0.112 | 0.596 | **−81%** |
+| wash floor, below V 0.12 | 60.3% | 2.7% | |
+| lit wall, V | 0.133 | 0.325 | **−59%** |
+
+At the same time `tools/sundisc.mjs` reports the disc blocked in all four candidate views —
+`butte0` at 391 m in `sun_gap` and 477 m in `wash_mid`, vegetation in the other two.
+
+Those are one fact, not two. **`butte0` stands between the hero ground and the sun**, so of
+course its shadow covers the canyon and of course the disc is behind it. The shadow was always
+geometrically there; `castShadow = false` was concealing a placement problem rather than
+causing one, which is exactly why a correct fix presented as a regression. A 173 m butte at
+350 m throws cot(15°) × 173 = **646 m** of shadow, and the hero canyon is inside that.
+
+`tools/_butteclear.mjs` measures the clearance, and the numbers close the question:
+
+| | value |
+| --- | --- |
+| `butte0` height | 173.4 m |
+| distance, across the eight views | 324–413 m |
+| crest elevation subtended | **22.8°–28.0°** |
+| azimuth span relative to the sun's bearing | **−8.7° .. +27.1°** |
+| sun | azimuth −9°, elevation 15° |
+
+It straddles the sun in every view. `butte2` at 157.4 m blocks in three of them as well. To
+clear `butte0` the sun must rise to 28°, which is not golden hour and abandons the long
+shadows the whole brief is built on; or the butte must **drop 85.5 m**, half its height; or the
+bearing must swing **8.7°+**, which is thirty times the 0.18–0.30° the caprock notch bought and
+is the trade already recorded here as measured-and-declined at 62% of the wash floor.
+
+**So the visible sun is not reachable from System 4's controls, and it is not an exposure,
+aureole or elevation problem.** It needs `butte0` moved off the sun's bearing or lowered, which
+is placement, in `src/rock.js`, and System 2's. Moving it fixes both halves at once: the disc
+comes out from behind it and the canyon comes back into the light.
+
+## Exposure came down to 0.95, and not for the reason first written down
+
+`EXPOSURE` was fitted at 1.15 against sun elevation 11. Raising the sun to 15 to get the wash
+floor off the ground moved everything it was balancing: the lit face went to **V 0.808 against
+its 0.59–0.73 target** and the sunlit floor to **0.610 against 0.55**, so the level was over on
+both counts and clipping facets square to the beam rather than merely risking it. Measured at
+0.95 against 1.15 in identical windows, buttes not casting:
+
+| figure | 1.15 | 0.95 | target |
+| --- | --- | --- | --- |
+| lit face V | 0.808 | **0.693** | 0.59–0.73 |
+| wash floor V | 0.610 | **0.562** | 0.55 |
+| wash floor grad/L | 0.137 | **0.143** | 0.10–0.20 |
+| saturation, both windows | — | **+4%** | |
+| shadow gate | 0.222 | 0.212 predicted | 0.15–0.25 |
+
+The floor gets *better* structured as it darkens, because a darker floor sits on a steeper part
+of the curve, and the gate's elasticity to global exposure is only 0.3 (`tools/expose.mjs`), so
+a 17% cut costs it 0.010. **The gate figure is predicted, not measured** — it cannot be
+measured until `butte0` stops shadowing the frame, and it is the one number to re-read
+afterwards.
+
+The correction worth recording: the first version of this change was justified by the sun disc,
+on an analytic figure from the sky LUT putting the sky within a degree of the sun at 244 cv, and
+the argument that ACES therefore had no shoulder left to separate the disc's pinned 255 from it.
+`tools/discprofile.mjs` measures that sky at **120 cv with the disc at 169 — +40.5% contrast,
+1.3σ clear**. The analytic model was wrong by a factor of two, there was shoulder to spare, and
+the disc was already most of the way to visible before `butte0` was in front of it. Exposure
+0.95 stands on the four contracted figures above and on nothing about the sun.
 
 ## The aureole is System 4's, and it is not the stale dial it looked like
 
