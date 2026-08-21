@@ -32,8 +32,9 @@ const _cache = new Map();
 const memo = (k, f) => { if (!_cache.has(k)) _cache.set(k, f()); return _cache.get(k); };
 export const barkTex = () => memo('bark', () => makeBark(512));
 export const foliageTex = () => memo('fol', () => makeFoliage(512));
-export const grassTex = () => memo('grass', () => makeGrass(256));
+export const grassTex = () => memo('grass', () => makeGrass(512));
 export const scrubTex = () => memo('scrub', () => makeScrub(256));
+export const succTex = () => memo('succ', () => makeSucculent(256));
 
 /* ── anisotropic tiling noise ──────────────────────────────────────────────
    noise.js's pfbm shares one period between both axes, and bark is the most
@@ -159,9 +160,13 @@ export function makeBark(size = 512) {
   /* Warm grey-brown, and grey-*er* than the soil. Juniper bark photographs a
      good deal less saturated than people remember — it is a dusty taupe with a
      red undertone, not chestnut. */
-  const DARK = [0.115, 0.082, 0.062];
-  const MID = [0.245, 0.190, 0.150];
-  const PALE = [0.360, 0.300, 0.252];
+  /* Range widened from 0.115–0.360 to 0.070–0.475. Fibrous bark is *high
+     contrast at close range*: near-black grooves between strings whose lifted
+     edges catch the sun. Compressed into a narrow band it averages to a
+     low-frequency vertical smear — the trunk read as brushed suede. */
+  const DARK = [0.070, 0.048, 0.036];
+  const MID = [0.230, 0.176, 0.138];
+  const PALE = [0.475, 0.405, 0.345];
 
   for (let i = 0; i < N; i++) {
     const ao = clamp(1 - (hb[i] - h[i]) * 3.4, 0, 1) * 0.65
@@ -259,7 +264,28 @@ function coverage(px, at) {
   return n / (px.length / 4);
 }
 
-/** Build a mip chain whose alpha coverage is constant. */
+/**
+ * Build a mip chain whose alpha coverage is constant.
+ *
+ * The rule below was suspected of causing four of the reported artefacts —
+ * shrubs reading as "flat opaque quads with no alpha cut", pale ghost rows at
+ * the atlas cell boundaries, and chartreuse shards on a distant bench — on the
+ * theory that a large gain would *flood* a sparse level, pushing every faintly
+ * covered texel over the threshold at once and leaving a solid rectangle bounded
+ * by the clip inset. It does not. Measured with `tools/mipprobe.mjs` on a
+ * synthetic spray at level-zero coverage 0.104, this chain holds 0.10 at every
+ * level from 64px down, the gain never exceeds 1.13, and the fully-opaque
+ * fraction peaks at 2.6% — there is no flood to fix. Three alternatives were
+ * tried and all three were worse: taking the max of each alpha quad instead of
+ * the mean drives coverage to 1.0 by the bottom of the chain, and letting the
+ * gain fall below one to correct an overshoot undershoots level one by 43%.
+ *
+ * Recorded because the theory was persuasive and the code was innocent. The one
+ * real weakness is at the last two levels, where coverage does collapse to zero:
+ * four texels of mean alpha below the threshold cannot be rescued by any gain
+ * the search will consider, so a spray does wink out at around two pixels. It is
+ * a two-pixel pop and it is the correct thing to leave alone.
+ */
 function coverageMips(base, w, h, alphaTest) {
   const at = alphaTest * 255;
   const target = coverage(base, at);
@@ -340,16 +366,37 @@ const rgb = (c) => `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})`;
  * time is bronzed or outright dead. Anything approaching a saturated green reads
  * as a garden conifer dropped into a desert.
  */
+/*
+ * Measured, not remembered — and the first version of this palette was wrong in
+ * a way worth recording, because the reasoning was plausible all the way to the
+ * conclusion.
+ *
+ * The premise was that "dusty blue-green" means low chroma, so the base was
+ * authored at HSV saturation 0.19 and hue 93°, and a render of the crown then
+ * measured 0.26 / 87° — self-consistent, and taken as confirmation. Photographs
+ * of wild Utah juniper measure **0.63 saturation at hue 64–68°**: sunlit 0.631 /
+ * 66.8°, shaded 0.635 / 64.1°, macro 0.505–0.604 / 67.8°. Even hazed distant
+ * pinyon-juniper woodland holds 0.374 — higher than this crown was in the near
+ * field.
+ *
+ * So chroma is not what distinguishes a desert juniper from a garden conifer.
+ * *Hue and value* are: it is a dark olive yellow-green, not a mid-value pure
+ * green. The dustiness is the waxy bloom on the scale leaves, which shifts hue
+ * toward yellow and drops value — it does not desaturate. Crushing chroma to
+ * imitate it removed the plant's colour and cost 20° of hue as well.
+ *
+ * Note that the render measured only 0.07 above the albedo, so the light rig was
+ * not hiding anything: an additive ambient pedestal does crush saturation, but
+ * there was barely any chroma there to crush. Numbers below are sRGB bytes;
+ * hue/sat/val of each are checked in the report.
+ */
 const FOL = {
-  /* HSV saturation of the base is 0.19 and of the pale highlight 0.15. That is
-     what a Utah juniper measures off a photograph; anything past about 0.30 is
-     a garden conifer. */
-  base: [106, 118, 96],
-  pale: [144, 155, 132],
-  dark: [70, 80, 66],
-  bronze: [124, 103, 71],
-  dead: [138, 122, 96],
-  berry: [118, 130, 141],
+  base: [112, 120, 48],     // 66.7° / 0.600 / 0.471
+  pale: [156, 161, 84],     // 63.9° / 0.478 / 0.631  — sun-bleached crest
+  dark: [70, 77, 29],       // 68.7° / 0.623 / 0.302  — shaded interior
+  bronze: [125, 93, 47],    // 35.4° / 0.624 — last year's bronzed growth
+  dead: [140, 120, 63],     // 44.4° / 0.550 — dead scale still attached
+  berry: [105, 124, 145],
 };
 
 function shootChain(ctx, x, y, ang, len, wid, rand, cols) {
@@ -418,10 +465,10 @@ export function makeFoliage(size = 512) {
       /* Dead and bronzed material sits *behind* the green, which is how a real
          spray looks: the interior of the clump is last year's dead scale still
          attached, with the live growth only on the outside. */
-      const deadCols = [rgb(FOL.dead), rgb(FOL.bronze), rgb([100, 86, 66])];
+      const deadCols = [rgb(FOL.dead), rgb(FOL.bronze), rgb([102, 84, 44])];
       const liveCols = [
         rgb(FOL.base), rgb(FOL.pale), rgb(FOL.dark),
-        rgb([88, 102, 82]), rgb([112, 122, 96]), rgb(FOL.bronze),
+        rgb([96, 106, 42]), rgb([128, 134, 58]), rgb(FOL.bronze),
       ];
 
       const bx = ox + cell * 0.5, by = oy + cell * 0.94;
@@ -461,42 +508,144 @@ export function makeFoliage(size = 512) {
   return cutoutTex(px, size, size, 0.42);
 }
 
-/* ── dry grass and litter ──────────────────────────────────────────────────
- * A tuft card: straw-coloured blades fanning from a point, most of them dead.
- * Two variants side by side. */
-export function makeGrass(size = 256) {
-  const { ctx } = canvas2d(size, size);
-  const cell = size / 2;
+/* ── dead grass and litter ─────────────────────────────────────────────────
+ *
+ * Bunch grass in a Sedona wash in late summer is *dead* — the brief asked for
+ * dead grasses and the previous atlas held two cells, which meant every tuft in
+ * the frame was one of two silhouettes at one colour. A reviewer read the field
+ * as a single repeated sprite, and as living grass.
+ *
+ * So: four cells, and the four differ in habit rather than just in seed. An
+ * upright tussock, a wide collapsed fan, a sparse bleached remnant, and a dense
+ * dark weathered clump. Between them and the per-instance rotation and colour
+ * jitter at the scatter end, a repeat is hard to spot.
+ *
+ * The atlas is four cells across, so callers address it with `cols = 4`.
+ */
+export function makeGrass(size = 512) {
+  const w = size, h = size / 2;                 // 512 x 256: four 128-wide cells
+  const { ctx } = canvas2d(w, h);
+  const cell = w / 4;
   const rand = rng(771133);
-  const cols = ['rgb(168,146,104)', 'rgb(146,124,86)', 'rgb(190,172,132)',
-                'rgb(118,98,68)', 'rgb(158,140,96)', 'rgb(132,120,88)'];
-  for (let cx = 0; cx < 2; cx++) {
-    const ox = cx * cell;
+  /* Straw through bleached bone to weathered grey-brown. No green anywhere. */
+  const STRAW = ['rgb(172,148,102)', 'rgb(148,126,86)', 'rgb(194,174,132)',
+                 'rgb(120,100,68)', 'rgb(162,142,98)', 'rgb(134,120,88)'];
+  const BLEACH = ['rgb(206,192,158)', 'rgb(186,172,140)', 'rgb(216,206,178)',
+                  'rgb(160,146,116)'];
+  const WEATHER = ['rgb(112,96,70)', 'rgb(132,114,84)', 'rgb(94,80,58)',
+                   'rgb(146,128,96)'];
+  /* blades, lean spread, length, base width, palette */
+  const kinds = [
+    { n: 30, lean: 0.9, len: [0.52, 0.44], wid: 1.0, cols: STRAW },
+    { n: 26, lean: 2.3, len: [0.30, 0.40], wid: 1.1, cols: STRAW },
+    { n: 13, lean: 1.4, len: [0.44, 0.50], wid: 0.8, cols: BLEACH },
+    { n: 38, lean: 1.1, len: [0.34, 0.34], wid: 1.2, cols: WEATHER },
+  ];
+  for (let cx = 0; cx < 4; cx++) {
+    const ox = cx * cell, k = kinds[cx];
     ctx.save();
-    ctx.beginPath(); ctx.rect(ox + 1, 1, cell - 2, size - 2); ctx.clip();
-    const n = 26 + (rand() * 10 | 0);
+    ctx.beginPath(); ctx.rect(ox + 1, 1, cell - 2, h - 2); ctx.clip();
+    const n = k.n + (rand() * 8 | 0);
     for (let i = 0; i < n; i++) {
-      const bx = ox + cell * (0.5 + (rand() - 0.5) * 0.16);
-      const by = size * 0.985;
-      const lean = (rand() - 0.5) * 1.5;
-      const len = size * (0.34 + rand() * 0.58);
-      const w = size * (0.006 + rand() * 0.007);
-      ctx.strokeStyle = cols[(rand() * cols.length) | 0];
-      ctx.lineWidth = w;
+      const bx = ox + cell * (0.5 + (rand() - 0.5) * 0.20);
+      const by = h * 0.985;
+      const lean = (rand() - 0.5) * 2 * k.lean;
+      const len = h * (k.len[0] + rand() * k.len[1]);
+      ctx.strokeStyle = k.cols[(rand() * k.cols.length) | 0];
+      ctx.lineWidth = h * (0.008 + rand() * 0.010) * k.wid;
       ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(bx, by);
       /* Blades arc over under their own weight; a straight blade reads as a
-         wire. The control point sits well off the chord. */
-      const tipx = bx + lean * len * 0.85, tipy = by - len * (0.72 + rand() * 0.2);
+         wire. The control point sits well off the chord. Dead blades arc
+         further and some of them fold right over. */
+      const fold = rand() < 0.22 ? 1.35 : 1.0;
+      const tipx = bx + lean * len * 0.85 * fold;
+      const tipy = by - len * (0.72 + rand() * 0.2) / fold;
       ctx.quadraticCurveTo(bx + lean * len * 0.15, by - len * 0.72, tipx, tipy);
       ctx.stroke();
     }
     ctx.restore();
   }
-  const img = ctx.getImageData(0, 0, size, size);
+  const img = ctx.getImageData(0, 0, w, h);
   const px = new Uint8Array(img.data.buffer.slice(0));
-  return cutoutTex(px, size, size, 0.40);
+  return cutoutTex(px, w, h, 0.40);
+}
+
+/* ── succulent skin ────────────────────────────────────────────────────────
+ *
+ * Prickly pear and agave were the only geometry in System 3 with no map at all,
+ * on the reasoning that a pad is a smooth waxy surface and a flat colour would
+ * do. It does not: a reviewer picked them out as "flat opaque quads, plainly
+ * untextured", which is exactly what an untextured flat opaque quad looks like.
+ * A pad in life carries a mottled bloom, a visible grid of areoles with spine
+ * clusters on them, and darker creased shadow around the rim.
+ *
+ * Tiles, opaque, no cutout — the silhouette is the geometry's job here.
+ */
+export function makeSucculent(size = 256) {
+  const N = size * size;
+  const alb = new Uint8Array(N * 4);
+  const hgt = new Float32Array(N);
+  /* Glaucous blue-green, and lighter than juniper — that difference is most of
+     what separates a cactus from a shrub at any distance. */
+  const BASE = [0.196, 0.238, 0.163];
+  const PALEC = [0.283, 0.322, 0.236];
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = y * size + x;
+      const u = x / size, v = y / size;
+      /* Waxy bloom: broad soft mottling, plus the faint longitudinal creasing a
+         pad gets as it swells and shrinks with the water it is holding. */
+      const bloom = afbm(u * 5, v * 5, 5, 5, 4, 401);
+      const crease = aridged(u * 3.0, v * 11.0, 3, 11, 2, 409);
+      let t = clamp(0.34 + 0.72 * bloom - 0.30 * crease, 0, 1);
+      const c = [0, 0, 0];
+      for (let k = 0; k < 3; k++) c[k] = mix(BASE[k], PALEC[k], t);
+      hgt[i] = 0.35 * bloom + 0.30 * crease;
+
+      /* Areoles on a staggered lattice — the tell that this is a cactus. */
+      const AR = 7;
+      const gy = v * AR, row = Math.floor(gy);
+      const gx = u * AR + (row & 1 ? 0.5 : 0);
+      const fx = gx - Math.floor(gx) - 0.5, fy = gy - row - 0.5;
+      const d = Math.hypot(fx, fy * 0.92);
+      const areole = 1 - smoothstep(0.055, 0.11, d);
+      if (areole > 0) {
+        /* A pale woolly pad with a dark ring, and a couple of straw spines. */
+        for (let k = 0; k < 3; k++) c[k] = mix(c[k], k === 2 ? 0.30 : 0.40, areole * 0.75);
+        const ring = smoothstep(0.10, 0.075, d) * smoothstep(0.055, 0.075, d);
+        for (let k = 0; k < 3; k++) c[k] *= 1 - 0.45 * ring;
+        hgt[i] += areole * 0.5;
+      }
+      const spine = (1 - smoothstep(0.012, 0.05, Math.abs(fx * 0.30 + fy)))
+                  * (1 - smoothstep(0.10, 0.30, d)) * smoothstep(0.10, 0.16, d);
+      if (spine > 0) {
+        for (let k = 0; k < 3; k++) c[k] = mix(c[k], [0.52, 0.46, 0.33][k], spine * 0.85);
+      }
+
+      alb[i * 4] = clamp(Math.pow(c[0], 1 / 2.2), 0, 1) * 255;
+      alb[i * 4 + 1] = clamp(Math.pow(c[1], 1 / 2.2), 0, 1) * 255;
+      alb[i * 4 + 2] = clamp(Math.pow(c[2], 1 / 2.2), 0, 1) * 255;
+      alb[i * 4 + 3] = 255;
+    }
+  }
+  const nrm = new Uint8Array(N * 4);
+  const w = (a) => ((a % size) + size) % size;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const l = hgt[y * size + w(x - 1)], r = hgt[y * size + w(x + 1)];
+      const d = hgt[w(y - 1) * size + x], up = hgt[w(y + 1) * size + x];
+      const nx = (l - r) * 3.0, ny = (d - up) * 3.0;
+      const inv = 1 / Math.sqrt(nx * nx + ny * ny + 1);
+      const i = (y * size + x) * 4;
+      nrm[i] = (nx * inv * 0.5 + 0.5) * 255;
+      nrm[i + 1] = (ny * inv * 0.5 + 0.5) * 255;
+      nrm[i + 2] = (inv * 0.5 + 0.5) * 255;
+      nrm[i + 3] = 255;
+    }
+  }
+  return { albedo: dataTex(alb, size, size, true), normal: dataTex(nrm, size, size, false) };
 }
 
 /* ── generic desert scrub foliage ──────────────────────────────────────────

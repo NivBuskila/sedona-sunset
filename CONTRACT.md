@@ -54,6 +54,46 @@ so it settles rather than hunts, and queues tier changes rather than applying th
 — a re-mesh stall lands on a machine already struggling, and a long enough stall trips the
 display driver's watchdog.
 
+## Shadow-to-sunlit ratio: defined in encoded sRGB
+
+The "shadowed rock sits at 15–25% of sunlit" target is **mean relative luminance of the
+shadowed region over mean relative luminance of the sunlit region, both read off the
+sRGB-encoded PNG** — not linear radiance, and not HSV value.
+
+The reason is that the figure came from critics measuring real photographs with image
+tools, and a photograph is encoded. Reading the same scene three ways gives 0.072 linear,
+0.30 encoded and 0.45 as an HSV-V ratio; only the encoded number is comparable with where
+the target came from. Quote the space whenever quoting the ratio.
+
+By that definition the current build sits at **0.30 against a target of 0.15–0.25** — the
+fill is too strong, but by less than the linear reading would suggest.
+
+Separately and unambiguously: the away-from-sun fill is **numerically grey**. Measured
+irradiance [0.0294, 0.0300, 0.0330] is a 12% spread, while the brief and every critique
+call for violet. A neutral fill on red rock desaturates it, which is its own defect
+regardless of intensity.
+
+## Vegetation colour, measured from real photographs
+
+| Sample | sat mean | sat p95 | hue median |
+| --- | --- | --- | --- |
+| Real Utah juniper, sunlit crown | **0.631** | 1.000 | **66.8°** |
+| Real juniper, shaded crown | 0.635 | 1.000 | 64.1° |
+| Real foliage macro | 0.505 – 0.604 | 0.89 – 1.00 | 67.8° |
+| Real pinyon-juniper woodland, distant + hazed | 0.374 | 0.778 | 63.9° |
+
+**"Desaturated therefore dusty" is backwards.** A wild Utah juniper on red rock in full sun
+measures 0.63 mean saturation — inside the range usually assumed for a lush garden conifer.
+Chroma is not what makes a desert juniper look desert. **Hue and value are**: real juniper
+sits at 64–68°, a distinctly olive yellow-green, at low value. The dusty look in life comes
+from the grey-blue waxy bloom on the scale leaves shifting hue and dropping value, not from
+crushing chroma. Even distant woodland seen through kilometres of haze holds 0.374.
+
+Two measurement notes. HSV saturation is invariant under a uniform exposure scale, so a
+dark frame does **not** by itself explain low saturation. But an *additive* ambient or haze
+pedestal does crush it — so measure a material's base albedo directly rather than through
+the light rig before rebalancing colour.
+
 ## One weather system
 
 Three systems reference the wind and they must agree. Ownership is split so nobody has to

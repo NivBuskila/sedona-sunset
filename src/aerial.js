@@ -129,11 +129,29 @@ const Y0 = 0;
 const RAY = 0.16;
 const AMB = 0.20;
 const FWD = 0.78;
-/* How far the forward lobe's colour goes toward the raw beam hue. The beam at
-   air mass 6.86 is strongly orange and a haze that colour is a sepia filter;
-   what the aureole actually looks like is a warm white, because most of what
-   reaches the eye from it has been scattered more than once. */
-const SUN_MIX = 0.62;
+
+/* One knob on the whole far-field source, so the near-field column below can be
+   introduced without moving the depth ladder that tools/layers.mjs measures.
+   Splitting the source into a near and a far zone necessarily removes some of
+   the airlight at every distance — about a fifth of a long ray's scattering
+   happens within the first S_ILL metres — so the far source has to come up by
+   the reciprocal of that to leave the far field where it was. Set by
+   measurement, not derived: layers.mjs on sun_gap and juniper. */
+const FAR_GAIN = 1.45;
+
+/* How far the forward lobe's colour goes toward the raw beam hue.
+ *
+ * Was 0.62, on the argument that the aureole is multiply scattered and so
+ * washes toward white. That argument is right about the *aureole* and wrong
+ * about everything else the term feeds, and the cost was that the airlight
+ * converged to milky white at the limit instead of amber, and that near-field
+ * inscatter landed on red rock as grey. A critic put it exactly: the dust was
+ * being lit by a white sun while the rock was lit by a red one, and both come
+ * from the same light. At 1.0 the dust is lit by the beam that is actually in
+ * the scene, hue and all. Note this changes only chroma: jSun is normalised to
+ * unit luminance before the mix, so no level in the far field moves and the
+ * value ladder is untouched. */
+const SUN_MIX = 1.0;
 /* Skylight tint for the dust away from the sun, against a neutral of 1. Barely
    cool — the anti-sun sky at golden hour is not blue, it is grey with the day
    going out of it, and overdoing this is how a desert evening turns into an
@@ -146,8 +164,78 @@ const SKY_TINT = [0.95, 0.98, 1.06];
  * nothing. Real haze toward a low sun is bright across a wide swathe because
  * multiple scattering has spread the lobe, so the broad term carries most of
  * the weight and the narrow one puts a core in it. */
-const G_BROAD = 0.35, W_BROAD = 0.74;
-const G_NARROW = 0.80, W_NARROW = 0.26;
+/* Weights moved from 0.74/0.26 toward the narrow term. The old pair was so
+   broad that the lobe only fell from 1.00 to 0.61 over the first 26 degrees off
+   the sun, which is flat enough that two ridges either side of the gap measured
+   the same B/G and the frame commissioned for a sunbeam had no aureole in it.
+   0.58/0.42 at g = 0.85 falls 1.00 -> 0.66 -> 0.48 over the same span. The
+   broad term still carries most of the wide-angle far field, which is what the
+   depth ladder is made of away from the sun. */
+const G_BROAD = 0.35, W_BROAD = 0.58;
+const G_NARROW = 0.85, W_NARROW = 0.42;
+
+/* ---- the near-field column -------------------------------------------------
+ *
+ * The model above is a uniformly lit atmosphere: one source function per
+ * direction, applied at every distance in proportion to optical depth. That is
+ * correct for the far field and wrong close in, and the error was found the
+ * hard way — as a rock colour regression attributed to lighting. At 46 m the
+ * uniform model delivers about 7% of the pixel as inscatter, and because the
+ * source was near-neutral (see SUN_MIX above) and BETA_R weights blue, what
+ * landed on red rock was grey light concentrated in the channel red rock has
+ * least of. Saturation being (max - min)/max, that desaturates it, and because
+ * the lift is a fixed radiance it bit harder as surfaces darkened: shaded rock
+ * lost 0.16 of saturation against lit rock's 0.06.
+ *
+ * The fix is not in the density. Inscatter goes as J*(1 - e^-Bd), which is very
+ * nearly J*B*d at both 46 m and 550 m, so scaling B moves the near and far
+ * fields together: halving it and restoring the far field with J buys 16% at
+ * 46 m and costs 22% at the back. Worked twice, arithmetically, before writing
+ * any of this.
+ *
+ * What does separate them is that the air is not uniformly lit. The camera
+ * stands in a wash between banks with the sun eight degrees up; the air in the
+ * first tens of metres is inside a corridor, lit only through the aperture
+ * between the crests and by bounce off the walls, while the air out around the
+ * distant buttes stands in the open beam under the whole dome. So the source
+ * function ramps:
+ *
+ *     ill(s) = e^(-s/S) * near  +  (1 - e^(-s/S)) * far
+ *
+ * and the inscatter integral stays closed-form. With k = B/(B + 1/S), which is
+ * distance-independent and is exactly the share of any ray's scattering that
+ * happens inside the near zone:
+ *
+ *     Bnear = k * (1 - e^-(tau + d/S))
+ *     Bfar  = (1 - e^-tau) - Bnear
+ *
+ * At 46 m that puts 87% of the (already reduced) inscatter under the near
+ * source, and at 550 m only 30%, which is the separation the density could not
+ * give. The far field loses about a fifth, restored by FAR_GAIN above.
+ *
+ * The near source is also the right colour for the first time. A corridor of
+ * sunlit red sandstone bounces intensely warm light into the air at its foot,
+ * and the aperture overhead is the warm low sky. Light of roughly the rock's
+ * own hue does almost no damage to the rock's saturation, which is why real
+ * canyons do not go grey at 40 m: adding 7% neutral to a rock at 0.686
+ * saturation costs 0.046, and adding the same luminance warm costs 0.007. */
+const S_ILL = 150;
+
+/* Near-zone source level, in units of FOG's luminance. Set so the inscatter at
+   46 m comes to about a third of what the uniform model delivered. */
+const NEAR_LVL = 0.061;
+
+/* Reflectance hue of the corridor walls, from CONTRACT's measured B/G band for
+   golden-hour Sedona rock, mid-band. Not a free tint: it is what the near
+   source is bouncing off. */
+const WALL_ALBEDO = [1.0, 0.60, 0.37];
+/* Share of the near zone's illumination that arrives off the walls rather than
+   straight down through the aperture. */
+const WALL_SHARE = 0.55;
+/* The near air still forward-scatters whatever beam reaches it, so the near
+   source is not isotropic either — without this the haze in front of you does
+   not brighten when you turn into the sun. */
+const NEAR_FWD = 0.9;
 
 function hg(g, c) {
   const g2 = g * g;
@@ -159,6 +247,43 @@ const f = (x, d = 6) => {
   return s.includes('.') ? s : s + '.0';
 };
 const v3 = (a) => `vec3(${f(a[0])}, ${f(a[1])}, ${f(a[2])})`;
+
+/**
+ * The source functions, derived once from the light and the fog colour.
+ *
+ * Shared by the shader patch and by the CPU mirror below so the two cannot
+ * drift — System 4's builder drives the mirror to predict frame colour, and a
+ * mirror that has fallen behind the shader is worse than no mirror.
+ */
+function sources(sun, fogColor) {
+  const d = new THREE.Vector3().subVectors(sun.position, sun.target.position).normalize();
+  const c = sun.color;
+  const peak = Math.max(c.r, c.g, c.b) || 1;
+  const tint = [c.r / peak, c.g / peak, c.b / peak];
+  const fog = [fogColor.r, fogColor.g, fogColor.b];
+  const lum = (v) => 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+  const L = lum(fog);
+  const tl = lum(tint) || 1;
+
+  const jRay = [0, 1, 2].map(() => L * RAY * FAR_GAIN);
+  const jSky = SKY_TINT.map((x) => L * x * FAR_GAIN);
+  /* Unit-luminance beam hue, then mixed toward neutral by SUN_MIX. At
+     SUN_MIX = 1 this is the beam's own chroma at the beam's own luminance
+     share, which is what makes the limit amber rather than milky. */
+  const jSun = tint.map((x) => L * (1 + (x / tl - 1) * SUN_MIX) * FAR_GAIN);
+
+  /* The near zone's illuminant: bounce off sunlit walls, plus the low sky
+     through the aperture. Normalised to unit luminance so NEAR_LVL is a level
+     and this is purely a hue. */
+  const wall = tint.map((x, i) => x * WALL_ALBEDO[i]);
+  const wn = wall.map((x) => x / (lum(wall) || 1));
+  const sn = fog.map((x) => x / (L || 1));
+  const mix = wn.map((x, i) => WALL_SHARE * x + (1 - WALL_SHARE) * sn[i]);
+  const mn = lum(mix) || 1;
+  const jNear = mix.map((x) => L * NEAR_LVL * x / mn);
+
+  return { d, tint, L, jRay, jSky, jSun, jNear };
+}
 
 let installed = false;
 
@@ -188,21 +313,7 @@ export function installAerial(sun, fogColor) {
   /* Direction *to* the sun, in world space, read from the light rather than
      from a constant in sky.js — System 4 is still moving it and this way the
      air follows wherever it lands. */
-  const d = new THREE.Vector3().subVectors(sun.position, sun.target.position).normalize();
-
-  /* The beam's hue, normalised to unit maximum so it is a tint and not a level.
-     The level is FOG's; mixing a level in here is how the last haze ended up
-     brighter than every rock in the scene. */
-  const c = sun.color;
-  const peak = Math.max(c.r, c.g, c.b) || 1;
-  const tint = [c.r / peak, c.g / peak, c.b / peak];
-
-  const fog = [fogColor.r, fogColor.g, fogColor.b];
-  const L = 0.2126 * fog[0] + 0.7152 * fog[1] + 0.0722 * fog[2];
-  const tl = 0.2126 * tint[0] + 0.7152 * tint[1] + 0.0722 * tint[2] || 1;
-  const jRay = [L * RAY, L * RAY, L * RAY];
-  const jSky = SKY_TINT.map((x) => L * x);
-  const jSun = tint.map((x) => L * (1 + (x / tl - 1) * SUN_MIX));
+  const { d, tint, L, jRay, jSky, jSun, jNear } = sources(sun, fogColor);
 
   /* Normalise each lobe to its own forward value, so the pair spans 0..1 and
      AMB/FWD are readable as "airlight at the anti-sun" and "extra at the sun"
@@ -212,10 +323,10 @@ export function installAerial(sun, fogColor) {
   Object.assign(AERIAL_DIAG, {
     installed: true,
     sun: [d.x, d.y, d.z],
-    tint, fogL: L, jRay, jSky, jSun,
+    tint, fogL: L, jRay, jSky, jSun, jNear,
     betaR: BETA_R.map((x) => x * R_GAIN),
     betaM: BETA_M.map((x) => x * M_GAIN),
-    H: H_DUST,
+    H: H_DUST, sIll: S_ILL, farGain: FAR_GAIN,
   });
 
   const PARS = /* glsl */`
@@ -235,12 +346,15 @@ export function installAerial(sun, fogColor) {
   const vec3  AER_JRAY  = ${v3(jRay)};
   const vec3  AER_JSKY  = ${v3(jSky)};
   const vec3  AER_JSUN  = ${v3(jSun)};
+  const vec3  AER_JNEAR = ${v3(jNear)};
   const vec3  AER_BETAR = ${v3(BETA_R.map((x) => x * R_GAIN))};
   const vec3  AER_BETAM = ${v3(BETA_M.map((x) => x * M_GAIN))};
   const float AER_H     = ${f(H_DUST, 2)};
   const float AER_Y0    = ${f(Y0, 2)};
   const float AER_AMB   = ${f(AMB)};
   const float AER_FWD   = ${f(FWD)};
+  const float AER_SILL  = ${f(S_ILL, 2)};
+  const float AER_NFWD  = ${f(NEAR_FWD)};
 
   float aerHG(float g, float c) {
     float g2 = g * g;
@@ -297,7 +411,20 @@ export function installAerial(sun, fogColor) {
        is what is left and distant high rock goes blue. */
     vec3 J = (tauR * jR + tauM * jM) / max(tau, vec3(1e-6));
 
-    return color * T + J * (1.0 - T);
+    /* Split the column by how well lit the air along it is. kN is the share of
+       this ray's scattering that happens inside the first AER_SILL metres and
+       is independent of distance; Bn is that share actually delivered to the
+       eye after its own extinction. */
+    float ds = dist / AER_SILL;
+    vec3 kN = tau / (tau + vec3(ds));
+    vec3 Bn = kN * (1.0 - exp(-(tau + vec3(ds))));
+    vec3 Bf = max(vec3(0.0), (1.0 - T) - Bn);
+
+    /* The near zone is lit by wall bounce and the aperture, and still forward-
+       scatters whatever beam reaches it. */
+    vec3 jN = AER_JNEAR * (1.0 + AER_NFWD * lobe);
+
+    return color * T + jN * Bn + J * Bf;
   }
 #endif`;
 
@@ -328,16 +455,7 @@ export function installAerial(sun, fogColor) {
 
 /** The model on the CPU, for tools and for sanity-checking the shader. */
 export function aerialModel(sun, fogColor, density = 0.0019) {
-  const d = new THREE.Vector3().subVectors(sun.position, sun.target.position).normalize();
-  const c = sun.color;
-  const peak = Math.max(c.r, c.g, c.b) || 1;
-  const tint = [c.r / peak, c.g / peak, c.b / peak];
-  const fog = [fogColor.r, fogColor.g, fogColor.b];
-  const L = 0.2126 * fog[0] + 0.7152 * fog[1] + 0.0722 * fog[2];
-  const tl = 0.2126 * tint[0] + 0.7152 * tint[1] + 0.0722 * tint[2] || 1;
-  const jRay = [L * RAY, L * RAY, L * RAY];
-  const jSky = SKY_TINT.map((x) => L * x);
-  const jSun = tint.map((x) => L * (1 + (x / tl - 1) * SUN_MIX));
+  const { d, jRay, jSky, jSun, jNear } = sources(sun, fogColor);
   const nB = 1 / hg(G_BROAD, 1), nN = 1 / hg(G_NARROW, 1);
   return function apply(color, cam, world) {
     const rx = world[0] - cam[0], ry = world[1] - cam[1], rz = world[2] - cam[2];
@@ -348,6 +466,7 @@ export function aerialModel(sun, fogColor, density = 0.0019) {
     const col = dist * Math.exp(-(cam[1] - Y0) / H_DUST) * shape;
     const ca = (rx * d.x + ry * d.y + rz * d.z) / dist;
     const lobe = W_BROAD * hg(G_BROAD, ca) * nB + W_NARROW * hg(G_NARROW, ca) * nN;
+    const ds = dist / S_ILL;
     const out = [0, 0, 0];
     for (let i = 0; i < 3; i++) {
       const tR = BETA_R[i] * R_GAIN * density * dist;
@@ -355,7 +474,9 @@ export function aerialModel(sun, fogColor, density = 0.0019) {
       const t = tR + tM, T = Math.exp(-t);
       const jM = jSky[i] * AMB + jSun[i] * FWD * lobe;
       const J = (tR * jRay[i] + tM * jM) / Math.max(1e-6, t);
-      out[i] = color[i] * T + J * (1 - T);
+      const Bn = (t / (t + ds)) * (1 - Math.exp(-(t + ds)));
+      const Bf = Math.max(0, (1 - T) - Bn);
+      out[i] = color[i] * T + jNear[i] * (1 + NEAR_FWD * lobe) * Bn + J * Bf;
     }
     return out;
   };

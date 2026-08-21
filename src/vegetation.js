@@ -67,10 +67,11 @@ function addSun(g) {
 
 /* ── near-field plant shapes ───────────────────────────────────────────────*/
 
-/** A tuft of dry bunch grass — crossed cards, unit height. */
+/** A tuft of dead bunch grass — crossed cards, unit height, drawing from the
+    four-cell atlas so neighbouring tufts are not the same silhouette. */
 function grassTuftGeo(seed) {
   const rand = rng(seed);
-  return addWhite(cardGeometry((arr) => cardTuft(0, 0, 0, 0.62, 1.0, 3, rand, arr)));
+  return addWhite(cardGeometry((arr) => cardTuft(0, 0, 0, 0.62, 1.0, 4, rand, arr, 4, 1)));
 }
 
 /** A low grey-green shrub. Same trick: cards with near-vertical normals. */
@@ -283,37 +284,48 @@ function clusterField(x, z) {
   return clamp(smoothstep(0.30, 0.78, gully) * 0.62 + smoothstep(0.36, 0.80, patch) * 0.55, 0, 1);
 }
 
-export function buildVegetation(path, terrain, rocks) {
-  const out = [];
-  const folMap = foliageTex();
-  const grassMap = grassTex();
-  const scrubMap = scrubTex();
+/**
+ * How far a point is from anywhere the camera can stand, which is the only
+ * distance that decides how much detail a plant needs.
+ *
+ * Lateral offset from the centreline alone is not that distance, and the
+ * difference is what put a twenty-triangle untextured blob twenty-four metres
+ * from three of the eight viewpoints: the far-field scatter is an annulus
+ * centred up-wash, the corridor runs through the middle of it, and its only
+ * proximity test was `|u| > 22`. Twenty-two metres is point-blank. Past the
+ * ends of the walk the lateral offset is meaningless too — a point directly
+ * up-wash at z = -600 has u ≈ 0 and is three hundred metres away — so the
+ * along-track overrun is folded in.
+ */
+function corridorDist(path, x, z, q) {
+  const qq = path.atZ(z, q);
+  const u = (x - qq.x) * Math.cos(qq.th);
+  const over = qq.s < 0 ? -qq.s : (qq.s > path.length ? qq.s - path.length : 0);
+  return Math.hypot(u, over);
+}
 
-  const obj = new THREE.Object3D();
-  const col = new THREE.Color();
+/* Where the blob stops being defensible. A far blob is a faceted hull with no
+   texture; its silhouette has six or eight straight segments, so it only passes
+   as a tree while the whole plant is around twenty pixels tall — at 900 lines
+   and a 58° field that is about a hundred and fifty metres for a four-metre
+   tree. Inside that, a plant gets the seven-card treatment instead, and the
+   cards are the cheaper of the two anyway: fourteen triangles against twenty. */
+const CARD_RANGE = 150;
+/* The near walls stand up to about 77 m off the centreline (measured with
+   tools/vegprobe.mjs). Inside that footprint the bare height field is buried
+   under rock, so anything the far-field scatter plants there is embedded in a
+   cliff — which is what "floating in front of the cliff" was. The rock-surface
+   harvest owns that band; it plants on the actual rock. */
+const WALL_REACH = 86;
 
-  function instance(geom, mat, list, name, shadow) {
-    if (!list.length) return null;
-    const im = new THREE.InstancedMesh(geom, mat, list.length);
-    im.castShadow = !!shadow;
-    im.receiveShadow = true;
-    im.name = name;
-    list.forEach((o, i) => {
-      obj.position.set(o.x, o.y, o.z);
-      obj.rotation.set(0, o.rot || 0, 0);
-      obj.scale.set(o.sx, o.sy, o.sz);
-      obj.updateMatrix();
-      im.setMatrixAt(i, obj.matrix);
-      col.setRGB(o.r, o.g, o.b);
-      im.setColorAt(i, col);
-    });
-    im.instanceMatrix.needsUpdate = true;
-    if (im.instanceColor) im.instanceColor.needsUpdate = true;
-    im.computeBoundingSphere();
-    out.push(im);
-    return im;
-  }
-
+/**
+ * Where everything goes. Split out from `buildVegetation` because it is pure
+ * arithmetic over the path, the height field and the rock meshes — no textures,
+ * no materials, no canvas — which means it can be run and audited under plain
+ * node in a second rather than by waiting six minutes for a render. The stray
+ * near-camera blob was found this way after three critics found it by eye.
+ */
+export function planVegetation(path, terrain, rocks) {
   /* ── near the wash ───────────────────────────────────────────────────────
      Sparse by construction: a candidate grid at two-metre spacing over a
      hundred and eighty metres of corridor, with acceptance rates in the low
@@ -370,13 +382,121 @@ export function buildVegetation(path, terrain, rocks) {
     }
   }
 
+  /* ── the slopes ──────────────────────────────────────────────────────────*/
+  const far = [];
+  const mid = [];
+  const rr = rng(717273);
+
+  /* Harvest upward-facing points off the rock meshes. */
+  const p3 = new THREE.Vector3(), n3 = new THREE.Vector3();
+  const nm = new THREE.Matrix3();
+  const qtmp = q2;
+  for (const m of rocks) {
+    const g = m.geometry;
+    if (!g || !g.attributes.position || !g.attributes.normal) continue;
+    m.updateMatrixWorld(true);
+    nm.getNormalMatrix(m.matrixWorld);
+    const pa = g.attributes.position, na = g.attributes.normal;
+    const stride = Math.max(1, Math.floor(pa.count / 26000));
+    for (let i = 0; i < pa.count; i += stride) {
+      p3.fromBufferAttribute(pa, i).applyMatrix4(m.matrixWorld);
+      n3.fromBufferAttribute(na, i).applyMatrix3(nm).normalize();
+      if (p3.y < 2.0 || p3.y > 58) continue;
+      if (p3.z > 30 || p3.z < -330) continue;
+      const du = corridorDist(path, p3.x, p3.z, qtmp);
+      if (du < 15 || du > 210) continue;
+      /* Slope gate. A bench is a bench; a wall face keeps nothing. */
+      const up = n3.y;
+      if (up < 0.36) continue;
+      const shelf = smoothstep(0.36, 0.80, up);
+      /* Higher is drier and more exposed. */
+      const alt = 1 - smoothstep(14, 48, p3.y);
+      const cl = clusterField(p3.x, p3.z);
+      const pAcc = shelf * (0.10 + 0.90 * cl) * (0.25 + 0.75 * alt) * 0.060;
+      if (rr() > pAcc) continue;
+      const sz = 0.8 + rr() * 1.9;
+      const dark = 0.72 + rr() * 0.5;
+      const target = du < CARD_RANGE ? mid : far;
+      target.push({
+        x: p3.x, y: p3.y - 0.12, z: p3.z, rot: rr() * TAU,
+        sx: sz * (0.8 + rr() * 0.4), sy: sz * (0.9 + rr() * 0.7), sz: sz * (0.8 + rr() * 0.4),
+        r: dark, g: dark, b: dark,
+      });
+    }
+  }
+
+  /* And on the far height field, which the buttes do not cover. */
+  for (let i = 0; i < 30000; i++) {
+    const a = rr() * TAU;
+    const rad = 60 + Math.pow(rr(), 0.7) * 520;
+    const x = Math.sin(a) * rad;
+    const z = -130 + Math.cos(a) * rad;
+    if (z > 20 || z < -700) continue;
+    const du = corridorDist(path, x, z, qtmp);
+    /* Alongside the walked corridor the walls own the ground; this scatter is
+       only for the open height field beyond them and up-wash past their end. */
+    if (du < (z > -340 ? WALL_REACH : 22)) continue;
+    /* Cluster and dice first: the height field is by far the most expensive
+       thing in this loop and ninety-odd percent of candidates are rejected
+       without it. */
+    const cl = clusterField(x, z);
+    if (rr() > (0.06 + 0.94 * cl) * 0.18) continue;
+    const y = terrain.heightAt(x, z);
+    if (y > 60) continue;
+    const e = 1.4;
+    const gx = (terrain.heightAt(x + e, z) - terrain.heightAt(x - e, z)) / (2 * e);
+    const gz = (terrain.heightAt(x, z + e) - terrain.heightAt(x, z - e)) / (2 * e);
+    if (Math.hypot(gx, gz) > 1.15) continue;
+    const alt = 1 - smoothstep(16, 50, y);
+    if (rr() > 0.2 + 0.8 * alt) continue;
+    const sz = 1.1 + rr() * 2.6;
+    const dark = 0.72 + rr() * 0.5;
+    (du < CARD_RANGE ? mid : far).push({
+      x, y: y - 0.1, z, rot: rr() * TAU,
+      sx: sz * (0.8 + rr() * 0.4), sy: sz * (0.9 + rr() * 0.7), sz: sz * (0.8 + rr() * 0.4),
+      r: dark, g: dark, b: dark,
+    });
+  }
+
+  return { grass, shrub, pear, agave, mid, far };
+}
+
+export function buildVegetation(path, terrain, rocks) {
+  const out = [];
+  const { grass, shrub, pear, agave, mid, far } = planVegetation(path, terrain, rocks);
+
+  const obj = new THREE.Object3D();
+  const col = new THREE.Color();
+
+  function instance(geom, mat, list, name, shadow) {
+    if (!list.length) return null;
+    const im = new THREE.InstancedMesh(geom, mat, list.length);
+    im.castShadow = !!shadow;
+    im.receiveShadow = true;
+    im.name = name;
+    list.forEach((o, i) => {
+      obj.position.set(o.x, o.y, o.z);
+      obj.rotation.set(0, o.rot || 0, 0);
+      obj.scale.set(o.sx, o.sy, o.sz);
+      obj.updateMatrix();
+      im.setMatrixAt(i, obj.matrix);
+      col.setRGB(o.r, o.g, o.b);
+      im.setColorAt(i, col);
+    });
+    im.instanceMatrix.needsUpdate = true;
+    if (im.instanceColor) im.instanceColor.needsUpdate = true;
+    im.computeBoundingSphere();
+    out.push(im);
+    return im;
+  }
+
   const grassMat = new THREE.MeshStandardMaterial({
-    map: grassMap, alphaTest: 0.40, side: THREE.DoubleSide,
+    map: grassTex(), alphaTest: 0.40, side: THREE.DoubleSide,
     roughness: 0.95, metalness: 0, vertexColors: true,
     color: new THREE.Color(0.90, 0.85, 0.78), dithering: true,
   });
   const scrubMat = new THREE.MeshStandardMaterial({
-    map: scrubMap, alphaTest: 0.40, side: THREE.DoubleSide,
+    map: scrubTex(), alphaTest: 0.40, side: THREE.DoubleSide,
     roughness: 0.92, metalness: 0, vertexColors: true,
     color: new THREE.Color(0.80, 0.84, 0.72), dithering: true,
   });
@@ -400,7 +520,7 @@ export function buildVegetation(path, terrain, rocks) {
 
   /* ── mid-distance junipers on the terraces and lower slopes ──────────────
      Close enough that a blob would read as a blob, far enough that a real tree
-     is not affordable: eight foliage cards on the same texture as the hero. */
+     is not affordable: seven foliage cards on the same texture as the hero. */
   const midGeo = addSun(addWhite(cardGeometry((arr) => {
     const r = rng(2002);
     for (let i = 0; i < 7; i++) {
@@ -409,7 +529,7 @@ export function buildVegetation(path, terrain, rocks) {
                0.70, 0.60, 1, r, arr, 2, 2);
     }
   })));
-  const midMat = makeFoliageMaterial(folMap);
+  const midMat = makeFoliageMaterial(foliageTex());
   midMat.vertexColors = true;
   /* Much darker than the hero's foliage, and deliberately so. These stand in
      for whole trees, and a whole tree seen from forty metres is a shadowed mass
@@ -418,84 +538,6 @@ export function buildVegetation(path, terrain, rocks) {
      white-speckled clumps that read as patches of snow on the cliff. */
   midMat.color = new THREE.Color(0.38, 0.42, 0.34);
   midMat.userData.uniforms.uTransAmt.value = 0.30;
-
-  /* ── the slopes ──────────────────────────────────────────────────────────*/
-  const far = [];
-  const mid = [];
-  const rr = rng(717273);
-
-  /* Harvest upward-facing points off the rock meshes. */
-  const p3 = new THREE.Vector3(), n3 = new THREE.Vector3();
-  const nm = new THREE.Matrix3();
-  const qtmp = q2;
-  for (const m of rocks) {
-    const g = m.geometry;
-    if (!g || !g.attributes.position || !g.attributes.normal) continue;
-    m.updateMatrixWorld(true);
-    nm.getNormalMatrix(m.matrixWorld);
-    const pa = g.attributes.position, na = g.attributes.normal;
-    const stride = Math.max(1, Math.floor(pa.count / 26000));
-    for (let i = 0; i < pa.count; i += stride) {
-      p3.fromBufferAttribute(pa, i).applyMatrix4(m.matrixWorld);
-      n3.fromBufferAttribute(na, i).applyMatrix3(nm).normalize();
-      if (p3.y < 2.0 || p3.y > 58) continue;
-      if (p3.z > 30 || p3.z < -330) continue;
-      const qz = path.atZ(p3.z, qtmp);
-      const du = Math.abs((p3.x - qz.x) * Math.cos(qz.th));
-      if (du < 15 || du > 210) continue;
-      /* Slope gate. A bench is a bench; a wall face keeps nothing. */
-      const up = n3.y;
-      if (up < 0.36) continue;
-      const shelf = smoothstep(0.36, 0.80, up);
-      /* Higher is drier and more exposed. */
-      const alt = 1 - smoothstep(14, 48, p3.y);
-      const cl = clusterField(p3.x, p3.z);
-      const pAcc = shelf * (0.10 + 0.90 * cl) * (0.25 + 0.75 * alt) * 0.060;
-      if (rr() > pAcc) continue;
-      const sz = 0.8 + rr() * 1.9;
-      const dark = 0.72 + rr() * 0.5;
-      /* Anything on the near walls is close enough that a twenty-triangle blob
-         would read as a blob, so it gets cards instead. */
-      const target = du < 42 ? mid : far;
-      target.push({
-        x: p3.x, y: p3.y - 0.12, z: p3.z, rot: rr() * TAU,
-        sx: sz * (0.8 + rr() * 0.4), sy: sz * (0.9 + rr() * 0.7), sz: sz * (0.8 + rr() * 0.4),
-        r: dark, g: dark, b: dark,
-      });
-    }
-  }
-
-  /* And on the far height field, which the buttes do not cover. */
-  for (let i = 0; i < 30000; i++) {
-    const a = rr() * TAU;
-    const rad = 60 + Math.pow(rr(), 0.7) * 520;
-    const x = Math.sin(a) * rad;
-    const z = -130 + Math.cos(a) * rad;
-    if (z > 20 || z < -700) continue;
-    const qz = path.atZ(z, qtmp);
-    const du = Math.abs((x - qz.x) * Math.cos(qz.th));
-    if (du < 22) continue;
-    /* Cluster and dice first: the height field is by far the most expensive
-       thing in this loop and ninety-odd percent of candidates are rejected
-       without it. */
-    const cl = clusterField(x, z);
-    if (rr() > (0.06 + 0.94 * cl) * 0.18) continue;
-    const y = terrain.heightAt(x, z);
-    if (y > 60) continue;
-    const e = 1.4;
-    const gx = (terrain.heightAt(x + e, z) - terrain.heightAt(x - e, z)) / (2 * e);
-    const gz = (terrain.heightAt(x, z + e) - terrain.heightAt(x, z - e)) / (2 * e);
-    if (Math.hypot(gx, gz) > 1.15) continue;
-    const alt = 1 - smoothstep(16, 50, y);
-    if (rr() > 0.2 + 0.8 * alt) continue;
-    const sz = 1.1 + rr() * 2.6;
-    const dark = 0.72 + rr() * 0.5;
-    far.push({
-      x, y: y - 0.1, z, rot: rr() * TAU,
-      sx: sz * (0.8 + rr() * 0.4), sy: sz * (0.9 + rr() * 0.7), sz: sz * (0.8 + rr() * 0.4),
-      r: dark, g: dark, b: dark,
-    });
-  }
 
   /* Dark, desaturated, slightly blue-shifted green. A distant juniper is nearly
      black against sunlit rock; the haze does the rest of the work. */

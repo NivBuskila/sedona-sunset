@@ -407,8 +407,51 @@ export function patchShadowChunk() {
   THREE.ShaderChunk.shadowmap_pars_fragment =
     src.replace('float getShadow(', 'float getShadowCascade(') + /* glsl */`
 #ifdef USE_SHADOWMAP
+  /* Receiver-plane depth bias. A constant bias cannot work at this sun
+     elevation and the arithmetic says so: the light looks down at eight
+     degrees, so one texel of the coarse map — 50.8 mm across the ground —
+     steps 50.8 / sin(8) = 365 mm along a horizontal floor and therefore
+     361 mm in depth. The bias was 280 mm, and the soft-shadow kernel samples
+     three and a half texels either side, so the depth the comparison needed to
+     forgive was nearer 1.6 m. The wash floor consequently shadowed *itself*
+     everywhere: measured on sys4c, 0.2 to 3 percent of the floor was catching
+     sun where the provisional rig had 19 to 74, and even its brightest decile
+     sat at the predicted fully-shaded level. Not one part of it was lit.
+
+     Raising the constant instead is the trap. The offset a horizontal floor
+     needs at eight degrees is seven times its texel, and applying that
+     everywhere deletes the first metre of every cast shadow — which is the
+     whole of a pebble's, and System 1 spent four rounds putting pebble shadows
+     in. The depth slope is not a constant, so the bias must not be either.
+
+     So measure the slope instead of guessing it. dFdx/dFdy of the shadow
+     coordinate give the receiver plane in light space directly; inverting the
+     2x2 uv Jacobian turns them into depth-per-texel, which is exactly the
+     quantity the comparison needs to forgive. It goes to zero on a face square
+     to the beam and rises where the geometry actually is grazing, so a pebble
+     keeps its shadow and the floor stops eating its own. Isidoro 2006; the
+     cost is four derivatives and a 2x2 solve per light. */
+  float rpBias( vec3 p, vec2 mapSize, float radius ) {
+    vec2 duvdx = dFdx( p.xy ), duvdy = dFdy( p.xy );
+    float det = duvdx.x * duvdy.y - duvdx.y * duvdy.x;
+    /* Degenerate where the projected quad collapses — a silhouette edge, or a
+       face turned exactly edge-on to the light. No plane to fit, so no bias. */
+    if ( abs( det ) < 1e-14 ) return 0.0;
+    float dzdx = dFdx( p.z ), dzdy = dFdy( p.z );
+    vec2 g = vec2( dzdx * duvdy.y - dzdy * duvdx.y,
+                   dzdy * duvdx.x - dzdx * duvdy.x ) / det;
+    vec2 texel = ( radius + 1.0 ) / mapSize;
+    /* Capped, because the derivative estimate is meaningless across a
+       silhouette and an uncapped spike there punches a lit hole through a
+       shadow. ${(4.0 / DEPTH_RANGE).toFixed(8)} is four metres of this
+       frustum's depth, well past any real slope and well short of the
+       thickness of anything that casts. */
+    return min( abs( g.x ) * texel.x + abs( g.y ) * texel.y, ${(4.0 / DEPTH_RANGE).toFixed(8)} );
+  }
+
   float getShadow( sampler2D shadowMap, vec2 shadowMapSize, float shadowIntensity, float shadowBias, float shadowRadius, vec4 shadowCoord ) {
-    float s = getShadowCascade( shadowMap, shadowMapSize, shadowIntensity, shadowBias, shadowRadius, shadowCoord );
+    float b = shadowBias - rpBias( shadowCoord.xyz / shadowCoord.w, shadowMapSize, shadowRadius );
+    float s = getShadowCascade( shadowMap, shadowMapSize, shadowIntensity, b, shadowRadius, shadowCoord );
     #if NUM_DIR_LIGHT_SHADOWS > 1
       vec4 nc = vDirectionalShadowCoord[ 1 ];
       vec3 np = nc.xyz / nc.w;
@@ -417,8 +460,9 @@ export function patchShadowChunk() {
                    * step( 0.0, np.z ) * step( np.z, 1.0 );
       if ( inNear > 0.0 ) {
         DirectionalLightShadow n = directionalLightShadows[ 1 ];
+        float bn = n.shadowBias - rpBias( np, n.shadowMapSize, n.shadowRadius );
         float sn = getShadowCascade( directionalShadowMap[ 1 ], n.shadowMapSize,
-          n.shadowIntensity, n.shadowBias, n.shadowRadius, nc );
+          n.shadowIntensity, bn, n.shadowRadius, nc );
         s = mix( s, min( s, sn ), inNear );
       }
     #endif
@@ -450,11 +494,19 @@ export function buildLights() {
      is the loudest "this is a renderer" tell in a long raking shot. three's PCF
      kernel at 3.5 texels is 0.16 m here — short of the truth, but an order of
      magnitude closer than one texel. */
-  configureCascade(sun, FAR_BOX, 4096, 0.28, 0.028, 3.5);
+  /* Both constants come down hard now that rpBias measures the depth slope
+     instead of the rig guessing a worst case for it. 0.28 m and 0.028 m were
+     sized for a horizontal floor at eight degrees and were still three times
+     short of it, while being far more than a face square to the beam needs —
+     the worst of both, which is what a constant bias is at a raking sun. What
+     is left here covers only depth quantisation and the wobble a normal map
+     puts on the geometric normal, so a pebble now keeps its shadow to within
+     a few centimetres of its base rather than losing the first 30 cm. */
+  configureCascade(sun, FAR_BOX, 4096, 0.06, 0.010, 3.5);
   sun.name = 'sun';
 
   const sunNear = new THREE.DirectionalLight(0xffffff, 0);
-  configureCascade(sunNear, NEAR_BOX, 2048, 0.06, 0.011, 1.7);
+  configureCascade(sunNear, NEAR_BOX, 2048, 0.02, 0.005, 1.7);
   sunNear.name = 'sunNear';
 
   /* The fill: the SH9 irradiance of sky, wash floor and opposite wall. This is

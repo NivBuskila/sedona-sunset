@@ -151,7 +151,7 @@ function makeProfile(seed, nLobes, nDead) {
 /* ── one limb ──────────────────────────────────────────────────────────────
  * A swept fluted tube along a polyline, with a parallel-transported frame so it
  * does not corkscrew where the spine bends. */
-function limbGeometry(pts, radii, seg, prof, twistRate, s0, flute, deadBase = 0) {
+function limbGeometry(pts, radii, seg, prof, twistRate, s0, flute, deadBase = 0, shred = 0) {
   const n = pts.length;
   const tan = new Array(n);
   for (let i = 0; i < n; i++) {
@@ -190,7 +190,19 @@ function limbGeometry(pts, radii, seg, prof, twistRate, s0, flute, deadBase = 0)
       const th = (j % seg) / seg * TAU;
       prof.eval(th + twistRate * (s0 + si), s0 + si, o);
       const shape = (o.r - prof.lo) / prof.span;      // 0 in a groove, 1 on a ridge
-      const r = radii[i] * (1 - flute * 0.5 + flute * shape + 0.035 * o.dead);
+      /* Shredding. Juniper bark separates into vertical strings that lift away
+         at their edges, so the outline of a trunk is furred rather than smooth —
+         and a smooth outline was the giveaway that the bark was a texture on a
+         cylinder rather than a surface. Integer harmonics in theta, so the tile
+         closes at the seam without a discontinuity, and low amplitude: a string
+         stands a few millimetres off a 340 mm bole. Suppressed on the deadwood,
+         which has lost its bark and weathered smooth. */
+      const bristle = shred === 0 ? 0 : (
+        Math.sin(th * 23 + (s0 + si) * 7.1) * 0.5 +
+        Math.sin(th * 37 - (s0 + si) * 11.3) * 0.3 +
+        Math.sin(th * 13 + (s0 + si) * 19.0) * 0.2) * (1 - 0.85 * o.dead);
+      const r = radii[i] * (1 - flute * 0.5 + flute * shape + 0.035 * o.dead
+                            + shred * bristle);
       const k = i * cols + j;
       const c = Math.cos(th), sn = Math.sin(th);
       pos[k * 3] = pts[i].x + nor[i].x * c * r + bin[i].x * sn * r;
@@ -248,12 +260,21 @@ function limbGeometry(pts, radii, seg, prof, twistRate, s0, flute, deadBase = 0)
 
 /* ── the tree ──────────────────────────────────────────────────────────────*/
 
-const SEG_BY_DEPTH = [72, 26, 16, 10, 7];
+/* Radial segments. The lowest two were 10 and 7, which is a decagon and a
+   heptagon — enough to be round at a distance, but these are the branches that
+   come nearest the camera and at seven segments a limb has a 51° facet, reads
+   as a flat ribbon with a bright top and an abruptly dark underside, and has a
+   dead straight silhouette. */
+const SEG_BY_DEPTH = [72, 30, 20, 14, 10];
 /* Peak-to-trough as a fraction of the mean radius. Twenty percent on the bole
    is measured off photographs of old Utah junipers, not chosen for effect; the
    grooves between the ridges are deep enough to hold shadow all day and that is
    most of what gives the trunk its form at a distance. */
 const FLUTE_BY_DEPTH = [0.48, 0.36, 0.24, 0.13, 0.07];
+/* Radial amplitude of the bark shredding, as a fraction of radius. Only the
+   collar and the stems carry it; on a two-centimetre twig a lifted string would
+   be larger than the twig. */
+const SHRED_BY_DEPTH = [0.016, 0.011, 0, 0, 0];
 
 function buildTree(seed) {
   const rand = rng(seed);
@@ -303,19 +324,23 @@ function buildTree(seed) {
 
     const seg = SEG_BY_DEPTH[depth];
     geoms.push(limbGeometry(pts, radii, seg, prof, twistRate, s0, FLUTE_BY_DEPTH[depth],
-      deadness > 0.5 ? 1 : 0));
+      deadness > 0.5 ? 1 : 0, SHRED_BY_DEPTH[depth]));
 
     if (depth >= 4) {
       if (deadness < 0.5) {
-        /* One dense mass at the tip, sometimes a second behind it. Foliage
-           spread evenly along every twig averages out into a uniform green
-           medium; juniper foliage comes in discrete cauliflower-like masses
-           with air between them, and it is the air that lets the branch
-           structure show. */
-        clumps.push({ p: pts[nSeg].clone(), size: 0.36 + rand() * 0.20 });
-        if (rand() < 0.55) {
-          clumps.push({ p: pts[Math.max(1, Math.floor(nSeg * 0.55))].clone(),
-                        size: 0.26 + rand() * 0.16 });
+        /* One spray at the tip, sometimes a second behind it. Foliage spread
+           evenly along every twig averages out into a uniform green medium;
+           juniper foliage comes in discrete masses with air between them, and
+           it is the air that lets the branch structure show.
+           Each carries the twig's own direction, because a juniper spray is a
+           pointed fan that continues the line of the shoot that made it — see
+           `foliageGeometry`. */
+        const tipDir = new THREE.Vector3().subVectors(pts[nSeg], pts[nSeg - 1]).normalize();
+        clumps.push({ p: pts[nSeg].clone(), size: 0.30 + rand() * 0.20, dir: tipDir });
+        if (rand() < 0.50) {
+          const i2 = Math.max(1, Math.floor(nSeg * 0.55));
+          clumps.push({ p: pts[i2].clone(), size: 0.22 + rand() * 0.14,
+                        dir: new THREE.Vector3().subVectors(pts[i2], pts[i2 - 1]).normalize() });
         }
       }
       return;
@@ -327,8 +352,9 @@ function buildTree(seed) {
        sunlit far side of the tree showing through the near side as scattered
        bright specks. */
     if (depth === 3 && deadness < 0.5 && rand() < 0.55) {
-      clumps.push({ p: pts[Math.max(1, Math.floor(nSeg * 0.7))].clone(),
-                    size: 0.28 + rand() * 0.14 });
+      const i2 = Math.max(1, Math.floor(nSeg * 0.7));
+      clumps.push({ p: pts[i2].clone(), size: 0.24 + rand() * 0.13, interior: true,
+                    dir: new THREE.Vector3().subVectors(pts[i2], pts[i2 - 1]).normalize() });
     }
 
     /* Children. Side branches part way along, and a fork at the tip. */
@@ -391,50 +417,108 @@ function buildTree(seed) {
     }
   }
 
-  /* The trunk itself: short, heavy, leaning, with a pronounced root flare, and
-     forking at barely a metre. An old juniper has no single stem above head
-     height, and a tall clean bole under a small crown is what made the first
-     build read as a deciduous sapling rather than a desert conifer. */
-  const nT = 16, H = 1.06;
+  /* ── the base and the stems ───────────────────────────────────────────────
+   *
+   * An old Utah juniper is not a tree with a trunk. It is a *clump*: a short
+   * flared root collar, thirty or forty centimetres of it, that divides at or
+   * below knee height into two or three heavy stems leaning apart at different
+   * angles, each behaving from there on like a small tree of its own. Nothing
+   * in the plant is symmetric and nothing is central.
+   *
+   * The previous build had a single 1.06 m bole forking into four leaders, and
+   * that one metre of clean stem under a radially even fork was enough to read
+   * as a young cultivated broadleaf — "a clean single trunk lifting a rounded
+   * near-symmetric parasol crown". The fix is not a shorter trunk, it is *no
+   * trunk*: the collar below is 0.30 m, and the stems diverge from inside the
+   * hummock. Height comes out around four metres against a crown five or six
+   * across, which is the right way round for the species.
+   */
+  const COLLAR = 0.30;
+  const nT = 8;
   const tp = [], tr = [];
-  const lean = new THREE.Vector3(wind.x, 0, wind.z).multiplyScalar(0.16);
+  const lean = new THREE.Vector3(wind.x, 0, wind.z).multiplyScalar(0.05);
   for (let i = 0; i <= nT; i++) {
     const t = i / nT;
-    const y = t * H;
-    const wobble = new THREE.Vector3(
-      fbm(t * 1.7, 5.5, 3, 991) * 0.075,
-      0,
-      fbm(t * 1.7, 12.5, 3, 993) * 0.075);
-    tp.push(new THREE.Vector3(lean.x * t * t * 1.6, y, lean.z * t * t * 1.6).add(wobble));
-    /* Root flare: the base swells hard in the bottom twenty centimetres, which
-       is also what buries the trunk into the hummock convincingly. */
-    const flare = 1 + 0.72 * Math.exp(-y / 0.22) + 0.18 * Math.exp(-y / 0.70);
-    tr.push(mix(0.340, 0.272, Math.pow(t, 0.8)) * flare);
+    const y = t * COLLAR;
+    tp.push(new THREE.Vector3(lean.x * t * t, y, lean.z * t * t));
+    /* Root flare: the collar swells hard at the ground, which is also what
+       buries it into the hummock convincingly. */
+    const flare = 1 + 0.62 * Math.exp(-y / 0.20) + 0.20 * Math.exp(-y / 0.62);
+    tr.push(mix(0.375, 0.330, Math.pow(t, 0.8)) * flare);
   }
-  geoms.push(limbGeometry(tp, tr, SEG_BY_DEPTH[0], trunkProf, twist, 0, FLUTE_BY_DEPTH[0]));
+  geoms.push(limbGeometry(tp, tr, SEG_BY_DEPTH[0], trunkProf, twist, 0,
+                          FLUTE_BY_DEPTH[0], 0, SHRED_BY_DEPTH[0]));
 
-  /* Leaders off the fork. */
-  const tipTan = new THREE.Vector3().subVectors(tp[nT], tp[nT - 1]).normalize();
-  /* Four leaders, laid out wide. Junipers are broader than they are tall, and a
-     spread near sixty degrees off vertical is what produces that. One of them —
-     whichever leaves the trunk inside a dead strip — is a bare snag, and it is
-     given extra length so it protrudes clear of the foliage where it can be
-     seen against the sky. */
-  const nLead = 4;
-  let deadLead = -1;
-  for (let i = 0; i < nLead; i++) {
-    const az = i / nLead * TAU + rand() * 0.7;
+  /* Three stems, deliberately unequal: one dominant and upright-ish, one
+     leaning well over downwind, and one that is mostly dead. "Well over half
+     the visual mass is bleached spiralled deadwood with a green tuft on top" is
+     the reference photograph, and a whole dead stem is the only way to get
+     there — a dead strip on a live stem cannot carry that much area. */
+  const stems = [
+    { az: 0.35, tilt: 0.20, len: 1.05, r: 0.250, dead: 0 },
+    { az: 2.55, tilt: 0.62, len: 0.88, r: 0.205, dead: 0 },
+    { az: 4.35, tilt: 0.46, len: 0.95, r: 0.190, dead: 1 },
+  ];
+  const collarTop = tp[nT];
+
+  for (let si = 0; si < stems.length; si++) {
+    const st = stems[si];
+    const az = st.az + (rand() - 0.5) * 0.5;
     const outw = new THREE.Vector3(Math.cos(az), 0, Math.sin(az));
-    const inStrip = trunkProf.deadAt(az + twist * H, H);
-    const dn = (deadLead < 0 && (inStrip > 0.35 || i === nLead - 1)) ? 1 : 0;
-    if (dn) deadLead = i;
-    const spread = (dn ? 0.80 : 0.60) + rand() * 0.42;
-    const dir = tipTan.clone().multiplyScalar(Math.cos(spread)).addScaledVector(outw, Math.sin(spread));
-    dir.y += dn ? 0.30 : 0.12;
-    dir.addScaledVector(wind, 0.14).normalize();
-    grow(tp[nT].clone(), dir, (dn ? 2.15 : 1.55) + rand() * 0.45,
-         0.178 - i * 0.012, 0.082, 1, dn, 0,
-         makeProfile(seed + 700 + i, 5, dn > 0.5 ? 2 : 1), twist * 1.5);
+    const tilt = st.tilt + (rand() - 0.5) * 0.16;
+    const dir = new THREE.Vector3(0, Math.cos(tilt), 0).addScaledVector(outw, Math.sin(tilt));
+    dir.addScaledVector(wind, 0.10).normalize();
+
+    /* The stem, as its own fluted limb with its own lobe set. */
+    const nS = 10, len = st.len * (0.9 + rand() * 0.2);
+    const sp = [], sr = [];
+    const sprof = makeProfile(seed + 500 + si * 17, 6, st.dead ? 3 : 2);
+    const cur = collarTop.clone();
+    const d = dir.clone();
+    for (let i = 0; i <= nS; i++) {
+      const t = i / nS;
+      sp.push(cur.clone());
+      sr.push(mix(st.r, st.r * 0.62, Math.pow(t, 0.85)));
+      /* Stems bow outward as they rise, which is the shape that makes a clump
+         read as a clump instead of a bundle of straight poles. */
+      d.addScaledVector(outw, 0.055).normalize();
+      cur.addScaledVector(d, len / nS);
+    }
+    geoms.push(limbGeometry(sp, sr, SEG_BY_DEPTH[0], sprof, twist * 1.2, 0,
+                            FLUTE_BY_DEPTH[0], st.dead, SHRED_BY_DEPTH[0]));
+
+    /* Leaders off this stem's fork. Two or three, laid out wide: junipers are
+       broader than they are tall, and a spread past sixty degrees off the stem
+       axis is what produces that. A leader leaving the stem inside a dead strip
+       is born dead and is given extra length, so it protrudes clear of the
+       foliage as a bare snag where it can be seen against the sky. */
+    const tipTan = new THREE.Vector3().subVectors(sp[nS], sp[nS - 1]).normalize();
+    const nLead = st.dead ? 3 : 2 + (rand() < 0.6 ? 1 : 0);
+    for (let i = 0; i < nLead; i++) {
+      const laz = i / nLead * TAU + rand() * 0.8 + az;
+      const lout = new THREE.Vector3(Math.cos(laz), 0, Math.sin(laz));
+      const inStrip = sprof.deadAt(laz + twist * 1.2 * len, len);
+      const dn = st.dead ? 1 : (inStrip > 0.35 || rand() < 0.28) ? 1 : 0;
+      const spread = (dn ? 0.86 : 0.72) + rand() * 0.44;
+      const ldir = tipTan.clone().multiplyScalar(Math.cos(spread))
+        .addScaledVector(lout, Math.sin(spread));
+      ldir.y += dn ? 0.26 : 0.06;
+      ldir.addScaledVector(wind, 0.16).normalize();
+      grow(sp[nS].clone(), ldir, (dn ? 1.95 : 1.45) + rand() * 0.45,
+           st.r * 0.58, st.r * 0.26, 1, dn, 0,
+           makeProfile(seed + 700 + si * 31 + i, 5, dn > 0.5 ? 2 : 1), twist * 1.5);
+    }
+  }
+
+  /* A skirt. Old junipers in the open keep one or two heavy limbs that leave
+     the collar almost horizontally and lie out near the ground, so the crown
+     comes down to knee height on one side instead of stopping in mid-air. Its
+     absence is a large part of why a procedural tree floats. */
+  for (let i = 0; i < 2; i++) {
+    const az = 1.4 + i * 2.9 + rand() * 0.8;
+    const dir = new THREE.Vector3(Math.cos(az), 0.13 + rand() * 0.10, Math.sin(az)).normalize();
+    grow(tp[Math.round(nT * 0.55)].clone(), dir, 1.30 + rand() * 0.45,
+         0.115, 0.052, 1, 0, 0, makeProfile(seed + 900 + i, 5, 1), twist * 1.5);
   }
 
   return { geoms, clumps };
@@ -509,20 +593,63 @@ function foliageGeometry(clumps, seed) {
   const density = crownOcclusion(clumps);
   const S = SUN_DIR;
   const c = new THREE.Vector3(), a = new THREE.Vector3(), b = new THREE.Vector3();
+  const ax = new THREE.Vector3(), pa = new THREE.Vector3(), pb = new THREE.Vector3();
+  const cen = new THREE.Vector3();
   let v = 0;
   for (const cl of clumps) {
-    const nCards = Math.round(3 + cl.size * 10 + rand() * 2);
+    /* A spray, not a ball.
+     *
+     * The first build scattered a clump's cards uniformly through a box and
+     * gave each a random azimuth and tilt, which produces a rounded opaque
+     * puff — and a crown of rounded puffs packed together is a broadleaf
+     * parasol. It read as an olive. Juniper foliage is organised as *pointed
+     * fans*: each shoot continues in the direction of the twig that made it and
+     * splays into a spray that is widest a third of the way along and tapers to
+     * a point, with real gaps between neighbouring sprays. That taper is what
+     * gives a juniper its sawtooth outline and lets sky through the crown,
+     * which is the difference being fixed here.
+     *
+     * So the cards run along the twig's own axis, lifted toward the light, on a
+     * cone that closes at the tip, and each card shrinks as it goes out. */
+    ax.copy(cl.dir || new THREE.Vector3(0, 1, 0));
+    ax.y += cl.interior ? 0.10 : 0.42;
+    if (ax.lengthSq() < 1e-9) ax.set(0, 1, 0);
+    ax.normalize();
+    /* Two vectors spanning the plane across the spray axis. */
+    pa.set(0, 1, 0).cross(ax);
+    if (pa.lengthSq() < 1e-6) pa.set(1, 0, 0);
+    pa.normalize();
+    pb.crossVectors(ax, pa).normalize();
+
+    const L = cl.size * (cl.interior ? 1.5 : 2.5);
+    const nCards = Math.round(3 + cl.size * 11 + rand() * 2);
+    /* The spray's own centre, for the shading normal: a point inside the fan
+       rather than at its foot, so the sphere normal still curves the right way. */
+    cen.copy(cl.p).addScaledVector(ax, L * 0.42);
+
     for (let k = 0; k < nCards; k++) {
-      const s = cl.size * (0.72 + rand() * 0.62);
-      c.set(cl.p.x + (rand() - 0.5) * cl.size * 0.9,
-            cl.p.y + (rand() - 0.5) * cl.size * 0.7,
-            cl.p.z + (rand() - 0.5) * cl.size * 0.9);
-      const az = rand() * TAU;
-      const tilt = (rand() - 0.5) * 1.15;
-      /* card local x (width) horizontal, local y (height) tilted from vertical */
-      a.set(Math.cos(az), 0, Math.sin(az)).multiplyScalar(s * 0.72);
-      b.set(-Math.sin(az) * Math.sin(tilt), Math.cos(tilt), Math.cos(az) * Math.sin(tilt))
-        .multiplyScalar(s * 0.86);
+      /* Biased toward the base, where a real fan carries most of its mass. */
+      const t = Math.pow((k + rand()) / nCards, 0.72);
+      /* Cone radius: widest at a third, closing to nothing at the point. */
+      const rad = cl.size * 0.80 * Math.sin(Math.PI * Math.pow(t, 0.62)) * (0.55 + 0.45 * rand());
+      const roll = rand() * TAU;
+      const s = cl.size * (0.92 - 0.52 * t) * (0.78 + rand() * 0.44);
+      c.copy(cl.p)
+        .addScaledVector(ax, L * t)
+        .addScaledVector(pa, Math.cos(roll) * rad)
+        .addScaledVector(pb, Math.sin(roll) * rad);
+
+      /* The card's height runs along the spray axis, splayed outward from it,
+         so a card is a piece of the fan rather than a shingle across it. */
+      const splay = 0.30 + rand() * 0.55;
+      b.copy(ax).multiplyScalar(Math.cos(splay))
+        .addScaledVector(pa, Math.cos(roll) * Math.sin(splay))
+        .addScaledVector(pb, Math.sin(roll) * Math.sin(splay))
+        .normalize().multiplyScalar(s * 0.92);
+      /* Width across the fan. */
+      a.crossVectors(b, ax);
+      if (a.lengthSq() < 1e-8) a.copy(pa);
+      a.normalize().multiplyScalar(s * 0.62);
 
       const cell = (rand() * 4) | 0;
       const cu = (cell & 1) * 0.5, cv = (cell >> 1) * 0.5;
@@ -537,9 +664,9 @@ function foliageGeometry(clumps, seed) {
         const py = c.y + a.y * sx + b.y * sy;
         const pz = c.z + a.z * sx + b.z * sy;
         pos.push(px, py, pz);
-        /* Sphere normal about the clump centre, lifted a little so the
+        /* Sphere normal about the spray's centre, lifted a little so the
            underside of the crown is not fully black. */
-        const dx = px - cl.p.x, dy = py - cl.p.y + cl.size * 0.35, dz = pz - cl.p.z;
+        const dx = px - cen.x, dy = py - cen.y + cl.size * 0.35, dz = pz - cen.z;
         const l = Math.hypot(dx, dy, dz) || 1;
         nrm.push(dx / l, dy / l, dz / l);
         const uu = (sx < 0) === flip ? u1 : u0;
@@ -585,18 +712,34 @@ export function makeBarkMaterial(bark) {
   const mat = new THREE.MeshStandardMaterial({
     map: bark.albedo,
     normalMap: bark.normal,
-    normalScale: new THREE.Vector2(1.15, 1.15),
+    normalScale: new THREE.Vector2(1.45, 1.45),
     roughness: 1.0,
     metalness: 0.0,
     vertexColors: true,     // flute cavity occlusion, baked
     dithering: true,
   });
-  /* Living bark is a warm dusty taupe; deadwood is a cool pale silver-grey with
-     the bark map's fibre contrast almost entirely removed — it has weathered
-     smooth — but its long grain kept, which is carried in the map's alpha. */
+  /*
+   * Living bark against bleached deadwood, and the size of the gap between them
+   * is the whole point.
+   *
+   * The first build set the dead colour to 0.300 linear and the live multiplier
+   * to 1.00 on a bark map averaging about 0.20 — so the deadwood came out within
+   * about fifteen percent of the living bark's value. The mechanism was fully
+   * implemented and completely invisible; a reviewer found the strip only by
+   * brightening the image three times and counting flutes. Photographs of
+   * weathered juniper put the ratio at **three to four times**, not fifteen
+   * percent: silver-grey heartwood at 0.70–0.75 linear against dark fibrous bark
+   * at 0.18–0.20. That is a value difference you can see from across a wash, and
+   * it is the single strongest species cue the tree has.
+   *
+   * It is also a change of *material*, not just tone, so three channels move
+   * together: albedo (below), roughness (deadwood is polished by grit and rain
+   * where bark is shaggy), and normal strength (the shredded relief belongs to
+   * the bark and must not survive on to the bare wood).
+   */
   const u = {
-    uLiveCol: { value: new THREE.Color(1.00, 0.93, 0.87) },
-    uDeadCol: { value: new THREE.Color(0.300, 0.285, 0.264) },
+    uLiveCol: { value: new THREE.Color(0.92, 0.82, 0.74) },
+    uDeadCol: { value: new THREE.Color(0.760, 0.735, 0.680) },
   };
   mat.userData.uniforms = u;
   mat.onBeforeCompile = (sh) => {
@@ -613,20 +756,30 @@ export function makeBarkMaterial(bark) {
         vec4 bt = texture2D( map, vMapUv );
         float g = dot( bt.rgb, vec3( 0.2126, 0.7152, 0.0722 ) );
         /* Deadwood: the fibre detail is gone, the long grain remains, and the
-           whole thing is lifted and cooled by two decades of ultraviolet. */
-        vec3 deadC = uDeadCol * ( 0.55 + 0.82 * mix( pow( g, 0.55 ), bt.a, 0.62 ) );
+           whole thing is lifted and cooled by two decades of ultraviolet. The
+           modulation band is deliberately narrow — 0.82 to 1.14 — because bare
+           weathered heartwood is *smooth and sinuous*, and letting the bark
+           map's contrast through here is what made the strip read as a tonal
+           wash over the same shaggy surface rather than as different stuff.
+           Weighted mostly to the map's alpha, which carries the long grain. */
+        vec3 deadC = uDeadCol * ( 0.82 + 0.32 * mix( pow( g, 0.55 ), bt.a, 0.80 ) );
         diffuseColor.rgb *= mix( bt.rgb * uLiveCol, deadC, vDead );`)
+      /* Shaggy lifted strings against wood polished by grit and rain. */
       .replace('#include <roughnessmap_fragment>', /* glsl */`
         float roughnessFactor = roughness *
-          mix( texture2D( normalMap, vNormalMapUv ).a, 0.58, vDead );`);
-    /* Weathered wood is smooth, so ideally the normal map's strength would fall
-       with the dead mask too. It cannot be done from here: `onBeforeCompile`
-       receives the shader with its `#include` directives unresolved, so a
-       replace against text that lives inside a chunk — `mapN.xy *= normalScale`
-       — silently matches nothing. Worth knowing before spending an hour on why
-       an edit had no effect. The dead/live distinction is carried by albedo and
-       roughness instead, which at any range this trunk is seen from is the part
-       that reads. */
+          mix( texture2D( normalMap, vNormalMapUv ).a, 0.40, vDead );`)
+      /* The shredded relief belongs to the bark, so its normal map has to fall
+         away with the dead mask — otherwise the silver strips keep the fibre
+         texture of the bark that is no longer on them.
+         This one needs the chunk expanded by hand. `onBeforeCompile` hands over
+         a shader whose `#include` directives are still unresolved, so replacing
+         text that lives *inside* a chunk silently matches nothing and the edit
+         appears to do exactly what it did before. Pulling the chunk out of
+         `THREE.ShaderChunk`, patching the string, and substituting the whole
+         include works, and is checked against the installed three (r180). */
+      .replace('#include <normal_fragment_maps>',
+        THREE.ShaderChunk.normal_fragment_maps.replace(
+          'mapN.xy *= normalScale;', 'mapN.xy *= normalScale * mix( 1.0, 0.18, vDead );'));
   };
   mat.customProgramCacheKey = () => 'juniper-bark';
   return mat;

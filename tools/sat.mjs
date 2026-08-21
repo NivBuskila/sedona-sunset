@@ -3,6 +3,11 @@
  *
  *   node tools/sat.mjs shots/sys1e_*.png
  *   node tools/sat.mjs --region 0.30 0.50 0.24 0.18 shots/sys1e_wash_low.png
+ *   node tools/sat.mjs --lit shots/sys4c_wall_lit.png      # rock colour targets
+ *
+ * **Use --lit for every rock colour target.** They are all stated "on lit rock",
+ * and a rock window under a directional key holds sunlit and self-shadowed faces
+ * that are two different materials to this metric. See the --lit comment below.
  *
  * Measure *region crops*, not whole frames. A whole-frame figure averages in the
  * sky, the walls and the floor together and is meaningless — three surfaces with
@@ -44,27 +49,46 @@ function stats(vals) {
 
 const argv = process.argv.slice(2);
 let region = null;
-if (argv[0] === '--region') {
-  region = argv.slice(1, 5).map(Number);
-  argv.splice(0, 5);
+let pop = 1;
+for (;;) {
+  if (argv[0] === '--region') { region = argv.slice(1, 5).map(Number); argv.splice(0, 5); continue; }
+  /* `--lit` restricts every window to its brightest 40%, and `--shade` to its
+     darkest. This is not cosmetic. Under a directional key a rock window holds
+     sunlit and self-shadowed faces at once, and to this metric those are two
+     different materials: the same `wall_lit` window on `sys4c` reads saturation
+     0.538 whole and 0.626 lit. Every rock colour target in CONTRACT.md is
+     stated "on lit rock", so `--lit` is the mode that compares with them, and a
+     whole-window figure quoted against them will read as a regression that is
+     not there — which is exactly what happened once already. Quote the mode
+     with the number. */
+  if (argv[0] === '--lit') { pop = 0.40; argv.shift(); continue; }
+  if (argv[0] === '--shade') { pop = -0.40; argv.shift(); continue; }
+  break;
 }
 
 function measure(img, [fx, fy, fw, fh]) {
   const x0 = Math.round(img.w * fx), y0 = Math.round(img.h * fy);
   const x1 = Math.min(img.w, x0 + Math.round(img.w * fw));
   const y1 = Math.min(img.h, y0 + Math.round(img.h * fh));
-  const sats = [], vals = [];
+  const px = [];
   for (let y = y0; y < y1; y++) {
     for (let x = x0; x < x1; x++) {
       const i = (y * img.w + x) * img.ch;
       const r = img.px[i], g = img.px[i + 1], b = img.px[i + 2];
       const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
       if (mx < 12) continue;              // crushed black carries no hue
-      sats.push((mx - mn) / mx);
-      vals.push(mx / 255);
+      px.push([(mx - mn) / mx, mx / 255]);
     }
   }
-  return { s: stats(sats), v: stats(vals) };
+  /* Select on value, then report both statistics over the selected pixels, so
+     the saturation and the V it was measured at always describe one population. */
+  let sel = px;
+  if (pop !== 1 && px.length) {
+    px.sort((a, b) => a[1] - b[1]);
+    const n = Math.max(1, Math.round(px.length * Math.abs(pop)));
+    sel = pop > 0 ? px.slice(-n) : px.slice(0, n);
+  }
+  return { s: stats(sel.map((p) => p[0])), v: stats(sel.map((p) => p[1])) };
 }
 
 /* Fixed crops, one surface each, chosen so no window contains sky or straddles a

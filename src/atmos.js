@@ -90,7 +90,7 @@ export const SUN_EL_DEG = 8.0;
    is a real thing the composition is missing, and it needs the left wall's crest
    to drop or the wash's heading near d = 120 to change, neither of which is
    System 4's to touch. */
-export const SUN_AZ_DEG = -13.0;
+export const SUN_AZ_DEG = -5.0;
 
 const DEG = Math.PI / 180;
 export const SUN_EL = SUN_EL_DEG * DEG;
