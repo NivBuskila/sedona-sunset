@@ -31,11 +31,14 @@
  * ── the constraint that shapes the defaults ─────────────────────────────────
  *
  * The capture harness cannot be modified and does not pass a tier. So the
- * governor must be *invisible* to it: under a software rasteriser this pins the
- * top tier and disables adaptation outright. Without that, SwiftShader — which
- * takes tens of seconds a frame — would walk the tier all the way down within
- * the harness's four-second settle and every measured gate in CONTRACT.md would
- * be measured against a picture nobody with a GPU will ever see.
+ * governor must be *invisible* to it: under automation this pins the top tier
+ * and disables adaptation outright. Without that, SwiftShader — which takes
+ * tens of seconds a frame — would walk the tier all the way down within the
+ * harness's four-second settle and every measured gate in CONTRACT.md would be
+ * measured against a picture nobody with a GPU will ever see; and on the GPU
+ * path, where the frame is fast enough that the ladder mostly holds, two page
+ * loads could still settle differently on incidental timing and break the
+ * pixel-identical recapture the contract requires.
  *
  * ── URL flags ───────────────────────────────────────────────────────────────
  *
@@ -119,11 +122,18 @@ import * as THREE from 'three';
  *                         spending them would change the picture rather than
  *                         its quality.
  */
+/* `far` is how many of System 2's far ridgeline planes are drawn, nearest
+   first. Four is the whole ladder at 69 k triangles and four draw calls, which
+   is noise on this GPU; the reason it is on the ladder at all is that the two
+   furthest are the cheapest thing in the scene to give up — they are the
+   palest, the smallest on screen, and by 5 km the airlight is nine tenths of
+   the pixel, so what a bottom tier loses by dropping them is a tone step rather
+   than an object. */
 export const QTIERS = [
-  { name: 'high',   shadowFar: 4096, shadowNear: 2048, shimmer: true,  samples: 4, dust: 1.00, salt: 1.00, softShadow: true,  post: { bloom: 4, dofTaps: 12, flare: 2 } },
-  { name: 'medium', shadowFar: 3072, shadowNear: 1536, shimmer: true,  samples: 2, dust: 0.70, salt: 0.70, softShadow: true,  post: { bloom: 4, dofTaps:  6, flare: 2 } },
-  { name: 'low',    shadowFar: 2048, shadowNear: 1024, shimmer: true,  samples: 0, dust: 0.45, salt: 0.40, softShadow: false, post: { bloom: 8, dofTaps:  0, flare: 1 } },
-  { name: 'potato', shadowFar: 1024, shadowNear:  512, shimmer: false, samples: 0, dust: 0.25, salt: 0.20, softShadow: false, post: { bloom: 0, dofTaps:  0, flare: 0 } },
+  { name: 'high',   shadowFar: 4096, shadowNear: 2048, shimmer: true,  samples: 4, dust: 1.00, salt: 1.00, far: 4, softShadow: true,  post: { bloom: 4, dofTaps: 12, flare: 2 } },
+  { name: 'medium', shadowFar: 3072, shadowNear: 1536, shimmer: true,  samples: 2, dust: 0.70, salt: 0.70, far: 4, softShadow: true,  post: { bloom: 4, dofTaps:  6, flare: 2 } },
+  { name: 'low',    shadowFar: 2048, shadowNear: 1024, shimmer: true,  samples: 0, dust: 0.45, salt: 0.40, far: 3, softShadow: false, post: { bloom: 8, dofTaps:  0, flare: 1 } },
+  { name: 'potato', shadowFar: 1024, shadowNear:  512, shimmer: false, samples: 0, dust: 0.25, salt: 0.20, far: 2, softShadow: false, post: { bloom: 0, dofTaps:  0, flare: 0 } },
 ];
 
 const RSCALE = [1.0, 0.88, 0.78, 0.68, 0.58];
@@ -137,6 +147,26 @@ const RSCALE = [1.0, 0.88, 0.78, 0.68, 0.58];
 const LADDER = [[0, 0], [1, 0], [2, 0], [2, 1], [3, 1], [3, 2], [4, 2], [4, 3]];
 
 const SOFTWARE = /swiftshader|llvmpipe|software|basic render|microsoft basic/i;
+
+/* Is the page being driven by the capture harness rather than by a person?
+ *
+ * The pin below used to be keyed to SOFTWARE alone, on the assumption that a
+ * capture is always a SwiftShader capture. That assumption expired the day
+ * tools/harness.mjs grew a `.gpu` marker: on the D3D11 path `software` is
+ * false, so adaptation was live during every GPU capture, and a governor whose
+ * whole job is to react to incidental frame timing is the one thing that must
+ * not be running while two page loads are being compared pixel for pixel.
+ * Nothing was measured settling on a different tier, but the failure mode is
+ * silent by construction — a rung change costs a render scale, and a capture
+ * at 0.88 scale looks like a slightly soft build rather than like a bug.
+ *
+ * `navigator.webdriver` is exactly the question being asked: it is set by
+ * Chromium when the page is under automation, so it is true for every probe in
+ * tools/ and false for the person whose GPU this is. It also covers the case
+ * the SOFTWARE test never could, which is a real GPU under the harness. */
+function automated() {
+  try { return !!(typeof navigator !== 'undefined' && navigator.webdriver); } catch (_) { return false; }
+}
 
 function rendererName(renderer) {
   try {
@@ -243,9 +273,13 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
   let pinned = -1;
   for (let i = 0; i < QTIERS.length; i++) if (flag(new RegExp('(^|[#&])' + QTIERS[i].name))) pinned = i;
 
-  /* The harness clause. A software rasteriser gets the top tier and no
-     adaptation, so that a capture is a picture of what a GPU would draw. */
-  if (software && pinned < 0) pinned = 0;
+  /* The harness clause. A capture — software rasteriser or real GPU — gets the
+     top tier and no adaptation, so that a capture is a picture of what a GPU
+     would draw and, just as importantly, is the *same* picture every time.
+     tools/bench.mjs still walks the ladder, because setTier() is an explicit
+     call and does not go through `adapting`. */
+  const harness = automated();
+  if ((software || harness) && pinned < 0) pinned = 0;
 
   const scalePin = num('scale', 0);
   const frameCap = num('fps', 0);
@@ -262,6 +296,11 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
   const salt = scene.getObjectByName('saltation');
   const dustN = dust ? dust.geometry.attributes.position.count : 0;
   const saltN = salt ? salt.geometry.attributes.position.count : 0;
+  /* System 2's far band. Reached by name for the same reason the particle
+     clouds are: nothing in this file should have to be constructed with a
+     reference to every system it governs. Absent — an older build, or a probe
+     that assembles a partial scene — the tier simply has one fewer knob. */
+  const farRidge = scene.getObjectByName('farridge');
 
   const timer = new GpuTimer(renderer);
 
@@ -328,6 +367,8 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
     }
 
     if (post && post.setLevel) post.setLevel(q.post);
+
+    if (farRidge && farRidge.setDetail) farRidge.setDetail(q.far);
   }
 
   function setRung(i) {
@@ -460,6 +501,10 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
     QTIERS,
     gpu: gpuName,
     software,
+    /* Whether the harness clause fired, so a probe can assert that a capture
+       was taken with adaptation off rather than assume it. */
+    harness,
+    get adapting() { return adapting; },
     get tier() { return QTIERS[qi].name; },
     get scale() { return curScale(); },
     get frameCap() { return frameCap; },
