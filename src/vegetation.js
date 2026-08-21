@@ -30,7 +30,7 @@
  */
 import * as THREE from 'three';
 import { rng, fbm, ridged, clamp, smoothstep } from './noise.js';
-import { foliageTex, grassTex, scrubTex } from './plantex.js';
+import { foliageTex, grassTex, scrubTex, succTex } from './plantex.js';
 import { cardTuft, makeFoliageMaterial, JUNIPER_XZ } from './juniper.js';
 
 const TAU = Math.PI * 2;
@@ -311,6 +311,12 @@ function corridorDist(path, x, z, q) {
    tree. Inside that, a plant gets the seven-card treatment instead, and the
    cards are the cheaper of the two anyway: fourteen triangles against twenty. */
 const CARD_RANGE = 150;
+/* Nothing on the slopes inside this radius of the hero. The `juniper` framing
+   is meant to be one tree alone, and a bench specimen at a third of the hero's
+   apparent height softens that read into "two trees, one nearer". The near-wash
+   scrub keeps its own tighter apron; this is for the slope vegetation, which is
+   what was landing in frame beside it. */
+const HERO_CLEAR = 24;
 /* The near walls stand up to about 77 m off the centreline (measured with
    tools/vegprobe.mjs). Inside that footprint the bare height field is buried
    under rock, so anything the far-field scatter plants there is embedded in a
@@ -405,6 +411,7 @@ export function planVegetation(path, terrain, rocks) {
       if (p3.z > 30 || p3.z < -330) continue;
       const du = corridorDist(path, p3.x, p3.z, qtmp);
       if (du < 15 || du > 210) continue;
+      if (Math.hypot(p3.x - JUNIPER_XZ.x, p3.z - JUNIPER_XZ.z) < HERO_CLEAR) continue;
       /* Slope gate. A bench is a bench; a wall face keeps nothing. */
       const up = n3.y;
       if (up < 0.36) continue;
@@ -436,6 +443,7 @@ export function planVegetation(path, terrain, rocks) {
     /* Alongside the walked corridor the walls own the ground; this scatter is
        only for the open height field beyond them and up-wash past their end. */
     if (du < (z > -340 ? WALL_REACH : 22)) continue;
+    if (Math.hypot(x - JUNIPER_XZ.x, z - JUNIPER_XZ.z) < HERO_CLEAR) continue;
     /* Cluster and dice first: the height field is by far the most expensive
        thing in this loop and ninety-odd percent of candidates are rejected
        without it. */
@@ -494,21 +502,27 @@ export function buildVegetation(path, terrain, rocks) {
     map: grassTex(), alphaTest: 0.40, side: THREE.DoubleSide,
     roughness: 0.95, metalness: 0, vertexColors: true,
     color: new THREE.Color(0.90, 0.85, 0.78), dithering: true,
+    alphaToCoverage: true,
   });
   const scrubMat = new THREE.MeshStandardMaterial({
     map: scrubTex(), alphaTest: 0.40, side: THREE.DoubleSide,
     roughness: 0.92, metalness: 0, vertexColors: true,
     color: new THREE.Color(0.80, 0.84, 0.72), dithering: true,
+    alphaToCoverage: true,
   });
   /* Cactus and agave are succulent: waxy, so a touch glossier than anything
-     else in the frame, and a blue-cast desaturated green. */
+     else in the frame, and a pale glaucous blue-green — much lighter and bluer
+     than juniper, which is most of what distinguishes them at a distance where
+     neither has any resolvable structure.
+     Now mapped. These were the only geometry in the system with no texture at
+     all, which is precisely how they read. Double sided because an agave blade
+     is a single sheet and back-face culling turned the rosette into a black
+     wedge. */
+  const succ = succTex();
   const succMat = new THREE.MeshStandardMaterial({
-    /* Prickly pear and agave are a pale glaucous blue-green — much lighter and
-       bluer than juniper, which is most of what distinguishes them at a
-       distance where neither has any resolvable structure. Double sided
-       because an agave blade is a single sheet and back-face culling turned
-       the rosette into a black wedge. */
-    color: new THREE.Color(0.150, 0.183, 0.126),
+    map: succ.albedo,
+    normalMap: succ.normal,
+    normalScale: new THREE.Vector2(0.7, 0.7),
     roughness: 0.74, metalness: 0, vertexColors: true, dithering: true,
     side: THREE.DoubleSide,
   });
@@ -536,8 +550,14 @@ export function buildVegetation(path, terrain, rocks) {
      with a lit fringe — it never averages anywhere near the albedo of the
      sunlit sprays on its own outside. Left at full albedo they came out as
      white-speckled clumps that read as patches of snow on the cliff. */
-  midMat.color = new THREE.Color(0.38, 0.42, 0.34);
-  midMat.userData.uniforms.uTransAmt.value = 0.30;
+  midMat.color = new THREE.Color(0.40, 0.42, 0.30);
+  midMat.alphaToCoverage = true;
+  /* Cut hard, from 0.30. The transmission term is a rim effect on a spray a
+     couple of millimetres thick; at forty metres and beyond there is no rim to
+     resolve, and all it was doing was adding a warm yellow pedestal to a
+     yellow-green albedo. Backlit on a distant bench that lands as the
+     chartreuse shards a reviewer picked out in `sun_gap`. */
+  midMat.userData.uniforms.uTransAmt.value = 0.12;
 
   /* Dark, desaturated, slightly blue-shifted green. A distant juniper is nearly
      black against sunlit rock; the haze does the rest of the work. */

@@ -113,8 +113,11 @@ function makeProfile(seed, nLobes, nDead) {
         if (L.dead) {
           const run = smoothstep(L.d0, L.d0 + 0.45, s) * (1 - smoothstep(L.d1 - 0.7, L.d1, s));
           /* Slightly narrower than the ridge itself: the silver is the crest of
-             the ridge, with living bark still clinging in the flanks. */
-          const gd = Math.exp(-(d * d) / (2 * L.w * L.w * 0.55));
+             the ridge, with living bark still clinging in the flanks. Widened
+             from 0.55 — on an old juniper the bark has lost the whole ridge and
+             a good part of its flanks, and a narrow silver pinstripe up a wide
+             ridge does not read as a dead strip at any distance. */
+          const gd = Math.exp(-(d * d) / (2 * L.w * L.w * 0.85));
           if (gd * run > dead) dead = gd * run;
         }
       }
@@ -265,7 +268,7 @@ function limbGeometry(pts, radii, seg, prof, twistRate, s0, flute, deadBase = 0,
    come nearest the camera and at seven segments a limb has a 51° facet, reads
    as a flat ribbon with a bright top and an abruptly dark underside, and has a
    dead straight silhouette. */
-const SEG_BY_DEPTH = [72, 30, 20, 14, 10];
+const SEG_BY_DEPTH = [72, 30, 18, 12, 8];
 /* Peak-to-trough as a fraction of the mean radius. Twenty percent on the bole
    is measured off photographs of old Utah junipers, not chosen for effect; the
    grooves between the ridges are deep enough to hold shadow all day and that is
@@ -276,7 +279,7 @@ const FLUTE_BY_DEPTH = [0.48, 0.36, 0.24, 0.13, 0.07];
    be larger than the twig. */
 const SHRED_BY_DEPTH = [0.016, 0.011, 0, 0, 0];
 
-function buildTree(seed) {
+export function buildTree(seed) {
   const rand = rng(seed);
   const geoms = [];
   const clumps = [];      // foliage clusters: {p, size, dead}
@@ -284,6 +287,20 @@ function buildTree(seed) {
   const twist = 0.34;     // radians of spiral per metre — about 20 degrees
 
   const wind = new THREE.Vector3(WIND.x, 0, WIND.y);
+
+  /* The ground, in the tree's own coordinates, so a limb can be stopped from
+     burrowing into it. The mesh origin sits 0.10 m above the terrain (see
+     `buildJuniper`) and the hummock rises above that, so this mirrors the mound
+     profile in `hummock` with a few centimetres of clearance on top.
+     Needed because gravity droop accumulates down the branch chain: the skirt
+     limbs, which start out almost horizontal, were reaching 0.84 m below the
+     origin — three quarters of a metre underground. Clamping the point and
+     killing the downward component turns that into a limb that lies along the
+     mound, which is the shape it should have had. */
+  function floorAt(x, z) {
+    const r = Math.hypot(x, z);
+    return -0.10 + 0.235 * Math.exp(-Math.pow(r / 0.95, 1.85)) + 0.055;
+  }
 
   /**
    * Grow one limb and recurse. `deadness` in [0,1] is inherited: a limb born in
@@ -316,7 +333,10 @@ function buildTree(seed) {
       d.z += n2 * 0.16 * kink * (1 + depth * 0.35);
       d.normalize();
       const prev = pts[pts.length - 1];
-      pts.push(new THREE.Vector3(prev.x + d.x * step, prev.y + d.y * step, prev.z + d.z * step));
+      const nx = prev.x + d.x * step, ny = prev.y + d.y * step, nz = prev.z + d.z * step;
+      const fl = floorAt(nx, nz);
+      if (ny < fl) { d.y = Math.max(d.y, 0.02); d.normalize(); }
+      pts.push(new THREE.Vector3(nx, Math.max(ny, fl), nz));
       /* Dead limbs taper to a point — a snapped snag, not a rounded stub. */
       const taper = deadness > 0.5 ? Math.pow(1 - t, 0.55) : 1;
       radii.push(mix(r0, r1, Math.pow(t, 0.78)) * mix(1, taper, deadness));
@@ -359,7 +379,13 @@ function buildTree(seed) {
 
     /* Children. Side branches part way along, and a fork at the tip. */
     const tipDir = new THREE.Vector3().subVectors(pts[nSeg], pts[nSeg - 1]).normalize();
-    const nSide = [2, 2, 2, 2, 0][depth] + (rand() < 0.45 ? 1 : 0);
+    /* A snag keeps a fork or two and then stops. Left on the live branching
+       rule a dead limb grew a full four-level subtree, which spent triangles on
+       twigs nothing hangs from and pushed a bare spike three metres clear of
+       the crown instead of the half metre that reads as a snag. */
+    const nSide = deadness > 0.5
+      ? (depth <= 1 ? 1 : 0)
+      : [2, 2, 2, 1, 0][depth] + (rand() < 0.45 ? 1 : 0);
     const kids = [];
     for (let i = 0; i < nSide; i++) {
       const f = 0.34 + 0.52 * ((i + rand() * 0.7) / Math.max(1, nSide));
@@ -403,11 +429,11 @@ function buildTree(seed) {
       if (dn < 0.5) {
         const inStrip = depth === 0 ? prof.deadAt(k.az + twistRate * k.s, k.s) : 0;
         const pDead = depth === 0 ? (inStrip > 0.45 ? 0.9 : 0.03)
-                    : 0.04 + 0.20 * expo + 0.02 * depth;
+                    : 0.05 + 0.22 * expo + 0.02 * depth;
         dn = rand() < pDead ? 1 : 0;
       }
       const cr0 = r1 * (k.tip ? 0.92 : 0.62) * (0.85 + rand() * 0.3);
-      const clen = len * (k.tip ? 0.78 : 0.62) * (0.75 + rand() * 0.5);
+      const clen = len * (k.tip ? 0.70 : 0.54) * (0.78 + rand() * 0.42);
       const cprof = depth === 0
         ? makeProfile(seed + 300 + geoms.length, 5, dn > 0.5 ? 2 : 1)
         : prof;
@@ -457,7 +483,7 @@ function buildTree(seed) {
   const stems = [
     { az: 0.35, tilt: 0.20, len: 1.05, r: 0.250, dead: 0 },
     { az: 2.55, tilt: 0.62, len: 0.88, r: 0.205, dead: 0 },
-    { az: 4.35, tilt: 0.46, len: 0.95, r: 0.190, dead: 1 },
+    { az: 4.35, tilt: 0.46, len: 1.10, r: 0.215, dead: 1 },
   ];
   const collarTop = tp[nT];
 
@@ -493,18 +519,21 @@ function buildTree(seed) {
        is born dead and is given extra length, so it protrudes clear of the
        foliage as a bare snag where it can be seen against the sky. */
     const tipTan = new THREE.Vector3().subVectors(sp[nS], sp[nS - 1]).normalize();
-    const nLead = st.dead ? 3 : 2 + (rand() < 0.6 ? 1 : 0);
+    const nLead = 2;
     for (let i = 0; i < nLead; i++) {
       const laz = i / nLead * TAU + rand() * 0.8 + az;
       const lout = new THREE.Vector3(Math.cos(laz), 0, Math.sin(laz));
       const inStrip = sprof.deadAt(laz + twist * 1.2 * len, len);
-      const dn = st.dead ? 1 : (inStrip > 0.35 || rand() < 0.28) ? 1 : 0;
-      const spread = (dn ? 0.86 : 0.72) + rand() * 0.44;
+      const dn = st.dead ? 1 : (inStrip > 0.35 || rand() < 0.30) ? 1 : 0;
+      const spread = (dn ? 0.74 : 0.58) + rand() * 0.34;
       const ldir = tipTan.clone().multiplyScalar(Math.cos(spread))
         .addScaledVector(lout, Math.sin(spread));
       ldir.y += dn ? 0.26 : 0.06;
       ldir.addScaledVector(wind, 0.16).normalize();
-      grow(sp[nS].clone(), ldir, (dn ? 1.95 : 1.45) + rand() * 0.45,
+      /* The dead leader runs longer than the live ones so that it clears the
+         foliage instead of being buried in it — a snag that does not break the
+         crown's outline is a snag nobody sees. */
+      grow(sp[nS].clone(), ldir, (dn ? 1.55 : 1.12) + rand() * 0.32,
            st.r * 0.58, st.r * 0.26, 1, dn, 0,
            makeProfile(seed + 700 + si * 31 + i, 5, dn > 0.5 ? 2 : 1), twist * 1.5);
     }
@@ -517,7 +546,7 @@ function buildTree(seed) {
   for (let i = 0; i < 2; i++) {
     const az = 1.4 + i * 2.9 + rand() * 0.8;
     const dir = new THREE.Vector3(Math.cos(az), 0.13 + rand() * 0.10, Math.sin(az)).normalize();
-    grow(tp[Math.round(nT * 0.55)].clone(), dir, 1.30 + rand() * 0.45,
+    grow(tp[Math.round(nT * 0.55)].clone(), dir, 1.00 + rand() * 0.32,
          0.115, 0.052, 1, 0, 0, makeProfile(seed + 900 + i, 5, 1), twist * 1.5);
   }
 
@@ -809,6 +838,14 @@ export function makeFoliageMaterial(map) {
     color: 0xffffff,
     vertexColors: true,   // crown self-occlusion, baked
     dithering: true,
+    /* The cutout edge is otherwise a hard binary threshold, which leaves
+       per-pixel stair-stepping and isolated single-texel islands along the
+       crown — the precondition for the edge crawling as the camera moves.
+       System 5 draws the scene into a four-sample target, so converting alpha
+       to a coverage mask buys five levels of edge gradation for nothing. It
+       degrades to exactly the present behaviour if the perf ladder drops that
+       pass and the target loses its samples. */
+    alphaToCoverage: true,
   });
   const u = {
     uSunDir: { value: SUN_DIR.clone() },
@@ -872,7 +909,10 @@ export function makeFoliageMaterial(map) {
 
 function hummock(terrain, cx, cz, seed) {
   const rand = rng(seed);
-  const RINGS = 12, SEG = 40, R = 2.15;
+  /* Widened from 2.15 m to reach the drip line of a seven-metre crown. A mound
+     that stops well inside the foliage is a mound nobody attributes to the
+     tree. */
+  const RINGS = 13, SEG = 44, R = 2.85;
   const pos = [], uv = [], idx = [];
   const lobes = [];
   for (let i = 0; i < 5; i++) lobes.push({ a: rand() * TAU, m: 0.5 + rand() * 0.9 });
@@ -889,7 +929,7 @@ function hummock(terrain, cx, cz, seed) {
       /* Trapped sediment: a broad low mound with a steeper shoulder against the
          root flare, plus surface roughness from the litter caught in it. */
       const m = 0.235 * Math.exp(-Math.pow(r / 0.95, 1.85))
-              + 0.035 * Math.exp(-Math.pow(r / 1.85, 3.0));
+              + 0.055 * Math.exp(-Math.pow(r / 2.30, 3.0));
       const grain = 0.026 * fbm(x * 2.6, z * 2.6, 3, 4411) + 0.012 * fbm(x * 7.0, z * 7.0, 2, 4413);
       const edge = 1 - smoothstep(0.80, 1.0, t);
       pos.push(x, base + (m + grain * (0.25 + 0.75 * edge)) * (0.12 + 0.88 * edge) + 0.006, z);
@@ -995,7 +1035,14 @@ export function buildJuniper(terrain, tex) {
     normalScale: new THREE.Vector2(0.8, 0.8),
     roughness: 1.0,
     metalness: 0.0,
-    color: new THREE.Color(0.86, 0.80, 0.76),
+    /* Darker and less red than the open wash floor. What is in a hummock is
+       trapped fines and rotted-down organic litter, and it holds what little
+       moisture the site gets, so it reads several percent darker and browner
+       than the sand a few metres away. Matching the terrain exactly — which the
+       first build did, on the reasoning that a different material would look
+       pasted on — meant a reviewer could not find the mound at all and reported
+       the ground under the tree as identical to the ground twenty metres off. */
+    color: new THREE.Color(0.66, 0.585, 0.525),
     polygonOffset: true,
     polygonOffsetFactor: -2,
     polygonOffsetUnits: -2,
@@ -1010,17 +1057,29 @@ export function buildJuniper(terrain, tex) {
      the upwind side, where the wind piles it. */
   const rand = rng(31337);
   const arr = { pos: [], nrm: [], uvs: [], idx: [] };
-  for (let i = 0; i < 26; i++) {
+  /* Two populations, because they are put there by two different processes and
+     they land in different places. Wind-blown litter piles against the upwind
+     flank of the mound; the tree's own shed scale and twig fall straight down
+     and accumulate in a ring under the drip line, which on a crown this wide is
+     a good two metres out. Sixty attempts rather than twenty-six: at eighteen
+     metres a 0.2 m tuft is nine pixels, and a dozen of them scattered over five
+     square metres is not something a viewer can see. */
+  for (let i = 0; i < 60; i++) {
     const th = rand() * TAU;
-    const rr = 0.42 + rand() * 1.55;
-    /* Piled on the upwind flank of the mound. */
+    const dripLine = rand() < 0.45;
+    const rr = dripLine ? 1.75 + rand() * 0.95 : 0.40 + rand() * 1.35;
     const bias = 0.5 - 0.5 * (Math.cos(th) * WIND.x + Math.sin(th) * WIND.y);
-    if (rand() > 0.30 + 0.70 * bias) continue;
+    /* Duff under the drip line does not care about the wind; wind-piled litter
+       cares about nothing else. */
+    if (rand() > (dripLine ? 0.72 : 0.26 + 0.74 * bias)) continue;
     const x = JUNIPER_XZ.x + Math.cos(th) * rr, z = JUNIPER_XZ.z + Math.sin(th) * rr;
-    const m = 0.235 * Math.exp(-Math.pow(rr / 0.95, 1.85));
+    const m = 0.235 * Math.exp(-Math.pow(rr / 0.95, 1.85))
+            + 0.055 * Math.exp(-Math.pow(rr / 2.30, 3.0));
     const y = terrain.heightAt(x, z) + m - 0.02;
-    cardTuft(x, y, z, 0.22 + rand() * 0.20, 0.16 + rand() * 0.20,
-             2 + (rand() * 2 | 0), rand, arr);
+    /* Shed duff lies flat and low; caught grass stands up. */
+    const h = dripLine ? 0.05 + rand() * 0.08 : 0.13 + rand() * 0.24;
+    cardTuft(x, y, z, (dripLine ? 0.26 : 0.20) + rand() * 0.26, h,
+             2 + (rand() * 2 | 0), rand, arr, 4, 1);
   }
   if (arr.idx.length) {
     const gg = new THREE.BufferGeometry();
@@ -1032,6 +1091,7 @@ export function buildJuniper(terrain, tex) {
     const gm = new THREE.MeshStandardMaterial({
       map: litterTex, alphaTest: 0.40, side: THREE.DoubleSide,
       roughness: 0.94, metalness: 0.0, color: new THREE.Color(0.92, 0.88, 0.82),
+      alphaToCoverage: true,
     });
     const grass = new THREE.Mesh(gg, gm);
     grass.castShadow = true;
