@@ -12,7 +12,7 @@
  */
 import * as THREE from 'three';
 import { WashPath } from './path.js';
-import { Terrain, buildTerrainMesh, makeTerrainMaterial } from './terrain.js';
+import { Terrain, buildTerrainMesh, makeTerrainMaterial, syncWind } from './terrain.js';
 import { buildScatter } from './scatter.js';
 import { buildWalls, buildDistantButtes, buildTalus, makeRockMaterial } from './rock.js';
 import { buildSky, buildLights, makeShadowRig, FOG, EXPOSURE } from './sky.js';
@@ -148,6 +148,11 @@ scene.add(sun, sun.target, sunNear, sunNear.target, skyProbe);
 /* System 6. Silent until a gesture resumes the context, and inert if the
    browser has no audio at all — it must never be able to stop the scene. */
 const audio = createAudio({ camera, canvas, path });
+/* Tonight's wind lives with the audio, which is its timing and strength
+   authority. The drifted sand on the wash floor has to agree with the gust bed
+   and the saltation, so it is pointed at the same heading here rather than
+   keeping a second copy of the constant. */
+syncWind(terrainMesh.material, audio.api);
 
 /* ── player ────────────────────────────────────────────────────────────── */
 

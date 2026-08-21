@@ -32,11 +32,14 @@
 import * as THREE from 'three';
 import { fbm, ridged, clamp, smoothstep, mix } from './noise.js';
 import { SUN_DIR, SUN_EL } from './sky.js';
-/* The shared weather. CONTRACT.md makes juniper.js the authority for wind
-   direction so that the tree's lean, the blowing grains, the sound and the sand
-   drifted against a bank are one system; this reads it rather than keeping a
-   private copy. */
-import { WIND } from './juniper.js';
+/* Tonight's wind, which is not the same quantity as the prevailing wind the
+   juniper's lean records. A drift of sand was deposited this evening, so it
+   belongs to tonight's wind along with the gust bed and the saltation, and
+   audio.js is that authority: `windAt` is analytic, deterministic and public.
+   `syncWind` below reads it. This is only the fallback for a material built
+   before the audio exists, and it is deliberately the same 0.12 rad down-wash
+   heading so a page with a dead audio context still agrees with itself. */
+const TONIGHT_FALLBACK = 0.12;
 
 /** Staircase with hard risers. `sharp` is the fraction of each step spent rising. */
 function stair(v, n, sharp) {
@@ -974,20 +977,28 @@ float sandW = smoothstep(0.62, 0.68, sandF) * smoothstep(0.10, 0.42, vSheet)
    deposited by water, water does not climb, and confining sand to flat ground
    models that mechanism correctly and leaves the other one out entirely. The
    other one can now be put in, because the wind has a shared direction —
-   WIND from juniper.js, the direction it blows *toward* — so drifted sand,
-   the tree's lean, the blowing grains and the sound are one weather system
-   rather than four private guesses.
+   tonight's wind, out of audio.js, the direction it blows *toward* — so the
+   drifted sand, the blowing grains and the sound are one weather system rather
+   than three private guesses. Tonight's wind runs *along* the wash, which is
+   physically what a channel between walls does to air, so this deposits on the
+   downstream faces of transverse features and leaves the cut banks — which face
+   across the channel and are therefore neither windward nor lee — alone. That
+   is a much smaller deposit than the across-wash guess it replaces, and it is
+   the right one.
    A drift is a *lee* deposit. Grains saltate up the windward face, separate at
    the crest and fall out in the still air behind it, so sand banks against the
-   downwind side of a bank and the windward side is swept to lag. The downhill
-   direction of the surface is -gN.xz, so a face is in the lee when its downhill
-   points along the wind.
+   downwind side of a bank and the windward side is swept to lag. For a height
+   field the normal is (-dh/dx, 1, -dh/dz), so downhill is -gN.xz and a face is
+   in the lee when its downhill points along the wind. The previous round had
+   this dotted against +gN.xz, which is uphill, so every drift it placed was on
+   the *windward* face — a sign error that survived because the direction was
+   also wrong, and two wrongs looked like scattered sand either way.
    And it rests at the angle of repose with a toe, which is the other half of the
    icing complaint: the upper gate at slope 0.265 is about thirty-nine degrees,
    past which nothing stays, and the lower gate keeps it off ground flat enough
    for the fluvial term to own. So it cannot glaze a crest and run over the lip —
    it stops dead at the crest line, which is where the windward face begins. */
-vec2 down = gN.xz;
+vec2 down = -gN.xz;
 float dl = length(down);
 float lee = dl < 1e-4 ? 0.0 : dot(down / dl, uWind);
 float aeolW = smoothstep(0.16, 0.52, lee)
@@ -1695,7 +1706,7 @@ export function makeTerrainMaterial(tex) {
        correct if the sun or the tile changes. */
     uSunStep: { value: new THREE.Vector2(SUN_DIR.x, SUN_DIR.z).normalize().multiplyScalar(0.3846) },
     uSunRise: { value: Math.tan(SUN_EL) / 0.025 },
-    uWind: { value: new THREE.Vector2(WIND.x, WIND.y) },
+    uWind: { value: new THREE.Vector2(Math.sin(TONIGHT_FALLBACK), Math.cos(TONIGHT_FALLBACK)) },
     uBedT: { value: BED_T },
   };
 
@@ -1810,4 +1821,35 @@ export function makeTerrainMaterial(tex) {
   };
   mat.customProgramCacheKey = () => 'sedona-terrain-v3';
   return mat;
+}
+
+/**
+ * Point the drifted sand at tonight's wind, read from the audio system.
+ *
+ * The audio's `windAt` is the authority, but it returns the *instantaneous*
+ * heading — a gust bed that wanders 0.26 rad either side of the mean and turns
+ * another 0.35 with each gust. A drift is not instantaneous. It is the
+ * integral: a pile of sand records where the wind has been blowing for the last
+ * hour, not where it is pointing at the instant the shutter opens. So this
+ * averages the direction vector over one full period of the slow wander
+ * (2*pi/0.021 = 299 s), which cancels that term exactly and averages the gust
+ * turns down to nothing. The result is a deposit that does not change between
+ * two captures of the same scene, which reading `api.wind.heading` live would.
+ *
+ * Called once at boot, after the audio exists.
+ */
+export function syncWind(material, audioApi) {
+  const u = material && material.userData && material.userData.uniforms;
+  if (!u || !u.uWind || !audioApi || typeof audioApi.windAt !== 'function') return;
+  const SPAN = 2 * Math.PI / 0.021, STEP = 1.4;
+  let sx = 0, sz = 0, n = 0;
+  for (let t = 0; t < SPAN; t += STEP) {
+    const w = audioApi.windAt(t);
+    if (!w || !Number.isFinite(w.dirX) || !Number.isFinite(w.dirZ)) continue;
+    sx += w.dirX; sz += w.dirZ; n++;
+  }
+  if (!n) return;
+  const l = Math.hypot(sx, sz);
+  if (l < 1e-3) return;      /* a wind with no mean direction drifts nothing */
+  u.uWind.value.set(sx / l, sz / l);
 }
