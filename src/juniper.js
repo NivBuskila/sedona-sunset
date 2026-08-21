@@ -618,10 +618,15 @@ export function makeBarkMaterial(bark) {
         diffuseColor.rgb *= mix( bt.rgb * uLiveCol, deadC, vDead );`)
       .replace('#include <roughnessmap_fragment>', /* glsl */`
         float roughnessFactor = roughness *
-          mix( texture2D( normalMap, vNormalMapUv ).a, 0.58, vDead );`)
-      /* Weathered wood is smooth, so its normal map strength has to fall with
-         the dead mask or the silver strips keep the shredded bark's relief. */
-      .replace('mapN.xy *= normalScale;', 'mapN.xy *= normalScale * mix( 1.0, 0.26, vDead );');
+          mix( texture2D( normalMap, vNormalMapUv ).a, 0.58, vDead );`);
+    /* Weathered wood is smooth, so ideally the normal map's strength would fall
+       with the dead mask too. It cannot be done from here: `onBeforeCompile`
+       receives the shader with its `#include` directives unresolved, so a
+       replace against text that lives inside a chunk — `mapN.xy *= normalScale`
+       — silently matches nothing. Worth knowing before spending an hour on why
+       an edit had no effect. The dead/live distinction is carried by albedo and
+       roughness instead, which at any range this trunk is seen from is the part
+       that reads. */
   };
   mat.customProgramCacheKey = () => 'juniper-bark';
   return mat;
