@@ -429,6 +429,18 @@ export function aerialCoeffs(sun, fogColor) {
     gBroad: G_BROAD, wBroad: W_BROAD, gNarrow: G_NARROW, wNarrow: W_NARROW,
     jSun: s ? s.jSun : [1, 1, 1],
     jSky: s ? s.jSky : [1, 1, 1],
+    /* The near column, and the length it ramps over.
+     *
+     * These are here because the march needs them and it is the same medium:
+     * the chunk does not light the first S_ILL metres with the far source, it
+     * lights them with jNear, which is NEAR_LVL of FOG's luminance against the
+     * far source's FAR_GAIN — a factor of about twenty-four. A march that credits
+     * the near column with the far source and then subtracts the shadowed part of
+     * it removes in-scatter this chunk never granted, and on a fully shadowed
+     * view that is most of the pixel. Exported rather than duplicated for the same
+     * reason as the coefficients above: this ratio has moved twice already. */
+    jNear: s ? s.jNear : [0, 0, 0],
+    sIll: S_ILL,
   };
 }
 

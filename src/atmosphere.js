@@ -1214,6 +1214,37 @@ class Shafts {
     const beta = new THREE.Vector3(bt(0), bt(1), bt(2));
     const bs = (i) => coeffs.betaS[i] * density;
 
+    /* ---- the near column's source, relative to the far one -----------------
+     *
+     * The chunk does not light the whole ray with the far source. Inside the
+     * first sIll metres it lights the air with jNear — wall bounce and the low
+     * sky through the aperture, at NEAR_LVL of FOG's luminance — while the far
+     * zone gets the free-beam source with FAR_GAIN on it. The ratio is about
+     * 1:24.
+     *
+     * This march was crediting every segment with the far source, including the
+     * near ones, and then subtracting the shadowed fraction of that. Which means
+     * that in the near field it was taking back in-scatter the chunk had never
+     * granted, by a factor of twenty-odd. It went unnoticed because it is almost
+     * invisible where the air is lit — accV and accAll agree there and the
+     * difference is near zero however wrong the scale is — and it is worst
+     * exactly where the air is entirely shadowed, which is the one case nobody
+     * had a view of until far_270 was framed deep in the wash. Measured there:
+     * the pass was removing 55% of the radiance from shaded near rock, and about
+     * a quarter of the whole frame, which is both the "mush" and a good part of
+     * why that framing read as a different hour.
+     *
+     * The near-field source split is the fix System 4 traced and this system
+     * shipped; the march simply never received it and stayed in the pre-fix
+     * world. This is that fix reaching the second integration of the same medium.
+     *
+     * Luminance ratio rather than per-channel, because the hue of the near source
+     * is already carried by the chunk and what is wrong here is a level. */
+    const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    const illNear = coeffs.jNear && coeffs.jSun
+      ? Math.min(1, lum(coeffs.jNear) / Math.max(1e-6, lum(coeffs.jSun)))
+      : 1;
+
     this.mat = new THREE.ShaderMaterial({
       uniforms: {
         tDepth: { value: null },
@@ -1243,6 +1274,8 @@ class Shafts {
         uCohere: { value: SHAFT_COHERE },
         uRed: { value: SHAFT_RED },
         uHasShadow: { value: 0 },
+        uIllNear: { value: illNear },
+        uSIll: { value: coeffs.sIll || 150 },
       },
       vertexShader: /* glsl */`
 varying vec2 vUv;
@@ -1273,6 +1306,8 @@ uniform float uMaxDist;
 uniform float uGain;
 uniform float uCohere;
 uniform float uRed;
+uniform float uIllNear;
+uniform float uSIll;
 uniform float uHasShadow;
 uniform int uSteps;
 varying vec2 vUv;
@@ -1386,7 +1421,13 @@ void main() {
        to either integral, so the two stay comparable and the emitted value is
        still exactly a correction. */
     float coh = exp(-s / uCohere);
-    vec3 seg = tr * ph * be * beamT * dt;
+    /* The chunk's illumination ramp, so this march is correcting the in-scatter
+       that was actually granted rather than a larger one it imagined. Applied to
+       the segment, so it lands on accV and accAll identically and the emitted
+       value stays exactly a correction — weighting only one of them would make
+       this an in-scatter term in its own right, with a sign. */
+    float wIll = uIllNear + (1.0 - uIllNear) * (1.0 - exp(-s / uSIll));
+    vec3 seg = tr * ph * be * beamT * dt * wIll;
     accV += seg * mix(1.0, visible(p), coh);
     accAll += seg;
     tr *= exp(-be * dt);
