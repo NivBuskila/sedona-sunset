@@ -830,10 +830,35 @@ export class Terrain {
      * erosional variation" — a colluvial slope this size is drained, and the
      * drainage is what gives it its vertical grain. */
     const gully = 3.4 * wall * (ridged(x * 0.085, z * 0.016, 2, 437) - 0.52);
+    /* ---- the col the sun sits in ----
+     * The brief says the sun sits ahead in a gap between formations and pulls you
+     * forward, and the walk was ending in a bowl at 14.5/255 — a fifth of the
+     * light it starts in, with the payoff as the darkest part of the experience.
+     * Ray-marching the height field toward the sun from the centreline names the
+     * culprit without ambiguity: at every station from z = -260 back, the highest
+     * obstruction is *this headwall's own west flank*, at z = -355 to -396 and 40
+     * to 50 m up, and it clears the 15 degree sun by a margin that grows from 1.5
+     * degrees to 12. The amphitheatre closed the aperture the brief depends on.
+     *
+     * So the fix is a col cut on the sun's own bearing rather than on the axis.
+     * The sun is at azimuth -9 degrees, horizontal bearing (-0.156, -0.988), which
+     * is nine degrees west of straight up-wash, so the notch has to lean west as it
+     * goes — an axial notch misses it by fourteen metres at the far end. `perp` is
+     * the perpendicular distance from that bearing line, so the cut follows the
+     * sight line to the sun exactly, which is also the only shape that opens the
+     * aperture without flattening the bowl on the other three sides.
+     *
+     * This is not a lighting cheat dressed as terrain. A wash head *is* a drainage
+     * col — the water that cut the wash came over it — so the one place the
+     * headwall should be low is where the drainage comes from, and the sun sitting
+     * in that gap is the composition the brief asks for rather than one imposed on
+     * it. Exposure and albedo are untouched. */
+    const perp = Math.abs(-0.988 * x + 0.156 * (z + 300.0));
+    const col = wall * (1 - smoothstep(9.0, 30.0, perp)) * 17.0;
     return ramp * ramp * 10.0
          + wall * (26.0 + 11.0 * fbm(x * 0.021, z * 0.021, 3, 421)
                         + 6.0 * (ridged(x * 0.034, z * 0.034, 2, 423) - 0.5))
-         - notch - gully;
+         - notch - gully - col;
   }
 
   /** Height at the far-field crossover, so the blend starts from something
