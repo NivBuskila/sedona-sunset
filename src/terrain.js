@@ -1609,6 +1609,100 @@ if (rockW > 0.002) {
   wN     = gWN;
 }
 
+/* ---- midground bedform relief: the only normal that survives out there ──────
+ * A user walking the scene called the 30-60 m floor "melting", and that word is
+ * about form rather than surface, so it was worth measuring the normal instead
+ * of the albedo for once. tools/_meltprobe.mjs does it offline. The result ends
+ * five rounds of work aimed at the wrong quantity:
+ *
+ *   dirt normal map, RMS tangent slope    mip 0          0.3233
+ *   at 30 m, filtered as actually sampled                0.0061
+ *   ...after the 0.16 + 0.84*grainF fade                 0.0010
+ *
+ * Three parts in a thousand. **At 30 m and beyond the shading normal is, to
+ * within a fraction of a percent, the interpolated geometric normal of the
+ * mesh.** No texture change can matter there, because no texture arrives.
+ *
+ * And the mesh has nothing to give either, which was the other half of the
+ * probe: the height field's RMS across-wash slope is 0.4407 over a 5 cm baseline
+ * against 0.4286 over 20 cm, a ratio of 1.028. The field is smooth below the
+ * grid, so the grid is faithful and refining it would recover 3% of nothing.
+ * The form at that scale was never authored.
+ *
+ * Which leaves authoring it here, and the footprint dictates its shape
+ * completely. A midground pixel is 29 mm across the view and 615 mm along it at
+ * 30 m, rising to 58 x 2456 mm at 60 m — an anisotropy of 21:1 going on 42:1.
+ * Anything whose phase varies along the view is averaged over hundreds of texels
+ * and returns its mean. Only structure that varies *across* the view survives,
+ * which on a wash floor means bedforms whose crests run downstream: braid
+ * ridges, gravel stringers, the low benches between anastomosing threads. Those
+ * are the right geomorphology anyway.
+ *
+ * The obliquity budget is tight and is the part that is easy to get wrong. The
+ * albedo mottle above already runs across-channel and still dies by 60 m,
+ * because its directions carry a 6-14 degree tilt off pure across-channel and at
+ * 42:1 that tilt is multiplied by forty-two before it reaches fwidth. The rule
+ * that falls out is that a wave of wavelength L tolerates a downstream direction
+ * component of about 0.12 L, so the short wavelengths here are within half a
+ * degree of pure across-channel and only the metre-scale one is allowed to lean.
+ *
+ * Amplitudes are set from the shading response rather than by eye. The sun is at
+ * -9 degrees azimuth against a wash heading near +9, so it makes an 18 degree
+ * angle with the channel: an across-channel slope sees 0.31 of the solar azimuth
+ * and the base term is sin(11 deg) = 0.19, giving a luminance modulation of
+ * about 1.6 times the slope. Slopes of 0.08 to 0.12 therefore buy 13 to 19 per
+ * cent, which is a real bedform reading. It is also safely off the cliff this
+ * project has fallen down twice: self-shadowing would need a slope past 0.6, so
+ * this cannot go binary the way the clast grit did, and the metric it moves will
+ * be measuring structure rather than a lit/unlit decision.
+ *
+ * Ramped in on the footprint so the near field is untouched. Close up, form at
+ * this scale is carried by the clasts and the grain, both of which are already
+ * modelled and both of which are sharp; the ramp means this term is a midground
+ * replacement for them rather than an addition on top. */
+float bedW = smoothstep(0.006, 0.022, footMin) * floorB
+           * (1.0 - smoothstep(0.10, 0.30, slope));
+if (bedW > 0.004) {
+  const vec2 bd1 = vec2(1.00000,  0.0000), bd2 = vec2(0.99993, -0.0120);
+  const vec2 bd3 = vec2(0.99968,  0.0252), bd4 = vec2(0.99899, -0.0450);
+  const float bl1 = 0.21, bl2 = 0.37, bl3 = 0.68, bl4 = 1.18;
+  float bp1 = dot(wxz, bd1) / bl1, bp2 = dot(wxz, bd2) / bl2;
+  float bp3 = dot(wxz, bd3) / bl3, bp4 = dot(wxz, bd4) / bl4;
+  /* Same band limit bsin uses, kept per-term so each wavelength dies on its own
+     schedule rather than the shortest one taking the rest with it. */
+  float bk1 = 1.0 - smoothstep(0.22, 0.55, fwidth(bp1));
+  float bk2 = 1.0 - smoothstep(0.22, 0.55, fwidth(bp2));
+  float bk3 = 1.0 - smoothstep(0.22, 0.55, fwidth(bp3));
+  float bk4 = 1.0 - smoothstep(0.22, 0.55, fwidth(bp4));
+  /* Slope amplitudes, not height amplitudes — the shading response is linear in
+     slope and it is the quantity the arithmetic above is about. The gradient of
+     A*sin(2*pi*p) with respect to world position is A*2*pi*cos(2*pi*p)*d/L, so
+     working in slope means the constants below *are* the slopes. */
+  const float TAU = 6.2831853;
+  /* Braiding rather than corduroy: the amplitude is modulated by the macro noise
+     so threads appear and die out along their length. That modulation varies
+     downstream, which the footprint will filter to its mean — which is exactly
+     right, because a filtered amplitude is a uniform bedform and a filtered
+     *phase* is no bedform at all. This is why the term is built as a fixed comb
+     with a varying envelope and not as noise. */
+  float bAmp = 0.55 + 0.55 * mac2.b;
+  float bgx = (0.052 * bk1 * cos(TAU * bp1) * bd1.x
+             + 0.044 * bk2 * cos(TAU * bp2) * bd2.x
+             + 0.038 * bk3 * cos(TAU * bp3) * bd3.x
+             + 0.030 * bk4 * cos(TAU * bp4) * bd4.x) * bAmp;
+  float bgz = (0.052 * bk1 * cos(TAU * bp1) * bd1.y
+             + 0.044 * bk2 * cos(TAU * bp2) * bd2.y
+             + 0.038 * bk3 * cos(TAU * bp3) * bd3.y
+             + 0.030 * bk4 * cos(TAU * bp4) * bd4.y) * bAmp;
+  wN = normalize(wN - vec3(bgx, 0.0, bgz) * bedW);
+  /* A bedform is a deposit as well as a shape, so the crests are winnowed a
+     shade paler and the troughs hold the fines. Small, and mean-zero, because
+     the point of this term is the normal — but a relief with no tonal
+     correlate reads as embossing. */
+  albedo *= 1.0 + (0.052 * bk1 * sin(TAU * bp1)
+                 + 0.038 * bk3 * sin(TAU * bp3)) * bedW * bAmp * 0.9;
+}
+
 /* ---- tonal and hue variance ----
    The failure this fixes is a palette spanning twenty-five degrees of hue.
    Patches go grey-violet where iron has leached or a varnish has formed, and
