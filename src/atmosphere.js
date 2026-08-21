@@ -909,8 +909,16 @@ const SHAFT_MAX_DIST = 1400;
  * so adding a second full-strength in-scatter term would double-count the air.
  * What this pass contributes is the *modulation* — the difference between lit
  * and shadowed air — which is why it is added at a fraction and why the frame
- * does not get uniformly brighter. Set by measurement on sun_gap. */
-const SHAFT_GAIN = 0.55;
+ * does not get uniformly brighter.
+ *
+ * Lowered from 0.55 after measuring what it cost. The correction is a broad
+ * gradient that is not aligned with the ridgeline silhouettes, so it dilutes the
+ * share of variation those silhouettes carry: on sun_gap, shafts on against
+ * shafts off moved the saturation ladder from 2 steps at 42% to 1 step at 25%.
+ * That is the depth ladder, which is the highest-scoring element in the project,
+ * and it is not available to spend on this. 0.35 keeps the shadowed-air
+ * darkening clearly measurable while leaving the ladder alone. */
+const SHAFT_GAIN = 0.35;
 /* Reddening of the beam along its own slant path, as an optical depth in blue
  * at the wash floor, falling with height as the dust does.
  *

@@ -95,15 +95,31 @@ import * as THREE from 'three';
  * rather than warm. Taking it to 0.011 would be true Rayleigh and would flatten
  * that. Named as the approximation it is.
  *
- * The dust gain then sets the visual range. 0.40 puts it at 4.98 km above the
- * near-ground band, against 2.50 km before: still 5-10x hazier than a Sedona
- * annual mean, which is the point — this is an active blowing-dust evening and
- * the saltation is in frame. It is short of the 15-30 km asked for, and that gap
- * is geometry rather than a dial: see the note on GEOMETRY_NEEDED below. */
+ * The dust gain then sets the visual range, and it was swept rather than picked.
+ * tools/airsweep.mjs at four settings, measuring layers.mjs on the three views
+ * the ladder is judged on, found a clear knee:
+ *
+ *     dust   range     sun_gap sat    juniper sat   wash_low sat
+ *     0.40   4.98 km    1 step 33%     1 step 31%    1 step 24%
+ *     0.56   3.56 km    2 steps 41%    1 step 35%    1 step 24%
+ *     0.76   2.62 km    2 steps 42%    1 step 33%    2 steps 33%
+ *     1.00   1.99 km    2 steps 43%    1 step 31%    1 step 19%
+ *
+ * The ladder recovers almost all of its strength by 3.56 km and is then flat:
+ * thickening the air another 1.8x buys two points of edge share on the view it
+ * is strongest in and nothing anywhere else. So the trade is not gradual, it has
+ * a corner, and the corner is where to sit. 0.56 it is — 1.4x thinner than the
+ * air a critic called the day after a haboob, with the ladder intact.
+ *
+ * Short of the 15-30 km asked for, and that gap is geometry rather than a dial:
+ * see GEOMETRY_NEEDED below. The sweep is the evidence for why. At 4.98 km the
+ * ladder is already down to one step and 33%, because the scene's deepest
+ * sightline is 550 m and thinner air needs a longer baseline to carry the same
+ * contrast. */
 const BETA_R = [0.327, 0.570, 1.000];   // x fogDensity, per metre, at any height
 const R_GAIN = 0.05;
 const BETA_M = [1.000, 0.962, 0.905];   // x fogDensity, per metre, at y = Y0
-const M_GAIN = 0.40;
+const M_GAIN = 0.56;
 
 /* What 15-30 km visual range would need from System 2, with the arithmetic, so
  * the request is checkable rather than a preference.
@@ -335,12 +351,23 @@ function hashNum(key, dflt) {
 }
 const AIR = hashNum('air', 1);
 const SUSP = hashNum('susp', 1);
+/* The dust gain on its own, separately from AIR.
+ *
+ * These have to be separable because the two changes they represent are not the
+ * same kind of change. Cutting Rayleigh from 0.30 to 0.05 corrected an outright
+ * error — an unstratified term at 28x its physical coefficient, carrying 91% of
+ * a zenith column that should have been clear — and there is no version of this
+ * scene where putting that back is right. The dust gain is a composition call
+ * about how hazy a golden-hour evening should read, and it is the one that wants
+ * sweeping. Rolling both into one dial would mean paying for the correction with
+ * the composition or the other way round. */
+const DUST = hashNum('dust', 1);
 
 /** The three extinction coefficients as baked, after the dials. */
 function betas() {
   return {
     R: BETA_R.map((x) => x * R_GAIN * AIR),
-    M: BETA_M.map((x) => x * M_GAIN * AIR),
+    M: BETA_M.map((x) => x * M_GAIN * AIR * DUST),
     S: BETA_S.map((x) => x * S_GAIN * SUSP),
   };
 }
@@ -462,7 +489,7 @@ export function installAerial(sun, fogColor) {
     tint, fogL: L, jRay, jSky, jSun, jNear,
     betaR: betas().R, betaM: betas().M, betaS: betas().S,
     H: H_DUST, hS: H_SUSP, sIll: S_ILL, farGain: FAR_GAIN,
-    air: AIR, susp: SUSP,
+    air: AIR, susp: SUSP, dust: DUST,
   });
 
   /* Published so a measurement can check what was actually baked rather than
