@@ -216,6 +216,27 @@ Two things determine the answer, and both were wrong once:
   level zero actually get used, and mip zero is the only level with the top octave still in
   it. That one number moved the grit layer from 0.41 to 0.65 with no change to the map.
 
+Two dead ends, both tested, so nobody spends a round on them:
+
+- **Quantisation is not holding the number down.** It is tempting when the frame sits at a
+  mean of 0.11 — byte value 29, where a 14% per-pixel contrast is four code values wide — to
+  suppose 8-bit truncation is eating the fine content. `wallprobe --expose` scales to a target
+  mean and quantises, and the ratio does not move: 0.68 at means of 0.50, 0.30, 0.20 and 0.11.
+  Sub-step content does not vanish under rounding, it dithers, and dither is white.
+- **Amplitude and spectrum are independent knobs.** Halving a layer's contrast left its ratio
+  at 0.68, unchanged at every distance. So a layer that is too loud can be quietened without
+  giving back frequency content — and, the direction that matters, a layer in the wrong band
+  *cannot be fixed by turning it up*. That is the whole trap of the raw gradient.
+
+There is also a real gap between what the maps can do and what the capture measures — the
+probe read 0.68 on a planar wall while the capture read 0.52 — and it is not a discrepancy,
+it is the scene: bedding tone, cast shadow, macro variation and aerial perspective are all
+low-frequency, all legitimate content, and all in the denominator. The levers on that side
+are therefore the weights of the highest-frequency terms, and any broad tonal band whose
+contrast is not earning its place. A sub-bed tone step is the clearest example — it is a wide
+horizontal ribbon, so every unit of it lands in the denominator, and what should carry a bed
+at distance is the shadow line under its lip, which is geometry.
+
 And one thing that will silently undo all of it: **pigment survives what geometry does not.**
 Albedo goes through the mip chain and every terminator fade intact, so any feature you author
 as a colour change will still be there when its normal has faded to nothing — as a flat spot
