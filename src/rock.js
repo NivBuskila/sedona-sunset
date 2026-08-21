@@ -149,8 +149,21 @@ function snapContact(y) {
 function subBed(y, li) {
   const L = LAYERS[li];
   const d = y - L.y0;
-  return d / L.bedT + 0.55 * Math.sin(d * 0.23 + li * 2.117)
-                    + 0.30 * Math.sin(d * 0.61 + li * 3.733 + 1.4);
+  /* Three terms, not two, and the frequencies are chosen to be mutually
+     incommensurate. Two sines at 0.23 and 0.61 give a sub-bed thickness that
+     repeats every twenty-seven metres, and the autocorrelation of the vertical
+     luminance profile on the bend wall duly peaked at 0.51 against 0.11–0.15 on
+     photographs — periodic banding, which is one of the loudest procedural tells
+     there is. Real bed thicknesses within a formation are near enough lognormal
+     and essentially uncorrelated from one bed to the next.
+     The constraint on the fix is that this has to stay monotonic in y, or beds
+     fold back through each other: the sum of amplitude times frequency must stay
+     under 1/bedT, which for the thinnest bed here is 0.42. These three sum to
+     0.37. That ceiling is why the answer is three well-spread frequencies rather
+     than the six a really flat spectrum would want. */
+  return d / L.bedT + 0.44 * Math.sin(d * 0.1873 + li * 2.117)
+                    + 0.31 * Math.sin(d * 0.4271 + li * 3.733 + 1.4)
+                    + 0.17 * Math.sin(d * 0.9137 + li * 1.259 + 0.6);
 }
 
 /* Resistance of a sub-bed, in [0,1], and it has to agree between here and the
@@ -492,10 +505,19 @@ function wallGrid(path, terrain, side) {
          slid slabs rather than as a jointed wall. A joint is a fracture through
          the *rock*, so a fin runs from the talus to the rim; what varies bed to
          bed is only how far each has weathered back into it. */
-      u += jointOffset(a1, 101, 3.1) * (0.45 + 0.55 * vert);
-      u += jointOffset(a2, 107, 4.6) * 0.7;
-      u += jointOffset(a1 * 1.7 + li * 0.37, 200 + li, 0.85);
-      u += jointOffset(a3, 300 + li * 7, 1.15) * vert;
+      /* Except that the pale beds take much less of it, and the Coconino takes
+         least of all. It is the strongest cliff-former in the section — a massive
+         aeolian sandstone that holds a clean vertical face for two hundred feet —
+         and it was coming out as the most broken unit in the wall rather than the
+         least, which inverts the one relationship that makes a Sedona skyline
+         legible. Well-cemented massive rock is jointed at *wide* spacing and
+         retreats by slabbing off whole plates, so its face stays flat between
+         joints; it is the thin friable beds that come apart into buttresses. */
+      const mass = 1 - L.pale * 0.66;
+      u += jointOffset(a1, 101, 3.1) * (0.45 + 0.55 * vert) * mass;
+      u += jointOffset(a2, 107, 4.6) * 0.7 * mass;
+      u += jointOffset(a1 * 1.7 + li * 0.37, 200 + li, 0.85) * mass;
+      u += jointOffset(a3, 300 + li * 7, 1.15) * vert * mass;
 
       /* Resistant sub-beds stand proud, *in the mesh*. buildColumn has been
          placing a pair of rows nineteen centimetres apart at every strong contact
@@ -989,7 +1011,16 @@ export function buildTalus(path, terrain, material) {
      blocks are twenty centimetres to two metres across and the wall's 6.45 m
      tile gives one of them a single flat tone. That is the whole of why the
      apron read as pale untextured polyhedra. */
-  const mat = makeRockMaterial(material.userData.tex, 5.5);
+  /* 1.6, down from 5.5. The reason for raising it was real — at the walls' own
+     6.45 m tile a 30 cm block gets a single flat tone — but 5.5 overshot badly:
+     it put the laminae at two and a half centimetres, so a fist-sized cobble wore
+     sixteen of them and came out as a streaked fibrous thing unrelated to
+     sandstone. What has changed since is that the grit layer is locked to the
+     pixel footprint, so a block now gets all its pixel-scale material from a
+     source that does not care how big the block is. The coarse map's remaining
+     job on talus is only to say which bed the block came out of, and that wants
+     nearly the parent tile. */
+  const mat = makeRockMaterial(material.userData.tex, 1.6);
   /* Attempts, not instances: most are rejected because they land between chutes.
      At the first setting there were nine thousand attempts producing seventeen
      hundred blocks up to six metres across, and the render showed why both numbers
@@ -1127,8 +1158,9 @@ float bedResist(float id, float li) {
 
 /* Matched exactly by subBed() on the CPU. */
 float bedCoord(float d, float bedT, float li) {
-  return d / bedT + 0.55 * sin(d * 0.23 + li * 2.117)
-                  + 0.30 * sin(d * 0.61 + li * 3.733 + 1.4);
+  return d / bedT + 0.44 * sin(d * 0.1873 + li * 2.117)
+                  + 0.31 * sin(d * 0.4271 + li * 3.733 + 1.4)
+                  + 0.17 * sin(d * 0.9137 + li * 1.259 + 0.6);
 }
 
 vec3 triSample(sampler2D t, vec3 p, vec3 w, float sc){
@@ -1359,7 +1391,16 @@ float xbC = y / 2.3 + 0.21 * sin(aS * 0.031);
 float xbSet = floor(xbC);
 float xbT = xbC - xbSet;
 float xbDir = sin(xbSet * 2.7 + 1.1) > 0.0 ? 1.0 : -1.0;
-float xbPh = (y + aS * (0.42 + 0.12 * sin(aS * 0.06)) * xbDir) * 2.9 + xbSet * 5.1;
+/* Tangential, not straight. A constant dip within the set gives perfectly
+   parallel constant-spacing lines running edge to edge, which is brushed veneer,
+   and it was the loudest thing left in the close-up. A real dune foreset does not
+   meet the floor of its set at an angle: it *asymptotes* into it, steep at the
+   crest and flattening to nearly bedding-parallel at the toe, because that is
+   where the avalanching sand came to rest. Scaling the dip by the height within
+   the set turns every lamina from a line into the concave sweep a photograph of
+   the Coconino shows. */
+float tang = 0.16 + 0.84 * pow(xbT, 0.62);
+float xbPh = (y + aS * (0.42 + 0.12 * sin(aS * 0.06)) * xbDir * tang) * 2.9 + xbSet * 5.1;
 float xb = sin(xbPh);
 /* The foresets *inside* the set. One sine per set is four fat stripes, and the
    critique's sharpest single observation about the close-up was that a real face
@@ -1367,7 +1408,19 @@ float xb = sin(xbPh);
    nothing at all between them here. Seven times the frequency puts a lamina every
    five centimetres, phase-modulated by the set's own sine so the train curves
    with the foreset instead of crossing it. */
-float xbF = sin(xbPh * 6.5 + 0.55 * sin(xbPh * 1.7));
+float xbF = sin(xbPh * (6.5 + 1.5 * sin(aS * 0.19 + xbSet * 2.3))
+                + 0.55 * sin(xbPh * 1.7));
+/* Reactivation surfaces: the truncations *within* a set, where the dune face was
+   scoured and rebuilt before the set as a whole was beheaded. Three or so per set,
+   wandering along the wall, each shifting the foreset train's phase across it so
+   the laminae above do not line up with the laminae below. Without these the
+   sub-parallel lines run uninterrupted from one edge of the face to the other,
+   which no cross-bed set does. */
+float xbR = xbT * 3.0 + 0.34 * sin(aS * 0.17 + xbSet * 1.9);
+float xbRs = floor(xbR);
+xbF = mix(xbF, sin(xbPh * 6.5 + xbRs * 2.1), 0.55);
+float xbRw = max(0.020, fwidth(xbR) * 1.8);
+float xbRcut = (1.0 - smoothstep(0.0, xbRw, min(xbR - xbRs, 1.0 - (xbR - xbRs))));
 /* The truncation surface at the top of each set: the flat erosional cut that
    beheaded the dune before the next one buried it. It is a *shadow line*, which
    is what makes a cross-bed set read as a set rather than as diagonal shading.
@@ -1380,6 +1433,7 @@ float xbVis = lVert * (0.30 + 0.70 * lPale);
 albedo *= 1.0 + xb * 0.075 * xbVis * (1.0 - smoothstep(0.16, 0.55, foot));
 albedo *= 1.0 + xbF * 0.055 * xbVis * (1.0 - smoothstep(0.04, 0.20, foot));
 albedo *= 1.0 - xbCut * 0.16 * xbVis;
+albedo *= 1.0 - xbRcut * 0.055 * xbVis;
 
 /* ---- iron-oxide lenses ----
    This is where the saturated end of the distribution comes from, and the reason
@@ -1507,6 +1561,16 @@ float joint = clamp(jt, 0.0, 1.0) * jFace * jVert * (0.55 + 0.45 * (1.0 - lPale 
 float jLip = clamp(jt2.y, 0.0, 1.0) * jFace * jVert;
 albedo *= 1.0 - joint * 0.46;
 albedo *= 1.0 + jLip * 0.13 * sTerm;
+/* ---- and the joint is an aperture, not a scribed line ----
+   Darkening the albedo along a crack gives a dark pen line of constant width on a
+   flat face, which is what these were. A joint is an *opening*: it has width, it
+   has depth, its walls occlude each other so the inside is dark independent of
+   which way the sun is, water runs down it so manganese concentrates in it and
+   the pigment is darkest at the mouth, and it interrupts whatever bedding trace it
+   crosses because the two blocks either side of it have weathered back by
+   different amounts. Occlusion is what makes the first of those read; the varnish
+   concentration is what makes it read as mineral rather than as ink. */
+float jOpen = clamp(jt, 0.0, 1.0) * jFace;
 
 /* ---- desert varnish ----
    Manganese and iron oxides washed out of the rock above and plated onto the face
@@ -1559,6 +1623,23 @@ float vHang = smoothstep(vSrc + 0.7, vSrc - 0.8, y)
 float varn = clamp(step(0.48, vh1) * vLat * vHang * lVert * (1.0 - lPale * 0.70)
            * smoothstep(0.50, 0.14, abs(gN.y)) * (1.0 - fresh)
            * (0.60 + 0.60 * vr.g) * (0.72 + 0.56 * gr.r) * 1.55, 0.0, 0.78);
+
+/* ---- talus varnish, which is the other half of the same mineral ----
+   On a cliff, varnish hangs in vertical tongues from a shedding lip, so the gate
+   above is a *vertical*-face gate. On a fallen block none of that applies and the
+   gate is exactly backwards: a slab that has lain on an apron for centuries
+   varnishes on the face pointing at the sky, because that is the face that gets
+   the dew and the airborne clay, and the undersides stay the colour of fresh
+   rock. Suppressing it there is part of why the apron read as a different
+   material from the wall it fell off. uDetail tells the two apart for free — the
+   walls sample at 1.0 and the apron at 1.6 — so no new uniform. */
+float isTal = step(1.3, uDetail);
+float tVarn = isTal * smoothstep(0.30, 0.85, gN.y) * (1.0 - lPale * 0.70)
+            * (0.45 + 0.55 * vr.b) * (0.70 + 0.60 * gr.r) * 0.62;
+varn = max(varn, clamp(tVarn, 0.0, 0.72));
+/* Manganese concentrated in the joints, per the aperture note above. */
+varn = max(varn, clamp(jOpen * 0.46 * (1.0 - lPale * 0.55) * (0.6 + 0.6 * vr.g),
+                       0.0, 0.58));
 albedo = mix(albedo, uVarnish * (0.62 + 0.38 * lum), varn);
 
 /* ---- dust and weathered fines on the up-facing surfaces ----
@@ -1570,9 +1651,13 @@ albedo = mix(albedo, uVarnish * (0.62 + 0.38 * lum), varn);
    collect on it painted every bed contact in pale dust — the same one-pixel
    bright line by another route. A bench at the angle of repose is 0.84, so
    there is plenty of room between the two. */
+/* And two thirds less of it on the apron. A bench is a horizontal tread that
+   catches silt and keeps it; a talus block is a tilted facet on a slope that
+   sheds, so what pale fines it holds are a film in its hollows, not a coat. Pale
+   dirt laid over half a block is most of why the apron measured grey. */
 float dustW = smoothstep(0.58, 0.92, gN.y)
             * (0.40 + 0.45 * smoothstep(0.35, 0.75, mac.g)) * (1.0 - lVert * 0.35)
-            * (1.0 - fresh * 0.85);
+            * (1.0 - fresh * 0.85) * (1.0 - isTal * 0.68);
 if (dustW > 0.01) {
   vec3 dust = texture2D(uDirtA, domUV(vWPos, aN) * 0.30).rgb;
   albedo = mix(albedo, dust * 1.05, dustW * 0.62);
@@ -1696,7 +1781,7 @@ float ledgeShade = (1.0 - smoothstep(0.0, 1.6, y - lBot)) * (1.0 - lVert) * 0.55
 float sbUp = bedResist(sbI + 1.0, lIdx);
 float sbLip = smoothstep(0.80, 1.0, sbT) * smoothstep(0.54, 0.74, sbUp);
 tAO = clamp(rkAO * (0.72 + 0.34 * (1.0 - cav)) - ledgeShade * 0.5 - sbLip * 0.30
-            - joint * 0.30 - ironBase * 0.22, 0.18, 1.0);
+            - joint * 0.62 - ironBase * 0.22, 0.18, 1.0);
 /* The grit's crevice occlusion, unfiltered by distance: it is a tone, it is
    scale-locked to the footprint, and it is what keeps the material present at
    the range where every normal in the shader has already faded out. */
