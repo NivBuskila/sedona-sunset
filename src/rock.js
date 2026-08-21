@@ -1424,7 +1424,10 @@ vec4 gr = mix(grA, grB, gTw);
 float lumC = dot(rkA, vec3(0.299, 0.587, 0.114));
 float lum = mix(1.0, lumC / uRockLum, 0.88)
           * mix(1.0, rkA2 / uRockLum, 0.16 + 0.46 * grainF)
-          * (1.0 + (gr.r - 0.5) * 1.55);
+/* Same reasoning as the cavity weight below: a shaded face has no direct light
+   for a normal to modulate, so on those facets the grain has to come through as
+   tone and occlusion or it does not come through at all. This is the tone half. */
+          * (1.0 + (gr.r - 0.5) * (1.55 + 0.75 * (1.0 - sTerm)));
 lum = clamp(lum, 0.40, 1.80);
 
 /* Behind the rim, whatever bed capped the summit is buried under its own
@@ -1842,7 +1845,15 @@ tAO = clamp(rkAO * (0.72 + 0.34 * (1.0 - cav)) - ledgeShade * 0.5 - sbLip * 0.30
 /* The grit's crevice occlusion, unfiltered by distance: it is a tone, it is
    scale-locked to the footprint, and it is what keeps the material present at
    the range where every normal in the shader has already faded out. */
-tAO *= mix(1.0, gr.a, 0.75);
+/* Weighted up on faces the sun has left, and this is not a fudge — it is the same
+   physics the terminator fade is. Grain is visible on a *lit* surface because each
+   grain shadows its neighbour, which is a statement about the normal; it is
+   visible on a *shaded* surface because each crevice sees less of the sky, which
+   is a statement about occlusion. Those are different mechanisms and they do not
+   both operate at once. With the sun moved onto the far side of this wall the
+   normal term contributes essentially nothing here, so leaving the cavity term at
+   its lit-face weight throws away the only channel a shadowed face has. */
+tAO *= mix(1.0, gr.a, 0.75 + 0.22 * (1.0 - sTerm));
 /* Held on much further than before. The map's occlusion channel is now the
    cavity of a packing — the crevice between two touching grains and the floor of
    a weathering pit — and that is a *tone*, not a normal: it filters correctly
