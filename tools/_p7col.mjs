@@ -43,6 +43,37 @@ import { decode } from './png.mjs';
 const a = process.argv.slice(2);
 const files = a.filter((x) => /\.png$/i.test(x));
 const POP = a.includes('--all') ? 1 : 0.40;   // brightest 40%, as every rock target is stated
+const di = a.indexOf('--down');
+const DOWN = di >= 0 ? Math.max(1, +a[di + 1] || 2) : 1;
+const NOGUARD = a.includes('--noguard');      // for frames whose manifest predates this tool
+
+/* Box-downsample before measuring, which is how "does this statistic depend on
+   resolution" gets answered on identical content rather than on two renders that
+   also differ by sampling. It matters because the population this metric selects
+   is the brightest 40% *of the pixels present*, and a mip chain averaging a metre
+   of wall into one pixel does not produce the same distribution as one resolving
+   it. Averaged in linear light, because averaging code values is a different
+   operation and the wrong one. */
+function down(im, n) {
+  if (n <= 1) return im;
+  const w = Math.floor(im.w / n), h = Math.floor(im.h / n);
+  const out = new Uint8Array(w * h * 3);
+  const toLin = (v) => { const s = v / 255; return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4); };
+  const toEnc = (l) => 255 * (l <= 0.0031308 ? l * 12.92 : 1.055 * Math.pow(l, 1 / 2.4) - 0.055);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const acc = [0, 0, 0];
+      for (let j = 0; j < n; j++) {
+        for (let i = 0; i < n; i++) {
+          const p = ((y * n + j) * im.w + (x * n + i)) * im.ch;
+          for (let c = 0; c < 3; c++) acc[c] += toLin(im.px[p + c]);
+        }
+      }
+      for (let c = 0; c < 3; c++) out[(y * w + x) * 3 + c] = Math.max(0, Math.min(255, Math.round(toEnc(acc[c] / (n * n)))));
+    }
+  }
+  return { w, h, ch: 3, px: out };
+}
 
 /* The same windows sat.mjs uses, so the figures are comparable with every number
    already quoted in CONTRACT.md. Widening or moving one of these silently would
@@ -118,8 +149,14 @@ function logsFor(file) {
   return { path: null, logs: null };
 }
 
-console.log('\n  lit rock colour, brightest ' + (POP === 1 ? '100' : '40') + '% of the window');
-console.log('  ' + 'frame'.padEnd(30) + 'sat   q25-q75      hue   q25-q75     B/G      V   maxcv  >=254  >=250');
+console.log(POP === 1
+  ? '\n  *** WHOLE WINDOW — this is NOT the population the contract band describes. ***\n' +
+    '  The bands are stated on the brightest 40%. On wall_lit the same crop reads 0.615\n' +
+    '  at 20.9 degrees restricted and 0.685 at 14.3 whole, because the unrestricted\n' +
+    '  window includes the oblique and shaded parts of the wall, which are redder and\n' +
+    '  more saturated. Quoting this against the band reads as a regression twice over.'
+  : '\n  lit rock colour, brightest 40% of the window — the contract population');
+console.log('  ' + 'frame'.padEnd(24) + 'resolution '.padEnd(11) + 'sat   q25-q75      hue   q25-q75     B/G      V   maxcv  >=254  >=250');
 
 let refused = 0;
 for (const f of files) {
@@ -128,11 +165,11 @@ for (const f of files) {
   if (!key) { console.log('  ' + base.padEnd(30) + '  no rock window defined for this view'); continue; }
 
   const { path, logs } = logsFor(f);
-  if (logs === null) {
-    console.log('  ' + base.padEnd(30) + '  REFUSED: no manifest found, cannot confirm the frame compiled');
+  if (logs === null && !NOGUARD) {
+    console.log('  ' + (base + (DOWN > 1 ? ' /' + DOWN : '')).padEnd(30) + '  REFUSED: no manifest found, cannot confirm the frame compiled');
     refused++; continue;
   }
-  if (logs.length) {
+  if (logs && logs.length) {
     console.log('  ' + base.padEnd(30) + `  REFUSED: ${path} logs ${logs.length} entr${logs.length > 1 ? 'ies' : 'y'}`);
     const first = String(logs[0]).split('\n').find((l) => /ERROR|error/.test(l)) || String(logs[0]).split('\n')[0];
     console.log('  ' + ''.padEnd(30) + `  ${first.slice(0, 90)}`);
@@ -140,11 +177,12 @@ for (const f of files) {
   }
 
   for (const [label, r] of REGIONS[key]) {
-    const m = measure(decode(readFileSync(f)), r);
+    const im = down(decode(readFileSync(f)), DOWN);
+    const m = measure(im, r);
     if (!m) { console.log('  ' + base.padEnd(30) + '  window empty'); continue; }
     const spread = m.hueQ[1] - m.hueQ[0];
     const flag = spread < 3 ? '  <-- SPREAD COLLAPSED, sample is probably not rock' : '';
-    console.log('  ' + base.padEnd(30) +
+    console.log('  ' + base.padEnd(24) + `${im.w}x${im.h}`.padEnd(11) +
       m.sat.toFixed(3) + ' ' + `${m.satQ[0].toFixed(2)}-${m.satQ[1].toFixed(2)}`.padStart(11) +
       m.hue.toFixed(1).padStart(9) + ' ' + `${m.hueQ[0].toFixed(1)}-${m.hueQ[1].toFixed(1)}`.padStart(11) +
       m.bg.toFixed(3).padStart(8) + m.v.toFixed(3).padStart(7) +

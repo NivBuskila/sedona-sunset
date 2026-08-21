@@ -2612,6 +2612,79 @@ with a Hermite landing on exactly (1, 1), which makes white reachable only from 
 0.589–0.600, in the ungraded control as well as the graded frame, so it is an exposure question
 and not a grading one.**
 
+## The lit-rock colour population, written down so two tools cannot disagree again
+
+The flagship figure had two honest answers on the same commit — **0.615 at 21°** and **0.687 at
+14.6°** — and it was nearly routed as a live regression on the most-defended number in the
+project. It is neither a regression nor a transient. It is two different populations under one
+name, and the axis is the **brightest-fraction threshold**.
+
+Measured on one frame, `sys7k_wall_lit`, one crop, at 1600×900:
+
+| population | saturation | hue | V |
+| --- | --- | --- | --- |
+| brightest 40% — **the contract population** | 0.615 | 20.9° | 0.687 |
+| whole window | 0.685 | 14.3° | 0.357 |
+| whole window, ungraded | 0.697 | 15.0° | 0.367 |
+
+The unrestricted window includes the oblique and shaded parts of the same wall, which are
+redder and more saturated — `bend`'s wall crop reads 0.685 at 7.2° — so dropping the
+restriction drags saturation up and hue down together. **That is what walks hue six degrees,
+and it is why neither clipping story could account for it**: clipping moves the top of the
+range, so it moves saturation while leaving hue in band, which is exactly what System 2
+observed and correctly reported.
+
+So the definition, in full, because every part of it has now been the ambiguity:
+
+- **View** `wall_lit`. **Crop** the fractional rectangle `[0.30, 0.24, 0.34, 0.34]` of the
+  frame — `sat.mjs`'s `rock lit` window.
+- **Population** the brightest **40%** of the crop, ranked by max channel, after discarding
+  pixels whose max channel is under 12 code values. `sat.mjs --lit`, `hue.mjs --lit`,
+  `_p7col.mjs` by default.
+- **Statistic** the mean of the per-pixel HSV saturation, `(max − min) / max`.
+- **Either arm.** Graded and ungraded agree to 0.000 on this population, so it does not matter
+  which — but say which, because they differ by 0.012 on the *unrestricted* window.
+- **Quote the resolution.** See below; it happens not to matter for this statistic, which is
+  worth knowing rather than assuming.
+
+`sat.mjs`'s own header already warned that a whole-window figure quoted against these bands
+reads as a regression that is not there. That has now happened twice. `tools/_p7col.mjs`
+prints the population in its header and shouts when it is given `--all`.
+
+## Quote the resolution beside any `hf/lf` figure, and never compare across resolutions
+
+`hf/lf` is **resolution-dependent** and the 0.54–0.75 reference band is not a resolution-free
+constant — it was derived from photographs at their own pixels per metre. System 2 measured the
+same build, byte-identical rock, at two sizes: midwall **0.49 at 1600×900 and 0.54 at
+3200×1800**, five sixths of the apparent shortfall. The mechanism is that one pixel covers
+60.8 mm of wall at 41.2 m, so the albedo's fine octave is being resolved by the mip chain
+rather than by the shader, and `hf/lf`'s high band reads whatever relief lands near the
+one-pixel scale — which is a function of how many pixels the wall is drawn into, not of the
+surface. It also explains a midwall/upper split on one wall with one material: the crops differ
+in framing.
+
+**So: quote the resolution with every `hf/lf` number, and only compare figures shot at the same
+one.** This applies retroactively to a good many recorded figures. Buying the number with
+amplitude at 60 mm per pixel would add metre-scale relief to please a pixel-scale statistic,
+which is the pebble-dash failure already in this document, so 0.49 stands as a recorded
+decision.
+
+**The same caution does not transfer to the colour statistics, and that was measured rather
+than assumed.** It is a reasonable worry — which pixels fall in the brightest 40% depends on
+how the wall is sampled — so it was tested on one build at two render resolutions, and on the
+high-resolution frame box-downsampled in linear light so the content is identical:
+
+| `bend` wall crop, brightest 40% | saturation | hue |
+| --- | --- | --- |
+| rendered 1600×900 | 0.658 | 6.7° |
+| rendered 3200×1800 | 0.666 | 7.5° |
+| rendered 3200×1800, downsampled to 1600×900 | 0.656 | 6.7° |
+
+0.008 of saturation and 0.8° across a 2× resolution change, and the downsample recovers the
+native figure to 0.002. **Saturation and hue of the brightest 40% are resolution-stable**, so
+they cannot explain a 0.072 discrepancy, and the resolution caveat is specific to `hf/lf` and
+to the other pixel-scale statistics rather than general to the measurement suite.
+
 ## Triangles are not what this frame costs, and the frame costs 31 ms
 
 `tools/bench.mjs` on the real adapter, 2560×1440, top tier, median of seven blocks of thirty:

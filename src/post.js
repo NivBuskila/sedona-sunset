@@ -1241,6 +1241,7 @@ void main() {
       tGrain: { value: plate },
       uGrain: { value: P.grain },
       uGrainOff: { value: new THREE.Vector2() },
+      uGrainPx: { value: 256 },
       uGrainSwz: { value: 0 },
       uDither: { value: P.dither / 255 },
     },
@@ -1254,6 +1255,7 @@ uniform vec2 uGate;
 uniform sampler2D tGrain;
 uniform float uGrain;
 uniform vec2 uGrainOff;
+uniform float uGrainPx;
 uniform float uGrainSwz;
 uniform float uDither;
 
@@ -1334,7 +1336,14 @@ void main() {
    * right for the dither, because the shadows are where the encoded steps are
    * furthest apart in light.
    */
-  vec3 n = texture2D(tGrain, (gl_FragCoord.xy + uGrainOff) / 256.0).rgb - 0.5;
+  /* uGrainPx is 256 at 900 lines and larger above it, so a grain kernel stays the
+     same size relative to the *frame* rather than to the pixel. Film grain is a
+     property of the stock, so it does not get finer because the scan did: left
+     unscaled, the plate would tile 1.6 times more often across a 1440-line frame
+     and the grain would read as a different, finer stock at the resolution this
+     actually ships at. Errs toward invisible either way, which is why it went
+     unnoticed, but it is still a term whose look depended on the capture size. */
+  vec3 n = texture2D(tGrain, (gl_FragCoord.xy + uGrainOff) / uGrainPx).rgb - 0.5;
   /* Rotating which channel carries the luminance component decorrelates
      successive frames on top of the offset, so a walk does not show the plate
      sliding across the frame as a texture. */
@@ -1669,7 +1678,20 @@ void main() {
        grid — so a blend one texel along the edge is the right width at any
        resolution. The gate is a luminance range, which is unitless. */
     ru.uEdge.value = level.edge ? P.edgeAmount : 0.0;
-    ru.uGate.value.set(P.edgeLo, P.edgeHi);
+    /* The silhouette gate scaled to the frame, for the same reason the circle of
+       confusion above is. It is a threshold on the luminance range across *one
+       pixel*, and that is not a property of the scene: the skyline carries about
+       150 code values across a pixel at 900 lines and spreads the same step over
+       1.6 pixels at 1440, so a fixed 70-130 gate that fully fires at capture
+       resolution only partly fires at the resolution the thing is delivered at —
+       weakening the resolve exactly where it was measured to be needed. Surface
+       texture shrinks per pixel by the same factor, so scaling the gate keeps the
+       discrimination between an edge and a surface where it was tuned.
+       Exactly 1.0 at 900 lines, so every figure already recorded against this pass
+       is untouched by the scaling. */
+    const gs = h / 900;
+    ru.uGate.value.set(P.edgeLo * gs, P.edgeHi * gs);
+    ru.uGrainPx.value = 256 * gs;
     ru.uGrain.value = P.grain;
     draw(resolveMat, null);
     return true;
