@@ -421,6 +421,60 @@ export class Terrain {
       h += floorZone * (0.215 * stair(l1, 3, 0.19)
                       + 0.105 * stair(l1b, 2, 0.22)
                       + 0.055 * stair(l2, 2, 0.30));
+
+      /* ---- and the octaves underneath them, which were empty ──────────────
+       * The three staircases above are metre-to-decametre forms and there was
+       * nothing below them at all. tools/_bandprobe.mjs measured the floor's
+       * slope per octave and it rises monotonically into the metre band — 0.021
+       * at 5-10 cm against 0.114 at 1.6-3.2 m — where a self-affine natural
+       * surface holds it roughly constant. A user walking the scene called the
+       * result "melting", and that is exactly what a spectrum shaped like this
+       * looks like: large smooth forms with glassy flanks. The staircases were
+       * themselves a fix for the same complaint, softened afterwards to stop
+       * their risers snapping to the grid, and the softening is what made them
+       * wax. So the answer is to roughen their flanks rather than to add more of
+       * them, and the failure mode on each side is known — too hard reads as
+       * poured concrete, too soft reads as poured wax.
+       *
+       * Strongly elongated downstream, which is doing two jobs at once. It is
+       * the right geomorphology, because everything a flow leaves on a bar
+       * surface is drawn out along the current: swales, gravel stringers, the
+       * low benches between anastomosing threads. And it is the only orientation
+       * that survives being looked at: a midground pixel spans 29 mm across the
+       * view against 615 mm along it at 30 m, going to 58 x 2456 mm at 60 m, so
+       * anything whose phase varies downstream is averaged over metres and
+       * returns its mean. Across-channel variation is resolvable to the horizon.
+       *
+       * It is also the only orientation the *mesh* can carry. The grid is 0.20 m
+       * across the wash and 0.42 m along it, so the shortest across-channel
+       * wavelength that survives sampling is 0.40 m and the shortest downstream
+       * one is 0.84 m. A term elongated ten to one sits comfortably inside both;
+       * an isotropic one at the same scale would alias along the wash. */
+      /* Deliberately *not* carried below the grid. Two octaves from a base of
+         about 0.9 m across the wash reaches 0.43 m, which is the shortest thing
+         the 0.20 m across-channel spacing can represent; a third octave would
+         put half its energy under the sampler and come back as grid noise. What
+         belongs below 0.4 m goes in the shading normal instead, where it can be
+         band-limited honestly — see the bedform block in the fragment shader. */
+      const swA = fbm(x * 1.12, z * 0.115, 2, 331);
+      /* A slow across-channel wander used to warp the phase of the term below,
+         so its swales bend and merge instead of running as parallel grooves.
+         Corduroy is a named defect on this floor and a regular comb at bar
+         scale would be the third time. */
+      const swW = fbm(x * 0.21, z * 0.045, 2, 337);
+      /* Ridged rather than plain, because a bar surface is a set of rounded
+         swales separated by narrower benches rather than a sine. Ridged puts the
+         sharp feature at the bottom of the swale, where the thread actually ran,
+         and a crease is what throws a shadow line at eleven degrees of sun. */
+      const swB = ridged(x * 0.80 + swW * 1.4, z * 0.082, 2, 341);
+      /* Amplitude modulated by the coarse field so the roughness belongs to the
+         bar it sits on rather than running through the whole floor at one
+         strength — a uniform overlay is the corduroy complaint waiting to
+         happen. l1b is one of the staircase inputs, so the fine texture is
+         correlated with the form it is roughening: benches are worked, hollows
+         are swept smooth. */
+      const swK = 0.45 + 0.95 * l1b;
+      h += floorZone * swK * (0.330 * swA + 0.205 * (swB - 0.60));
     }
 
     /* ── braided minor channels ── */
@@ -1661,13 +1715,49 @@ if (rockW > 0.002) {
  * modelled and both of which are sharp; the ramp means this term is a midground
  * replacement for them rather than an addition on top. */
 float bedW = smoothstep(0.006, 0.022, footMin) * floorB
-           * (1.0 - smoothstep(0.10, 0.30, slope));
+           * (1.0 - smoothstep(0.06, 0.20, slope));
 if (bedW > 0.004) {
+  /* Four wavelengths from 0.11 to 0.48 m. The top of that range is where the
+     height field's new flank roughness takes over — it now carries 0.4 m and up
+     as real geometry — and the bottom is set by the footprint, since 0.11 m is
+     about four pixels across the view at 30 m and two at 60 m, where bk1
+     retires it. A fifth term at 0.76 m was tried and removed as double-counting
+     against the mesh. */
   const vec2 bd1 = vec2(1.00000,  0.0000), bd2 = vec2(0.99993, -0.0120);
   const vec2 bd3 = vec2(0.99968,  0.0252), bd4 = vec2(0.99899, -0.0450);
-  const float bl1 = 0.21, bl2 = 0.37, bl3 = 0.68, bl4 = 1.18;
-  float bp1 = dot(wxz, bd1) / bl1, bp2 = dot(wxz, bd2) / bl2;
-  float bp3 = dot(wxz, bd3) / bl3, bp4 = dot(wxz, bd4) / bl4;
+  const float bl1 = 0.11, bl2 = 0.18, bl3 = 0.30, bl4 = 0.48;
+  /* Phase offsets, which the previous version did not have and needed. Every
+     term was cos(TAU * dot/L) and therefore equal to one wherever dot(wxz, d)
+     was zero, so all five crests coincided on a line down the wash and the
+     stack's peak was the arithmetic sum of its amplitudes rather than about
+     three sigma. Offsetting them keeps the RMS while cutting the worst case,
+     which is what allows the amplitudes below to be as large as they are. */
+  /* ---- warped across, straight along ────────────────────────────────────────
+   * Four fixed wavelengths are a comb, and an amplitude envelope alone does not
+   * cure that: it makes the comb loud here and quiet there, but where it is
+   * loud the teeth are still evenly spaced and the eye reads a rake. The
+   * periodicity has to go, and the only question is which axis can afford it.
+   *
+   * Warping the phase *downstream* is what one would normally do and is exactly
+   * what cannot be afforded here. A pixel is 2.46 m long at 60 m, so a phase
+   * that changes along the view is averaged over that length and the term
+   * returns its mean — the same mechanism that removes the dirt normal map at
+   * this range. The budget works out at about a 1 per cent lateral wander per
+   * unit of downstream run for the 0.11 m term, which is not enough to matter.
+   *
+   * But warping the phase by a function of the *across-channel* coordinate
+   * alone costs nothing at all, because it adds no downstream phase gradient
+   * whatever. The crests stay dead straight and perfectly parallel to the flow —
+   * so fwidth is untouched and the term survives exactly as before — while
+   * their *spacing* becomes irregular: bunched in places, opened out in others.
+   * That is the difference between a rake and a bar surface, and it is free. */
+  float bax = dot(wxz, bd1);
+  float bwo = 0.055 * sin(bax * 0.83) + 0.031 * sin(bax * 1.97 + 1.3)
+            + 0.018 * sin(bax * 4.30 - 0.6);
+  float bp1 = (bax             + bwo) / bl1 + 0.00;
+  float bp2 = (dot(wxz, bd2) + bwo) / bl2 + 0.37;
+  float bp3 = (dot(wxz, bd3) + bwo) / bl3 + 0.62;
+  float bp4 = (dot(wxz, bd4) + bwo) / bl4 + 0.19;
   /* Same band limit bsin uses, kept per-term so each wavelength dies on its own
      schedule rather than the shortest one taking the rest with it. */
   float bk1 = 1.0 - smoothstep(0.22, 0.55, fwidth(bp1));
@@ -1677,7 +1767,19 @@ if (bedW > 0.004) {
   /* Slope amplitudes, not height amplitudes — the shading response is linear in
      slope and it is the quantity the arithmetic above is about. The gradient of
      A*sin(2*pi*p) with respect to world position is A*2*pi*cos(2*pi*p)*d/L, so
-     working in slope means the constants below *are* the slopes. */
+     working in slope means the constants below *are* the slopes.
+     
+     Raised roughly 2.2x from the first version, which measured 13 levels out of
+     255 and was correct in construction but inaudible. The ceiling is set by
+     self-shadowing rather than by taste: the sun sits eleven degrees up and
+     eighteen degrees off the channel, so an across-channel facet goes to the
+     terminator at a slope of 0.63, and past that the term stops being relief and
+     becomes a lit/unlit decision. That is the cliff the clast grit fell down —
+     a binary field scores beautifully on a one-pixel gradient and looks like
+     confetti. These sum to 0.46 in the worst case and about 0.36 at three sigma,
+     so there is roughly a factor of two of headroom and the term stays linear.
+     RMS slope is 0.121, which against the 1.6x shading response of this sun
+     geometry is a 19 per cent luminance modulation: a bedform one can see. */
   const float TAU = 6.2831853;
   /* Braiding rather than corduroy: the amplitude is modulated by the macro noise
      so threads appear and die out along their length. That modulation varies
@@ -1686,21 +1788,59 @@ if (bedW > 0.004) {
      *phase* is no bedform at all. This is why the term is built as a fixed comb
      with a varying envelope and not as noise. */
   float bAmp = 0.55 + 0.55 * mac2.b;
-  float bgx = (0.052 * bk1 * cos(TAU * bp1) * bd1.x
-             + 0.044 * bk2 * cos(TAU * bp2) * bd2.x
-             + 0.038 * bk3 * cos(TAU * bp3) * bd3.x
-             + 0.030 * bk4 * cos(TAU * bp4) * bd4.x) * bAmp;
-  float bgz = (0.052 * bk1 * cos(TAU * bp1) * bd1.y
-             + 0.044 * bk2 * cos(TAU * bp2) * bd2.y
-             + 0.038 * bk3 * cos(TAU * bp3) * bd3.y
-             + 0.030 * bk4 * cos(TAU * bp4) * bd4.y) * bAmp;
+  /* ---- the envelope, which is what stops this being corduroy ────────────────
+   * The first version at full amplitude was combed: four fixed wavelengths at
+   * one strength everywhere, crests running the entire twenty-metre length of a
+   * bar without interruption. Corduroy is a named defect on this floor and that
+   * would have been the third time.
+   *
+   * mac2 was supposed to prevent it and cannot, for a reason worth stating
+   * because it constrains every fix available here. mac2 varies over about
+   * eighteen metres and mostly *downstream*, and downstream is the axis the
+   * footprint destroys — at 60 m a pixel is 2.46 m long, so an envelope that
+   * changes along the view is averaged out and the comb it was breaking up
+   * reassembles as a uniform one. Anything that is to break this term at range
+   * has to vary **across** the channel, on the same axis as the term itself.
+   *
+   * So the envelopes below are functions of the across-channel coordinate at
+   * two to five metres, drifting slowly downstream so the pattern is not a
+   * fixed set of stripes bolted to the world. Each term gets a different
+   * combination, so typically two of the four are strong at any given place and
+   * the others are near their floor. That is a braid bar in plan view: threads
+   * of one calibre running for a few metres, dying out, another calibre taking
+   * over alongside. It is also cheap — six sines and no texture fetch, which
+   * matters because a fetch here would be mip-selected off the 2.46 m
+   * downstream derivative and come back as its own mean anyway. */
+  float baz = dot(wxz, vec2(-bd1.y, bd1.x));
+  float bdr = 0.35 * sin(baz * 0.081) + 0.22 * sin(baz * 0.203 + 2.1);
+  float eA = sin(bax * 3.57 + bdr * 3.0);
+  float eB = sin(bax * 2.16 + 1.7 - bdr * 2.2);
+  float eC = sin(bax * 1.25 - 0.9 + bdr * 1.4);
+  float w1 = 0.18 + 0.82 * clamp(0.5 + 0.35 * eA + 0.25 * eC, 0.0, 1.0);
+  float w2 = 0.18 + 0.82 * clamp(0.5 + 0.40 * eB - 0.20 * eA, 0.0, 1.0);
+  float w3 = 0.18 + 0.82 * clamp(0.5 + 0.35 * eC + 0.20 * eB, 0.0, 1.0);
+  float w4 = 0.18 + 0.82 * clamp(0.5 - 0.30 * eA + 0.30 * eB, 0.0, 1.0);
+  float bc1 = 0.145 * bk1 * w1 * cos(TAU * bp1);
+  float bc2 = 0.135 * bk2 * w2 * cos(TAU * bp2);
+  float bc3 = 0.123 * bk3 * w3 * cos(TAU * bp3);
+  float bc4 = 0.108 * bk4 * w4 * cos(TAU * bp4);
+  float bgx = (bc1 * bd1.x + bc2 * bd2.x + bc3 * bd3.x + bc4 * bd4.x) * bAmp;
+  float bgz = (bc1 * bd1.y + bc2 * bd2.y + bc3 * bd3.y + bc4 * bd4.y) * bAmp;
+  /* A hard stop short of the terminator. An across-channel facet turns away
+     from this sun at a slope of 0.63, and past that the term stops being relief
+     and becomes a lit/unlit decision — which is the cliff the clast grit fell
+     down, where a binary field scored well on a one-pixel gradient and looked
+     like confetti. Typical excursions here are around 0.10 and three sigma is
+     0.35, so this clamp should almost never engage; it is here so that the
+     places where the envelopes happen to coincide cannot go binary. */
+  bgx = clamp(bgx, -0.42, 0.42);
   wN = normalize(wN - vec3(bgx, 0.0, bgz) * bedW);
   /* A bedform is a deposit as well as a shape, so the crests are winnowed a
      shade paler and the troughs hold the fines. Small, and mean-zero, because
      the point of this term is the normal — but a relief with no tonal
      correlate reads as embossing. */
-  albedo *= 1.0 + (0.052 * bk1 * sin(TAU * bp1)
-                 + 0.038 * bk3 * sin(TAU * bp3)) * bedW * bAmp * 0.9;
+  albedo *= 1.0 + (0.055 * bk2 * w2 * sin(TAU * bp2)
+                 + 0.045 * bk4 * w4 * sin(TAU * bp4)) * bedW * bAmp * 0.9;
 }
 
 /* ---- tonal and hue variance ----
