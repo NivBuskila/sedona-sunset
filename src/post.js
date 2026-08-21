@@ -85,11 +85,24 @@ export const POST_DEFAULTS = {
      effect on a saturation measurement cannot be separated from its effect on
      value. */
   gradeAmount: 1.0,          // master, 0 = bit-exact identity against no post
-  shadowTint: [0.982, 0.992, 1.070],   // blue-violet, ~9% B over R
-  highTint:   [1.027, 0.997, 0.952],   // warm, ~8% R over B
-  splitPivot: 0.22,          // scene-linear luminance at which the split crosses
+  shadowTint: [0.9813, 0.9964, 1.0920],  // blue-violet, 11% B over R
+  highTint:   [1.0246, 0.9987, 0.9400],  // warm, 9% R over B
+  /* Scene-linear luminance at which the split crosses. 0.12 sits between the
+     lit rock of this scene (~0.30 linear) and its shaded rock (~0.05), which is
+     what makes the two ends of the tint land on the two populations instead of
+     averaging over both. Measured through tools/_p7grade.mjs on sys4d: lit rock
+     moves saturation 0.604 -> 0.600 and hue 18.9 -> 18.5, and shaded rock moves
+     B/G 0.789 -> 0.822 and hue 13.0 -> 11.2. That is the whole of "teal": the
+     shadows cool, the lit faces do not move. */
+  splitPivot: 0.12,
   vibrance: 0.10,            // low-saturation pixels only; zero above sat 0.60
-  contrast: 1.025,           // display-referred, pivoted at 0.42
+  /* Chroma-preserving, pivoted at 0.18 display-linear. Both of those are
+     corrections. A per-channel pivoted contrast is a saturation multiplier in
+     disguise — at 1.025 it moved lit rock from 0.604 to 0.690, four times the
+     entire rest of the grade — and a pivot of 0.42 in display-linear is not
+     middle grey, it is two stops above it, so it darkened almost the whole
+     frame. */
+  contrast: 1.03, contrastPivot: 0.18,
 
   /* Defocus. A physical thin-lens CoC, so the shape of the falloff is not a
      free parameter: 24 mm at f/8 focused at 12 m on a 24 mm-high sensor. That
@@ -486,6 +499,7 @@ ${GHOSTS.map(([t, r, tr, tg, tb, gi]) => `    {
       uSplitPivot: { value: P.splitPivot },
       uVibrance: { value: P.vibrance },
       uContrast: { value: P.contrast },
+      uContrastPivot: { value: P.contrastPivot },
 
       uGrain: { value: P.grain },
       uGrainOff: { value: new THREE.Vector2() },
@@ -518,6 +532,7 @@ uniform vec3 uHighTint;
 uniform float uSplitPivot;
 uniform float uVibrance;
 uniform float uContrast;
+uniform float uContrastPivot;
 
 uniform float uGrain;
 uniform vec2 uGrainOff;
@@ -653,8 +668,14 @@ void main() {
     float ly = luma(o);
     o = mix(vec3(ly), o, 1.0 + g);
 
+    /* Contrast on luminance alone. A uniform scale of all three channels leaves
+       HSV saturation and hue exactly where they were, which is the only form of
+       this term that can be applied to a frame whose rock colour is a measured
+       gate — the per-channel version moved lit rock's saturation by 0.086. */
     float k = mix(1.0, uContrast, uGrade);
-    o = clamp((o - 0.42) * k + 0.42, 0.0, 1.0);
+    float l2 = luma(o);
+    float t2 = clamp((l2 - uContrastPivot) * k + uContrastPivot, 0.0, 1.0);
+    o = clamp(o * (l2 > 1e-4 ? t2 / l2 : 1.0), 0.0, 1.0);
   }
 
   gl_FragColor = vec4(o, 1.0);
@@ -894,6 +915,7 @@ void main() {
     fu.uSplitPivot.value = P.splitPivot;
     fu.uVibrance.value = P.vibrance;
     fu.uContrast.value = P.contrast;
+    fu.uContrastPivot.value = P.contrastPivot;
     fu.uGrain.value = P.grain;
     fu.uFocus.value = P.focus;
     fu.uFarCoc.value.set(P.farPx * (h / 900), P.farA, P.farB);
