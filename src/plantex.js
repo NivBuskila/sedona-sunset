@@ -264,9 +264,19 @@ export function makeDeadwood(size = 512) {
       /* Grain: many fine longitudinal fibres, low amplitude, high frequency. */
       const g = aridged(uu * PU * 3.1, v * PV * 0.7, PU * 3.1, PV * 0.7, 3, 409);
       /* Fissures: few, deep, long. These hold the shadow and are most of what
-         reads at twenty metres. */
-      const f = aridged(uu * PU * 0.5, v * PV * 0.35, PU * 0.5, PV * 0.35, 2, 419);
-      const fs = Math.pow(smoothstep(0.55, 0.97, f), 1.5);
+         reads at twenty metres.
+         Frequency cut from 0.5 to 0.28 of PU, so about seven wrap the member
+         rather than thirteen. A relative-luminance gradient measured inside the
+         snags came back at 0.0015 against sandstone's 0.055 to 0.47 — the
+         flattest surface in the frame, on what should be the most fissured. Part
+         of that is that there were no pixels to draw in, which the bole fixes,
+         but part is that thirteen fissures around a member only ten pixels wide
+         is three per pixel: the mip chain averages them to a flat tone and does
+         it correctly. Detail has to be coarse enough to survive to the screen or
+         it is not detail, it is noise that costs texture bandwidth. Deeper too,
+         since half as many of them are now carrying the same job. */
+      const f = aridged(uu * PU * 0.28, v * PV * 0.35, PU * 0.28, PV * 0.35, 2, 419);
+      const fs = Math.pow(smoothstep(0.42, 0.95, f), 1.35);
       /* Checking: short cracks *across* the grain. The one feature that cannot
          be mistaken for bark fibre, and so the strongest cue that this is bare
          wood. Gated to appear in patches rather than everywhere. */

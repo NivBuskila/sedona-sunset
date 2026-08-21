@@ -634,8 +634,23 @@ export function buildTree(seed) {
      tree, which is a stub, and "everything is the same thickness" follows
      directly. This clears the mound by nearly half a metre while still dividing
      well below knee height, which is what makes a clump a clump. */
-  const COLLAR = 0.62;
-  const nT = 11;
+  /* 0.95, not 0.62, and fatter with it.
+     A distance transform over the woody silhouette measured the thickest thing
+     on this tree at 11.7 px against a 310 px crown — one twenty-sixth — while
+     the model says the collar is 0.95 m across at the soil line, which is about
+     37 px in that framing. Both were true. The collar was there and it was
+     0.42 m of visible height, a squat 37 x 17 px patch sitting in among the
+     litter cards and under the foliage skirt, and nothing that small survives
+     being crowded. Two rounds of reporting girth off the mesh instead of off the
+     frame is what let that stand; `tools/bole.mjs` now measures what is drawn.
+
+     The fork still happens below a metre, which is the constraint that makes a
+     clump a clump and was verified as solved — 0.95 m is right at that limit,
+     not past it. The height goes into *visible* bole rather than into a cleaner
+     stem above the fork, which is the shape that read as a cultivated broadleaf
+     the first time and is not what this is. */
+  const COLLAR = 0.95;
+  const nT = 15;
   const tp = [], tr = [];
   const lean = new THREE.Vector3(wind.x, 0, wind.z).multiplyScalar(0.05);
   for (let i = 0; i <= nT; i++) {
@@ -650,11 +665,30 @@ export function buildTree(seed) {
        at the fork — a bole a metre across tapering to two thirds of that — which
        against a 0.02 m twig is the twenty-fold gauge difference an old tree is
        supposed to show. */
-    const flare = 1 + 0.62 * Math.exp(-y / 0.26) + 0.20 * Math.exp(-y / 0.62);
-    tr.push(mix(0.355, 0.290, Math.pow(t, 0.8)) * flare);
+    /* Buttresses, not a cone. The flare is spread over the taller collar and
+       given a strong azimuthal component through the profile's lobes rather than
+       being axisymmetric — an old juniper's collar is a fused mass of root
+       swellings with deep re-entrant grooves between them, and a smooth cone of
+       any diameter reads as a fence post. */
+    const flare = 1 + 0.78 * Math.exp(-y / 0.40) + 0.26 * Math.exp(-y / 0.95);
+    /* 0.475 at the base. Measured on the frame the 0.400 version drew 49.4 px at
+       its widest against the critique's 11.7 px, but the fluting takes about a
+       fifth off the apparent width wherever a groove faces the camera — which is
+       the point of the fluting and not something to reduce — so the radius has to
+       carry it. This lands a little over a metre of drawn diameter, against the
+       0.84 m the critique named as what an old collar on this clump should be.
+       Not the "quarter of crown width" also quoted in the same paragraph: a
+       quarter of the 421 px crown measured here is 2.7 m of trunk, which is not a
+       juniper at any age. Where the two figures disagree I have taken the one in
+       metres. */
+    tr.push(mix(0.475, 0.330, Math.pow(t, 0.8)) * flare);
   }
-  geoms.push(limbGeometry(tp, tr, SEG_BY_DEPTH[0], trunkProf, twist, 0,
-                          FLUTE_BY_DEPTH[0], 0, SHRED_BY_DEPTH[0]));
+  /* Flute at 1.55x the standard depth-0 amount, for this member only. This is
+     the one piece of wood on the tree with the pixels to show a cross-section,
+     so it is where the fluting has to be unmistakable; on a twig the same
+     amplitude is invisible and on the collar it is the silhouette. */
+  geoms.push(limbGeometry(tp, tr, SEG_BY_DEPTH[0], trunkProf, twist * 1.35, 0,
+                          FLUTE_BY_DEPTH[0] * 1.55, 0, SHRED_BY_DEPTH[0]));
 
   /* Three stems, deliberately unequal: one dominant and upright-ish, one
      leaning well over downwind, and one that is mostly dead. "Well over half
@@ -727,12 +761,36 @@ export function buildTree(seed) {
      the collar almost horizontally and lie out near the ground, so the crown
      comes down to knee height on one side instead of stopping in mid-air. Its
      absence is a large part of why a procedural tree floats. */
+  /* Leaving from the *top* of the collar, not the middle of it, and rising
+     slightly before the droop in `grow` takes them back down. A skirt that
+     leaves at mid-collar and heads straight out horizontally lies across the
+     bole from every angle, and burying the bole is precisely how the last two
+     rounds lost it. Junipers do this too: the skirt limb clears the collar, runs
+     out level, and only touches down a metre or two away — which is what leaves
+     the shaded hollow with the bole standing in it. */
   for (let i = 0; i < 2; i++) {
     const az = 1.4 + i * 2.9 + rand() * 0.8;
-    const dir = new THREE.Vector3(Math.cos(az), 0.13 + rand() * 0.10, Math.sin(az)).normalize();
-    grow(tp[Math.round(nT * 0.55)].clone(), dir, 1.00 + rand() * 0.32,
+    const dir = new THREE.Vector3(Math.cos(az), 0.30 + rand() * 0.10, Math.sin(az)).normalize();
+    grow(tp[nT].clone(), dir, 1.22 + rand() * 0.32,
          0.115, 0.052, 1, 0, 0, makeProfile(seed + 900 + i, 5, 1), twist * 1.5);
   }
+
+  /* Clear the foliage away from the bole.
+     Everything above is wasted if a spray hangs in front of it, and sprays do
+     collect there: the skirt and the lowest leaders both pass close to the axis
+     on their way out, and `grow` hangs a clump at every tip. On a real tree the
+     space under the crown next to the bole is bare — it is shaded, it is where
+     the duff falls, and no shoot survives there. Dropping clumps that sit both
+     low and close to the axis opens that hollow and is the difference between a
+     bole and a rumour of one.
+     Radius is generous at 1.30 m because what matters is not whether the spray
+     touches the bole in three dimensions but whether it covers it from the
+     viewpoint, and a spray a metre to the side at the same height does. */
+  const BOLE_CLEAR_Y = COLLAR + 0.30, BOLE_CLEAR_R = 1.30;
+  const kept = clumps.filter(c =>
+    c.p.y > BOLE_CLEAR_Y || Math.hypot(c.p.x, c.p.z) > BOLE_CLEAR_R);
+  clumps.length = 0;
+  clumps.push(...kept);
 
   return { geoms, clumps };
 }
@@ -1027,7 +1085,14 @@ export function makeBarkMaterial(bark) {
        foliage's uDirCap, and the same underlying mistake, which is treating a
        ratio target as if it constrained a distribution. */
     uDeadKnee: { value: 1.05 },
-    uDeadAmb: { value: 1.55 },
+    /* 1.15, down from 1.55. The lift was set to carry the dead-to-live value
+       ratio to its 3.5x target, and it did, but a fill multiplier is not
+       shadowed — so the long right-hand snags kept near-constant brightness
+       while crossing a wall that falls to L = 0.009, and read as not taking the
+       cast shadow at all. Being in the same light as its surroundings matters
+       more than the ratio: the ratio is a proxy for reading as bleached wood,
+       and wood that ignores shadow reads as a light source. */
+    uDeadAmb: { value: 1.15 },
     uDebugMask: { value: 0 },
   };
   mat.userData.uniforms = u;
@@ -1130,12 +1195,29 @@ export function makeBarkMaterial(bark) {
           .replace('vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;',
                    'vec3 mapN = mix( texture2D( normalMap, vNormalMapUv ).xyz,\n' +
                    '                 texture2D( uDeadNrm, vNormalMapUv ).xyz, vDead ) * 2.0 - 1.0;')
-          .replace('mapN.xy *= normalScale;',
-                   /* 1.18 on a stem, not 1.55. Above the living bark's 1.0, which
-                      is the direction that was wrong last round and had to be
-                      corrected, but the beads scale with this and 1.55 was buying
-                      relief the silhouette could not show at eighteen metres. */
-                   'mapN.xy *= normalScale * mix( 1.0, mix( 0.30, 1.18, vGauge ), vDead );'));
+          .replace('mapN.xy *= normalScale;', /* glsl */`
+            mapN.xy *= normalScale * mix( 1.0, mix( 0.30, 1.55, vGauge ), vDead );
+            /* And faded out at grazing incidence.
+               This is what the dashed line of bright single pixels along every
+               snag's sun-facing silhouette actually is. Right at the silhouette
+               the geometric normal is perpendicular to the view ray, so a normal
+               map of any strength tilts some fragments back toward the sun and
+               they return a full diffuse response while their neighbours do not
+               — a row of bright specks, one per texel cluster, exactly along the
+               rim. It is not specular, which is why cutting the specular did
+               nothing; it is not the grade, which is why it looks the same
+               ungraded; and it is not the flute or the bark shredding, both of
+               which I removed without changing it.
+               Attenuating perturbation as N.V goes to zero is also the physically
+               honest thing to do: past the surface's own horizon the detail being
+               described is occluded by the surface it sits on, and a bump map
+               cannot represent that. Doing it here rather than by weakening the
+               map means the relief stays at full strength across the faces
+               pointed at the viewer, where the critique wants it. */
+            {
+              float ndv = abs( dot( normalize( normal ), normalize( vViewPosition ) ) );
+              mapN.xy *= mix( 0.12, 1.0, smoothstep( 0.0, 0.42, ndv ) );
+            }`));
   };
   mat.customProgramCacheKey = () => 'juniper-bark';
   return mat;
@@ -1189,7 +1271,16 @@ export function makeFoliageMaterial(map) {
        leaks in every direction, and it is that leak — not the backlit rim — that
        keeps a crown's shaded interior from going black. Warm, because what the
        light passes through on the way is dead scale. */
-    uTransIso: { value: 0.30 },
+    /* 0.42, from 0.30. Held deliberately small: the crown's interstitial pixels
+       measured 50.2% below L = 0.006, but an interstitial pixel is by definition
+       one where you see *through* the crown, so most of that population is the
+       shaded wall behind it rather than any foliage of mine — and the shaded wall
+       is measured as receiving five to six times less fill than the wash floor,
+       which System 4 is correcting. Raising a foliage term to fix a background
+       problem would double-count the moment their change lands. What is defensibly
+       mine is that a two-millimetre spray does leak in every direction, so the
+       leak goes up by a third and no further. */
+    uTransIso: { value: 0.42 },
     uDirCap: { value: 0.50 },
   };
   mat.userData.uniforms = u;
@@ -1203,6 +1294,28 @@ export function makeFoliageMaterial(map) {
       .replace('#include <common>',
         '#include <common>\nvarying float vSun;\nuniform vec3 uSunDir;\nuniform vec3 uTrans;\n' +
         'uniform float uTransAmt;\nuniform float uTransIso;\nuniform float uDirCap;')
+      /* Analytic coverage instead of a binary cutout.
+         `alphaToCoverage` has been set on this material for two rounds and has
+         done nothing, and the reason is that it had nothing to work with: the
+         stock alpha test is `if ( a < alphaTest ) discard`, so every surviving
+         fragment is fully opaque and every edge is one pixel wide and binary.
+         Multisample coverage can only interpolate an alpha that varies.
+         Normalising the distance to the cutoff by the screen-space derivative of
+         alpha turns the threshold into a ramp exactly one pixel wide, whatever
+         the mip level and however soft or hard the atlas edge is, and *that* is
+         what the coverage mask can resolve into four steps. It is the standard
+         construction for alpha-tested foliage and the piece I was missing.
+         Measured on the last set: the skyline shrub against a near-white sky
+         alternated fully black and fully sky texels with no intermediate value
+         anywhere — a checkerboard on the horizon, flagged independently by two
+         critics. */
+      .replace('#include <alphatest_fragment>', /* glsl */`
+        {
+          float aw = max( fwidth( diffuseColor.a ), 1e-5 );
+          float cov = ( diffuseColor.a - alphaTest ) / aw + 0.5;
+          if ( cov <= 0.0 ) discard;
+          diffuseColor.a = min( cov, 1.0 );
+        }`)
       /* A foliage card is not a sheet, and the difference is not cosmetic.
          It stands in for a volume of two-millimetre cords pointing in every
          direction, so its sub-pixel average response to a directional source

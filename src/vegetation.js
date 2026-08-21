@@ -359,20 +359,30 @@ export function planVegetation(path, terrain, rocks) {
                     * (1 - f.pan * 0.9);
       if (habitat < 0.12) continue;
       const cl = clusterField(x, z);
-      const p = habitat * (0.10 + 0.90 * cl);
+      /* Floor raised from 0.10 to 0.22 and the acceptance rates below roughly
+         doubled. The sparseness discipline was correct when this was one tree on
+         bare ground and a critic could say the supporting planting was the
+         strongest thing in the scene; it has since been called across the line
+         into absent, with four of the eight framings carrying essentially no
+         plants between them and the whole set reading as Wadi Rum. Sedona is
+         pinyon-juniper woodland at 4,500 ft — the ground between the trees is not
+         bare, it is bunch grass and low scrub. The hero stays dominant because
+         it is four metres tall next to knee-high scrub, not because the scrub is
+         missing. */
+      const p = habitat * (0.22 + 0.78 * cl);
       const y = terrain.heightAt(x, z);
       const dh = Math.hypot(x - JUNIPER_XZ.x, z - JUNIPER_XZ.z);
       /* Keep a clear apron round the hero so nothing crowds its silhouette. */
       if (dh < 5.5) continue;
 
       const roll = rand();
-      if (roll < p * 0.33) {
+      if (roll < p * 0.62) {
         grass.push({
           x, y: y - 0.03, z, rot: rand() * TAU,
           sx: 0.38 + rand() * 0.32, sy: 0.32 + rand() * 0.34, sz: 0.38 + rand() * 0.32,
           r: 0.86 + rand() * 0.22, g: 0.82 + rand() * 0.20, b: 0.72 + rand() * 0.18,
         });
-      } else if (roll < p * 0.49) {
+      } else if (roll < p * 0.94) {
         shrub.push({
           x, y: y - 0.04, z, rot: rand() * TAU,
           sx: 0.55 + rand() * 0.48, sy: 0.46 + rand() * 0.44, sz: 0.55 + rand() * 0.48,
@@ -383,7 +393,7 @@ export function planVegetation(path, terrain, rocks) {
            slickrock there is nothing to root in. The habitat test above admits
            bar at 0.34 and talus at 0.55 weight, which is right for a bunch grass
            and wrong for this, and it put several pads on bare rock. */
-      } else if (roll < p * 0.505 && pear.length < 4 && f.terr > 0.55) {
+      } else if (roll < p * 0.955 && pear.length < 4 && f.terr > 0.55) {
         pear.push({
           x, y: y - 0.05, z, rot: rand() * TAU,
           sx: 0.62 + rand() * 0.30, sy: 0.60 + rand() * 0.32, sz: 0.62 + rand() * 0.30,
@@ -391,13 +401,53 @@ export function planVegetation(path, terrain, rocks) {
              already too pale. */
           r: 0.70 + rand() * 0.12, g: 0.84 + rand() * 0.10, b: 0.68 + rand() * 0.12,
         });
-      } else if (roll < p * 0.515 && agave.length < 2) {
+      } else if (roll < p * 0.975 && agave.length < 2) {
         agave.push({
           x, y: y - 0.03, z, rot: rand() * TAU,
           sx: 0.78 + rand() * 0.30, sy: 0.78 + rand() * 0.34, sz: 0.78 + rand() * 0.30,
           r: 0.94, g: 1.0, b: 0.92,
         });
       }
+    }
+  }
+
+  /* ── the thalweg line ────────────────────────────────────────────────────
+   *
+   * A desert wash carries a line of noticeably larger woody growth along its
+   * banks — rabbitbrush, catclaw, the odd young juniper — because that is where
+   * the water goes and where the fines are deep enough to hold it. It stops
+   * abruptly at the active channel, which is scoured, and it is one of the most
+   * legible plan-view signatures a wash has: two ragged green-grey lines with
+   * bare gravel between them.
+   *
+   * Placed as a separate pass rather than by loosening the grid above, because
+   * the defining feature is the *banding* — a band four to eleven metres off the
+   * centreline on each side, nothing inside it — and that is a statement about
+   * where plants are, not about how many. Emitted into `shrub` at a larger scale
+   * so it needs no new geometry, material or draw call.
+   */
+  for (let s = -12; s < 180; s += 1.15) {
+    const c = path.posAt(s);
+    const qq = path.atZ(c.z, q);
+    for (let side = 0; side < 2; side++) {
+      const u = (side ? -1 : 1) * (4.2 + rand() * 6.6);
+      const x = c.x + Math.cos(qq.th) * u + (rand() - 0.5) * 1.8;
+      const z = c.z + Math.sin(qq.th) * u + (rand() - 0.5) * 1.8;
+      const f = terrain.facies(x, z, path.atZ(z, q2));
+      /* Off the scoured channel and out of the active pan. */
+      if (f.pan > 0.30) continue;
+      const bank = clamp(f.terr * 0.85 + f.bar * 0.55, 0, 1) * (1 - f.pan);
+      if (bank < 0.20) continue;
+      if (rand() > bank * 0.42) continue;
+      if (Math.hypot(x - JUNIPER_XZ.x, z - JUNIPER_XZ.z) < 7.0) continue;
+      const y = terrain.heightAt(x, z);
+      const sz = 1.35 + rand() * 1.15;
+      shrub.push({
+        x, y: y - 0.05, z, rot: rand() * TAU,
+        sx: sz * (0.82 + rand() * 0.36), sy: sz * (0.80 + rand() * 0.46),
+        sz: sz * (0.82 + rand() * 0.36),
+        r: 0.80 + rand() * 0.26, g: 0.86 + rand() * 0.22, b: 0.74 + rand() * 0.22,
+      });
     }
   }
 
@@ -423,7 +473,12 @@ export function planVegetation(path, terrain, rocks) {
       if (p3.y < 2.0 || p3.y > 58) continue;
       if (p3.z > 30 || p3.z < -330) continue;
       const du = corridorDist(path, p3.x, p3.z, qtmp);
-      if (du < 15 || du > 210) continue;
+      /* Inner limit down from 15 m to 7. The benches that actually read in
+         `wall_lit` and `wall_shade` are the near ones, and excluding everything
+         inside fifteen metres is what left a bench "the size of the one in
+         wall_lit" bare — on a formation that in Sedona would carry junipers
+         along every ledge. */
+      if (du < 7 || du > 210) continue;
       if (Math.hypot(p3.x - JUNIPER_XZ.x, p3.z - JUNIPER_XZ.z) < HERO_CLEAR) continue;
       /* Slope gate. A bench is a bench; a wall face keeps nothing. */
       const up = n3.y;
@@ -432,7 +487,7 @@ export function planVegetation(path, terrain, rocks) {
       /* Higher is drier and more exposed. */
       const alt = 1 - smoothstep(14, 48, p3.y);
       const cl = clusterField(p3.x, p3.z);
-      const pAcc = shelf * (0.10 + 0.90 * cl) * (0.25 + 0.75 * alt) * 0.060;
+      const pAcc = shelf * (0.18 + 0.82 * cl) * (0.25 + 0.75 * alt) * 0.125;
       if (rr() > pAcc) continue;
       const sz = 0.8 + rr() * 1.9;
       const dark = 0.72 + rr() * 0.5;
@@ -511,18 +566,39 @@ export function buildVegetation(path, terrain, rocks) {
     return im;
   }
 
-  const grassMat = new THREE.MeshStandardMaterial({
+  /* Analytic coverage in place of the binary cutout. `alphaToCoverage` alone did
+     nothing on these for two rounds because the stock alpha test discards and
+     leaves every surviving fragment fully opaque, so the multisample mask had a
+     constant to interpolate. Dividing the distance to the cutoff by alpha's
+     screen-space derivative gives a ramp one pixel wide at any mip level, which
+     the mask can resolve. See the longer note in `makeFoliageMaterial`. */
+  const coverageEdge = (mat) => {
+    mat.onBeforeCompile = (sh) => {
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <alphatest_fragment>', /* glsl */`
+          {
+            float aw = max( fwidth( diffuseColor.a ), 1e-5 );
+            float cov = ( diffuseColor.a - alphaTest ) / aw + 0.5;
+            if ( cov <= 0.0 ) discard;
+            diffuseColor.a = min( cov, 1.0 );
+          }`);
+    };
+    mat.customProgramCacheKey = () => 'veg-coverage-edge';
+    return mat;
+  };
+
+  const grassMat = coverageEdge(new THREE.MeshStandardMaterial({
     map: grassTex(), alphaTest: 0.40, side: THREE.DoubleSide,
     roughness: 0.95, metalness: 0, vertexColors: true,
     color: new THREE.Color(0.90, 0.85, 0.78), dithering: true,
     alphaToCoverage: true,
-  });
-  const scrubMat = new THREE.MeshStandardMaterial({
+  }));
+  const scrubMat = coverageEdge(new THREE.MeshStandardMaterial({
     map: scrubTex(), alphaTest: 0.40, side: THREE.DoubleSide,
     roughness: 0.92, metalness: 0, vertexColors: true,
     color: new THREE.Color(0.80, 0.84, 0.72), dithering: true,
     alphaToCoverage: true,
-  });
+  }));
   /* Cactus and agave are succulent: waxy, so a touch glossier than anything
      else in the frame, and a pale glaucous blue-green — much lighter and bluer
      than juniper, which is most of what distinguishes them at a distance where
