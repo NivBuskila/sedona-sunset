@@ -542,7 +542,15 @@ function buildSaltation(count, TILE, seed, ground, sunTint) {
       uGround: { value: ground },
       uBox: { value: new THREE.Vector4(GX0, GZ0, 1 / (GX1 - GX0), 1 / (GZ1 - GZ0)) },
       uTint: { value: sunTint.clone() },
-      uLevel: { value: 0.115 },
+      /* Radiance of a grain, in scene units. A quartz grain in the full beam
+         reflects about 0.3/pi of nine and a bit, which is 0.95 — three times
+         this — so the number is conservative on purpose: nothing here knows
+         whether a grain is in the wall's shadow or not, and a sheet lit as if
+         it were always in sun would be a strip of daylight running across
+         ground that is plainly in shade. Under-lighting it costs the effect
+         some presence in the shaded views and keeps it honest in the lit ones,
+         which is the right way round. */
+      uLevel: { value: 0.17 },
     },
     vertexShader: /* glsl */`
 uniform float uT;
@@ -623,9 +631,9 @@ void main() {
      to be made of grains, so each one is a soft blob well under the exposure of
      the lit floor and the sheet is built out of their overlap. */
   float d = length(gl_PointCoord - 0.5);
-  float a = vA * smoothstep(0.5, 0.04, d);
+  float a = vA * smoothstep(0.5, 0.08, d);
   if (a < 0.002) discard;
-  gl_FragColor = vec4(uTint * uLevel, a * 0.85);
+  gl_FragColor = vec4(uTint * uLevel, a * 0.95);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`,
