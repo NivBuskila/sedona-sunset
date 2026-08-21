@@ -158,14 +158,21 @@ function touch(A, B, crop) {
   const y1 = Math.min(A.h - 1, y0 + Math.round(A.h * fh));
   const L = (im, x, y) => lum(im, y * im.w + x);
   let n = 0, moved = 0, rSumMoved = 0, rSumStill = 0, dSum = 0, dMax = 0;
+  /* Signed, separately, because "did it change" and "which way" are different
+     questions and one of them is how a subtractive buffer gets verified. */
+  let up = 0, down = 0, upMax = 0, sSum = 0, upRange = 0;
   const bins = [0, 0, 0, 0];  // moved pixels by local range: <20, 20-40, 40-90, >=90
   for (let y = Math.max(1, y0); y < y1; y++) {
     for (let x = Math.max(1, x0); x < x1; x++) {
       const c = L(A, x, y);
       const range = Math.max(c, L(A, x - 1, y), L(A, x + 1, y), L(A, x, y - 1), L(A, x, y + 1)) -
                     Math.min(c, L(A, x - 1, y), L(A, x + 1, y), L(A, x, y - 1), L(A, x, y + 1));
-      const d = Math.abs(L(B, x, y) - c);
+      const s = L(B, x, y) - c;
+      const d = Math.abs(s);
       n++;
+      sSum += s;
+      if (s >= 1) { up++; upMax = Math.max(upMax, s); upRange += range; }
+      else if (s <= -1) down++;
       if (d >= 1) {
         moved++; rSumMoved += range; dSum += d; dMax = Math.max(dMax, d);
         bins[range < 20 ? 0 : range < 40 ? 1 : range < 90 ? 2 : 3]++;
@@ -177,6 +184,8 @@ function touch(A, B, crop) {
     rangeMoved: rSumMoved / Math.max(1, moved),
     rangeStill: rSumStill / Math.max(1, n - moved),
     dMean: dSum / Math.max(1, moved), dMax, bins,
+    up, down, upMax, sMean: sSum / Math.max(1, n),
+    upRange: upRange / Math.max(1, up),
   };
 }
 
@@ -192,7 +201,10 @@ if (ti >= 0) {
               ` unmoved ${t.rangeStill.toFixed(1)} CV`);
   console.log(`  moved pixels by local range:  <20: ${t.bins[0]}   20-40: ${t.bins[1]}` +
               `   40-90: ${t.bins[2]}   >=90: ${t.bins[3]}`);
-  console.log(`  change on moved pixels: mean ${t.dMean.toFixed(1)} CV, max ${t.dMax.toFixed(0)} CV\n`);
+  console.log(`  change on moved pixels: mean ${t.dMean.toFixed(1)} CV, max ${t.dMax.toFixed(0)} CV`);
+  console.log(`  direction: ${t.down} darker, ${t.up} brighter (brightest +${t.upMax.toFixed(1)} CV),` +
+              ` mean signed ${t.sMean >= 0 ? '+' : ''}${t.sMean.toFixed(2)} CV`);
+  console.log(`  brighter pixels sit in a mean local range of ${t.upRange.toFixed(1)} CV\n`);
   process.exit(0);
 }
 

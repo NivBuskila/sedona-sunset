@@ -422,6 +422,24 @@ vec3 sane(vec3 c) {
               c.g >= 0.0 ? min(c.g, 60000.0) : 0.0,
               c.b >= 0.0 ? min(c.b, 60000.0) : 0.0);
 }
+
+/* The same guard for a buffer that is legitimately negative.
+ *
+ * sane() folds negatives to zero, which is right for radiance and catastrophic
+ * for System 5's marched in-scatter: that buffer is a subtractive correction and
+ * every sample in it is negative, so passing it through sane() would silently
+ * delete the light shafts and leave a composite that looks perfectly wired.
+ * Worth the second function rather than a clamp at the call site.
+ *
+ * This guards non-finite values only, and deliberately does not clamp the sign.
+ * Bounding it to negatives would hide the exact regression the sign is checked
+ * for — see the shaft note in render(). NaN fails both comparisons, which is the
+ * test rather than == because a compiler is entitled to fold x == x to true. */
+vec3 finite(vec3 c) {
+  return vec3((c.r <= 0.0 || c.r >= 0.0) ? clamp(c.r, -60000.0, 60000.0) : 0.0,
+              (c.g <= 0.0 || c.g >= 0.0) ? clamp(c.g, -60000.0, 60000.0) : 0.0,
+              (c.b <= 0.0 || c.b >= 0.0) ? clamp(c.b, -60000.0, 60000.0) : 0.0);
+}
 `;
 
 function fullscreenMesh(mat) {
@@ -495,6 +513,12 @@ export function createPost({ renderer, camera, atmo, sun }) {
   let disabled = /(^|[#&])nopost(\b|$|&)/.test(hash);
 
   const plate = grainPlate(256);
+  /* One black texel, so the shaft sampler is always bound to something real.
+     An unbound sampler2D reads as opaque black on this driver and would work by
+     accident, but three logs about it every frame and a warning nobody can act
+     on is worse than four bytes. */
+  const blackPx = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
+  blackPx.needsUpdate = true;
 
   /* ── targets ───────────────────────────────────────────────────────────── */
 
@@ -790,6 +814,8 @@ ${GHOSTS.map(([t, r, tr, tg, tb, gi]) => `    {
       tScene: { value: null },
       tBloom: { value: null },
       tDepth: { value: null },
+      tShaft: { value: null },
+      uShaft: { value: 0 },
       uRes: { value: new THREE.Vector2(1, 1) },
       uAspect: { value: 1.777 },
       uNear: { value: 0.06 },
@@ -820,6 +846,8 @@ ${GHOSTS.map(([t, r, tr, tg, tb, gi]) => `    {
 uniform sampler2D tScene;
 uniform sampler2D tBloom;
 uniform sampler2D tDepth;
+uniform sampler2D tShaft;
+uniform float uShaft;
 uniform vec2 uRes;
 uniform float uAspect;
 uniform float uNear;
@@ -940,7 +968,33 @@ void main() {
     c.b = texture2D(tScene, vUv - dir).b;
   }
 
+  /* System 5's marched in-scatter, composited here because this chain now owns
+     the frame that used to be theirs.
+     Four things about it, all of them theirs and none guessable from the type.
+     It is negative everywhere — shadowed air giving back in-scatter the fog
+     chunk already granted it on the assumption that nothing shadows the air — so
+     it darkens, and the beams are where it takes nothing. Its gain is already
+     applied, so this adds at 1.0 rather than inventing a second unmeasured
+     decision on top of a sweep they ran. It is half resolution and linear
+     filtered, so a full-res UV is the right sampling and the upsample is
+     smooth. And it must not go through sane(), which would fold every sample to
+     zero; see finite() above.
+     Before the tone curve, because it is radiance and not a look. Before the
+     vignette too: a lens loses the light in a shaft along with everything else.
+     The max() is a guard and not a decision — a correction bounded by what the
+     fog granted cannot drive radiance below zero, so if this ever fires the
+     premise is wrong and the frame should be measured rather than patched. */
+  if (uShaft > 0.0) {
+    c = max(c + finite(texture2D(tShaft, vUv).rgb) * uShaft, vec3(0.0));
+  }
+
 #if USE_BLOOM
+  /* Read off the pre-shaft buffer, and that is a deliberate approximation rather
+     than an oversight. Making the bright pass see the correction would mean
+     compositing it into sceneRT in a full-res pass of its own; the correction
+     tops out at 0.076 of linear radiance against a bright threshold of 0.55, so
+     the only pixels whose contribution it could change are those within a
+     twelfth of the knee, where the weight is near zero anyway. */
   c += sane(texture2D(tBloom, vUv).rgb) * uBloom;
 #endif
 
@@ -1285,9 +1339,36 @@ void main() {
       ? sceneRT.depthTexture
       : (shim ? shim.uniforms.tDepth.value : null);
 
+    /* March System 5's in-scatter against this chain's depth, and take the
+     * handover.
+     *
+     * Called unconditionally, including on the frame where there is nothing to
+     * march against, because the call is what latches ownership on their side —
+     * their `composite()` keeps drawing the scene into its own full-frame
+     * RGBA16F until it has heard from a driver with a depth texture. Skipping the
+     * call on the branch where their pass ran would mean it always ran, and the
+     * handover would never happen: a deadlock in which each side waits for the
+     * other to go first.
+     *
+     * Passing null on that branch rather than sceneRT's depth is the point.
+     * `haveSceneInfo` is false exactly when their composite drew the scene, and
+     * on that frame sceneRT's depth attachment holds whatever was last cleared —
+     * so marching against it would produce a buffer of nonsense over a frame that
+     * already has their own correctly marched shafts in it. Null is their
+     * documented "nothing to add", it latches, and it costs no march. One frame at
+     * startup, and from the next one this chain owns the scene draw and the depth
+     * is its own. */
+    let shaftTex = null;
+    if (atmo.renderShafts) {
+      shaftTex = atmo.renderShafts(haveSceneInfo ? sceneRT.depthTexture : null, cam);
+    }
+
     const fu = finalMat.uniforms;
     fu.tScene.value = sceneRT.texture;
     fu.tDepth.value = depth;
+    fu.tShaft.value = shaftTex || blackPx;
+    /* Their gain, unmodified. See the composite in the shader. */
+    fu.uShaft.value = shaftTex ? 1.0 : 0.0;
     fu.uRes.value.set(w, h);
     fu.uAspect.value = w / h;
     fu.uNear.value = cam.near;

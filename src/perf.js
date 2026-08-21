@@ -150,10 +150,10 @@ import * as THREE from 'three';
    the sample count — it is deliberately at full strength on every rung, being
    about six texture fetches, which is less than the branch to skip it. */
 export const QTIERS = [
-  { name: 'high',   shadowFar: 4096, shadowNear: 2048, shimmer: true,  samples: 4, dust: 1.00, salt: 1.00, far: 4, softShadow: true,  post: { bloom: 4, dofTaps: 12, flare: 2, edge: 1 } },
-  { name: 'medium', shadowFar: 3072, shadowNear: 1536, shimmer: true,  samples: 2, dust: 0.70, salt: 0.70, far: 4, softShadow: true,  post: { bloom: 4, dofTaps:  6, flare: 2, edge: 1 } },
-  { name: 'low',    shadowFar: 2048, shadowNear: 1024, shimmer: true,  samples: 0, dust: 0.45, salt: 0.40, far: 3, softShadow: false, post: { bloom: 8, dofTaps:  0, flare: 1, edge: 1 } },
-  { name: 'potato', shadowFar: 1024, shadowNear:  512, shimmer: false, samples: 0, dust: 0.25, salt: 0.20, far: 2, softShadow: false, post: { bloom: 0, dofTaps:  0, flare: 0, edge: 1 } },
+  { name: 'high',   shadowFar: 4096, shadowNear: 2048, shimmer: true,  samples: 4, shafts: 2, dust: 1.00, salt: 1.00, far: 4, softShadow: true,  post: { bloom: 4, dofTaps: 12, flare: 2, edge: 1 } },
+  { name: 'medium', shadowFar: 3072, shadowNear: 1536, shimmer: true,  samples: 2, shafts: 2, dust: 0.70, salt: 0.70, far: 4, softShadow: true,  post: { bloom: 4, dofTaps:  6, flare: 2, edge: 1 } },
+  { name: 'low',    shadowFar: 2048, shadowNear: 1024, shimmer: true,  samples: 0, shafts: 1, dust: 0.45, salt: 0.40, far: 3, softShadow: false, post: { bloom: 8, dofTaps:  0, flare: 1, edge: 1 } },
+  { name: 'potato', shadowFar: 1024, shadowNear:  512, shimmer: false, samples: 0, shafts: 1, dust: 0.25, salt: 0.20, far: 2, softShadow: false, post: { bloom: 0, dofTaps:  0, flare: 0, edge: 1 } },
 ];
 
 const RSCALE = [1.0, 0.88, 0.78, 0.68, 0.58];
@@ -374,6 +374,16 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
     if (atmo) {
       if (atmo.setShimmerSamples) atmo.setShimmerSamples(q.samples);
       atmo.setShimmer(q.shimmer);
+      /* The marched in-scatter, which System 5 built three rungs for and nobody
+         had connected. It is worth connecting: their own ablation puts the march
+         at 2.0 ms, which makes it the most expensive single pass in the frame by
+         a factor of four over the whole of System 7's chain.
+         Never 0, though it exists. Dropping the pass removes a *subtractive*
+         correction, so the canyon gets brighter — a bottom tier that renders a
+         different picture rather than a rougher one, which is the line this
+         ladder is built not to cross. Halving the steps costs shadow-boundary
+         crispness and nothing else, on their measurement, so that is the rung. */
+      if (atmo.setShaftQuality) atmo.setShaftQuality(q.shafts);
     }
     /* The same sample count on System 7's scene target. Set from the same rung
        and unconditionally, because the whole point is that the frame's
@@ -487,6 +497,7 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
       `prog ${i.programs ? i.programs.length : 0}  tex ${i.memory.textures}\n` +
       `shadow ${sun.shadow.mapSize.x}/${sunNear.shadow.mapSize.x}  ` +
       `shimmer ${QTIERS[qi].shimmer ? QTIERS[qi].samples + 'x' : 'off'}  ` +
+      `shafts ${QTIERS[qi].shafts || 'off'}  ` +
       `dust ${Math.round(dustN * QTIERS[qi].dust)}  salt ${Math.round(saltN * QTIERS[qi].salt)}\n` +
       `post bloom ${QTIERS[qi].post.bloom ? '1/' + QTIERS[qi].post.bloom : 'off'}  ` +
       `dof ${QTIERS[qi].post.dofTaps || 'off'}  flare ${QTIERS[qi].post.flare}  ` +
