@@ -184,6 +184,19 @@ Three separate critics have already had to write around an untextured object in 
 Whoever picks this up should verify from a magnified crop that it is gone from `wall_shade`,
 `wall_lit` and `wash_mid`.
 
+## Never run `pnpm install`
+
+`node_modules/playwright` has vanished mid-session twice, breaking captures for whoever was
+mid-run, and both times it came back on its own. That is what a concurrent `pnpm install`
+looks like from the outside: pnpm rewrites `node_modules`, and during that window the
+package is genuinely absent.
+
+Dependencies are installed and correct. **Do not run `pnpm install`, `pnpm add`, or any
+package manager command.** If a module appears to be missing, wait thirty seconds and retry
+before concluding anything — you are probably watching somebody else's install. If it is
+still missing, report it rather than repairing it, because a second install is what turns
+one agent's brief outage into everybody's.
+
 ## Working alongside other agents
 
 Several systems are built in parallel, so more than one agent may be editing the tree at
@@ -660,6 +673,51 @@ The height lerp recovers 0.010 of the 0.072 without touching the gate, and that 
 part. The rest is a choice between a gate figure and a colour figure, and it belongs to whoever owns
 the composition rather than to the system that surfaced it. Recorded, not silently traded away.
 
+**The chroma lever was taken, it found a real defect, and it bought 0.004.** Both halves of that
+are worth having.
+
+The defect is real and was not a matter of degree. The escarpment's albedo was 0.335 0.152 0.082 at
+0.755 saturation, and System 2's stratigraphic column — in this repo, with a linear albedo and a
+thickness per bed — has nothing in it above 0.644. The fill was bouncing off the reddest hematite
+lens inside the reddest bed and calling it a cliff. A real section here is eight red beds, one grey
+limestone ledge, and twelve metres of cream Coconino on top; `tools/wallalbedo.mjs` averages the
+actual `LAYERS` table weighted by solid angle from the wash floor, which is the conservative of the
+two available weightings because it foreshortens the pale cap from 17 percent of the section to 6.7
+percent of the view. That gives 0.289 0.162 0.121 at 0.581 saturation, held to the old luminance to
+four decimals. A second instance of the same error sat one term along: the sky the far wall sees was
+reduced to a scalar luminance and multiplied into all three channels, handing the bluest source in
+the scene to rock as grey. Rescaled to carry the same luminance it always did.
+
+Measured as a pair at one HEAD, control and change:
+
+| | before | after |
+| --- | --- | --- |
+| fill B/R, across | 0.591 | 0.673 |
+| fill luminance, across | 0.0111 | 0.0109 |
+| lit rock saturation | 0.670 | **0.666** |
+| lit rock hue | 12.9 | 13.6 |
+| gate, flat face | 0.116 / 0.273 | 0.116 / 0.276 |
+| floor grad/L | 0.192 | 0.192 |
+
+The fill's chroma moved 14 percent at 2 percent of luminance, exactly as designed, and lit rock
+moved 0.004. **The residual is 0.040 and the chroma lever cannot reach it.**
+
+The reason is worth recording, because it also corrects the diagnosis above. The escarpment's 0.072
+was not a chroma effect — it was a *level* effect. That change dropped the crop's median from 36 to
+19 code values, and this transfer curve saturates as it darkens: within one frame, lit rock runs
+0.844 saturation at V 0.043 up to 0.571 at V 0.874. Replacing sky with rock made the frame darker
+far more than it made it redder, and darker is what raised the number. Correcting the chroma to the
+scene's own stratigraphy was still the right thing to do — it removes a surface model that was
+indefensible on its own terms — but it was never going to recover a level effect.
+
+Which points the remaining 0.040 somewhere useful rather than at the gate. **The sunlit wall is
+below its own band**: `wall_lit` V measures 0.563 against a documented 0.59–0.73. Level is the
+lever, and there are two of them — the shaded face is the gate's numerator and raising it is
+forbidden, but the sunlit face is the *denominator*, and raising that lowers the saturation and the
+gate ratio at the same time. Both of the remaining figures want the same move, and it is exposure
+and the grade's shoulder rather than anything in the fill. That is the toe loop's territory, so it
+goes there rather than being spent here.
+
 **A penumbra widening was tried as the explanation for the first cost, and it is not.** The theory
 was that hard shadow edges convert shadow depth straight into local gradient, and the far
 cascade's 3.5-texel kernel is 0.18 m where a half-degree sun behind rock 50 m away throws 0.46 m.
@@ -954,6 +1012,74 @@ margins added as a previous fix for this same defect** — hard risers meant to 
 readable at thirty metres — which were then softened to stop them snapping to the grid and
 reading as concrete pads. The softening that made them safe is what made them wax. Roughen
 their flanks rather than adding more of them.
+
+#### How it was filled: split the band at the mesh's Nyquist, not by taste
+
+Two terms, and the boundary between them is not a judgement call. The grid is 0.20 m across
+the wash and 0.42 m along, so 0.40 m is the shortest wavelength it can represent. Above that
+line detail belongs in the height field, below it in the shading normal, and putting either
+on the wrong side of the line wastes it — height field content under 0.4 m comes back as grid
+noise, and normal-map content over it duplicates geometry that is already there.
+
+Above the line, **flank roughness on the bars, elongated about ten to one downstream.** The
+elongation does three jobs at once and is the whole design: it is the right geomorphology,
+because everything a flow leaves on a bar is drawn out along the current; it is the only
+orientation that survives a 21:1 footprint; and it is the only orientation the *grid* can
+carry, since an isotropic term at the same scale would be well sampled across the wash and
+alias along it. Result, against the table above:
+
+| octave | before | after |
+| --- | --- | --- |
+| 0.40–0.80 m | 0.0805 | 0.1095 |
+| 0.80–1.60 m | 0.1063 | 0.1290 |
+| 1.60–3.20 m | 0.1135 | 0.1229 |
+| 3.20–6.40 m | 0.1023 | 0.1036 |
+| 6.40–12.8 m | 0.0939 | 0.0938 |
+
+The mesh-representable range is now flat within 1.375× and the fine end is no longer its
+minimum. Below 0.4 m the field is deliberately left quiet, because the mesh would only alias
+it.
+
+Below the line, the across-channel bedform in the fragment shader, raised 2.2× — it was
+correct in construction and inaudible at 13 levels out of 255.
+
+#### Two ways a comb of fixed wavelengths betrays itself
+
+Both were in the first version of the bedform term and both are easy to write again.
+
+**Every `cos(TAU * dot(wxz, d) / L)` equals one where `dot` is zero.** Four terms meant to be
+independent all crested on a single line down the wash, so the stack's worst case was the
+arithmetic sum of its amplitudes rather than about three sigma. That is a factor of two of
+amplitude thrown away, and it caps the term below the level where it can be seen. Give each
+wavelength a phase offset.
+
+**An amplitude envelope does not cure periodicity.** It makes the comb loud here and quiet
+there, and where it is loud the teeth are still evenly spaced, so the eye still reads a rake.
+Periodicity has to be attacked directly — and the axis matters. Warping phase *downstream* is
+the reflex and is exactly what cannot be afforded, because a pixel is 2.46 m long at 60 m and
+any downstream phase gradient is averaged away along with the term carrying it; the budget
+works out at about 1% lateral wander per unit of downstream run. **Warping phase by the
+across-channel coordinate alone is free.** It adds no downstream phase gradient whatever, so
+`fwidth` never sees it and survivability is untouched, while the crest *spacing* becomes
+irregular — bunched here, opened out there. Dead-straight crests at irregular spacing is a
+bar surface; dead-straight crests at regular spacing is a rake. Same for the envelope: it
+must vary across the channel, since a downstream-varying envelope is filtered to its mean and
+the comb it was breaking up reassembles.
+
+Generalised: **on a strongly anisotropic footprint, every property of a term — amplitude,
+phase, orientation — has a cheap axis and an expensive one, and they are the same axis for
+all three.** Vary things across the view. Along it, only the mean arrives.
+
+#### `hf/lf` was blind to the fix
+
+Worth recording alongside, because it is the fourth instrument failure on this project.
+Filling the 0.4–1.6 m octaves and tripling the bedform amplitude moved `wash_mid` floor
+`hf/lf` from 0.59 to 0.59, exactly, while `grad/L` went 0.203 → 0.219 and the octave table
+moved as tabulated above. The band metric integrates over the whole spectrum and reports how
+much energy there is, not where it is, so a change that redistributes energy into an empty
+octave is invisible to it. **Use the octave table for structure questions.** `hf/lf` remains
+the right gate for "has this surface gone to wax overall", and the wrong one for "is the
+spectrum the right shape".
 
 ### A texture pinned to a world scale goes to wax at distance
 

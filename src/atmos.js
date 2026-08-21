@@ -625,7 +625,27 @@ export function computeAtmosphere(over = {}) {
      wash between buttes, not a slot canyon — the shadows are supposed to come
      out violet, and burying the horizon in red rock is how a previous rig ended
      up with warm grey shade and no warm/cool split at all. */
-  const ROCK_ALBEDO = [0.335, 0.152, 0.082];
+  /* This was 0.335 0.152 0.082, at 0.755 saturation, and that is not the colour of
+     a cliff — it is the colour of the reddest hematite lens inside the reddest bed
+     in the section. It is more saturated than *every* bed in System 2's own
+     stratigraphic column, whose reddest is 0.644, and bouncing light off it is
+     what took lit rock to 0.664-0.672 against a photographic band of 0.42-0.65.
+     A real canyon wall is a stack of unequal beds: eight red ones, a grey
+     limestone ledge, and twelve metres of cream Coconino on top. The average of
+     that stack is what a surface across the wash receives, and tools/wallalbedo.mjs
+     computes it from `LAYERS` rather than from a guess — weighted by solid angle
+     rather than by thickness, because a point on the floor sees the top of a near
+     wall foreshortened into a narrow band. That is deliberately the conservative
+     of the two weightings: it drops the pale cap from 17 percent of the section to
+     6.7 percent of the view, and the pale cap is what does most of the
+     desaturating. By thickness this would be 0.544; by solid angle it is 0.581.
+     Held at the old luminance to the fourth decimal, and that part is not
+     cosmetic. The escarpment's *level* is calibrated — WALL_LIT and WALL_SKYVIS
+     came off raycasts and the shadow-to-sunlit gate is built on them — while its
+     chroma never was calibrated against anything. So the measured quantity stays
+     and the unmeasured one is corrected, which is also why this cannot move the
+     gate: luminance 0.1859 before and 0.1859 after. */
+  const ROCK_ALBEDO = over.wallAlbedo ?? [0.2890, 0.1617, 0.1211];
   /* The floor a surface in the wash actually sees is not the one the atmosphere
      solve used. That one is the regional average — open desert, sunlit butte
      flanks, the wash where it is lit — and it is the right thing to bounce back
@@ -715,6 +735,20 @@ export function computeAtmosphere(over = {}) {
   /* Sky irradiance on a vertical, needed before the wall term can be evaluated;
      taken from the coarse sweep rather than iterated again. */
   const skyVertLum = 0.5 * specLum(meanSky) * Math.PI;
+  /* And the same class of error as the escarpment albedo, one term further along:
+     that scalar was multiplied straight into all three channels, so the bluest
+     source in the scene was handed to the rock as grey. Rescaled to carry exactly
+     the luminance the scalar did, which makes this a chroma correction with no
+     energy in it — the gate cannot see it, and neither can anything the raycast
+     sweeps calibrated. Small, because the wall's radiance is set by what the sun
+     does to its crest rather than by the sky it sees, but it is free and it is in
+     the right direction. */
+  const skyVertRGB = [0, 0, 0];
+  {
+    specToRGB(meanSky, skyVertRGB);
+    const l = 0.2126 * skyVertRGB[0] + 0.7152 * skyVertRGB[1] + 0.0722 * skyVertRGB[2];
+    for (let k = 0; k < 3; k++) skyVertRGB[k] *= l > 0 ? skyVertLum / l : 0;
+  }
 
   const smooth = (a, b, x) => {
     const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
@@ -754,7 +788,7 @@ export function computeAtmosphere(over = {}) {
          than a knob. Leaving this out is what took the shadow ratio past the
          bottom of its band and started crushing the shaded wall's structure:
          grad/L on that face had fallen to 0.019. */
-      out[k] = ROCK_ALBEDO[k] * (eDirect * sunRGB[k] + skyVertLum * WALL_SKYVIS
+      out[k] = ROCK_ALBEDO[k] * (eDirect * sunRGB[k] + skyVertRGB[k] * WALL_SKYVIS
         + groundRGB[k] * Math.PI * FLOOR_VIEW) / Math.PI;
     }
     return out;
