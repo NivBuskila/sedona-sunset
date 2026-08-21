@@ -415,7 +415,20 @@ export function buildTree(seed) {
   function grow(p0, dir0, len, r0, r1, depth, deadness, s0, prof, twistRate) {
     const nSeg = [16, 11, 8, 6, 5][depth];
     const pts = [p0.clone()];
-    const radii = [Math.max(0.006, r0)];
+    /* Bare deadwood carries a much higher floor than live wood. Two reasons,
+       pointing the same way. A dead branch does not taper away to a hair — it
+       snapped, so it ends at a blunt broken stub, and "tapers to broken stubs"
+       was an explicit finding. And a hairline is sub-pixel at the twenty metres
+       this tree is viewed from: with no multisampling in the capture path a
+       one-pixel-wide limb alternates covered and uncovered along its length and
+       draws as a dotted line. That dotting is what has been reported as bright
+       speck stipple along the branch edges — it is geometric aliasing of a
+       sub-pixel silhouette, not specular on the material, which is why neither
+       the specular reduction nor the flute flattening touched it. Live twigs
+       keep the low floor; they are buried in foliage and never seen in
+       silhouette. */
+    const rFloor = deadness > 0.5 ? 0.013 : 0.006;
+    const radii = [Math.max(rFloor, r0)];
     const d = dir0.clone().normalize();
     const step = len / nSeg;
     const wob = rand() * 100;
@@ -466,7 +479,7 @@ export function buildTree(seed) {
          with no visible wood to be attached to. That is the residual "detached
          cluster floating in clear sky": the spray was joined all along, to a
          branch too thin to draw. */
-      radii.push(Math.max(0.006, mix(r0, r1, Math.pow(t, 0.78)) * mix(1, taper, deadness)));
+      radii.push(Math.max(rFloor, mix(r0, r1, Math.pow(t, 0.78)) * mix(1, taper, deadness)));
     }
 
     const seg = SEG_BY_DEPTH[depth];
@@ -849,8 +862,15 @@ export function foliageGeometry(clumps, seed) {
        band and verified against the frame, and painting rust into it would drag
        that measurement back down for no gain. Olive albedo times this ratio
        lands near hue 36 degrees. */
+    /* The tint divides rather than multiplies: red stays at unity and the other
+       two channels come down. The first version scaled red to 1.42, which is
+       fine on a shaded spray and clips on a sunlit one — a rusted card catching
+       direct sun came out as a saturated orange-red speck two pixels across,
+       and those specks were being read as sparkler artefacts on the branches
+       they happened to sit beside. Taking green and blue down reaches the same
+       hue without ever pushing a channel above where it started. */
     const rust = rand() < 0.13;
-    const rr = rust ? 1.42 : 1, rg = rust ? 0.80 : 1, rb = rust ? 0.42 : 1;
+    const rr = 1, rg = rust ? 0.56 : 1, rb = rust ? 0.30 : 1;
 
     for (let k = 0; k < nCards; k++) {
       /* Biased toward the base, where a real fan carries most of its mass. */
