@@ -1644,7 +1644,29 @@ vec3 ck = texture2D(uCrack, rot2(wxz, 2.10) * 0.3846).rgb;
    pigment survives what geometry does not. */
 float crkF = 1.0 - smoothstep(0.004, 0.016, foot);
 float curlF = 1.0 - smoothstep(0.022, 0.090, foot);
-float crackH = (ck.b * 0.95 - ck.r * 0.85) * panW * crkF;
+/* ---- polarity: a crack is a groove, not a weld ----
+ * Reported as broken: "a raised polygon lattice, bright tan welts, heavily
+ * stair-stepped… if this is meant to be desiccation cracking, it is inverted:
+ * real mudcracks are recessed dark lines in a mud drape, not raised bright
+ * ridges standing proud of a gravel bed."
+ *
+ * The reading is correct and the cause is the balance of these two terms. Both
+ * halves are real features — the crack is a groove and the plate rim genuinely
+ * curls up as it dries — but the rim was weighted slightly *above* the groove
+ * (0.95 against 0.85) while also being the brighter of the two in albedo. A
+ * continuous net that is both raised and pale is a weld bead, and once the sun
+ * is raking it the rim catches a highlight along its whole length, so the net
+ * reads as the positive feature and the plate as the background. That is the
+ * figure and the ground the wrong way round.
+ *
+ * A real dried pan is the opposite: what you see from any distance is a dark
+ * net, because the crack is a shadowed slot a centimetre wide and the curl is a
+ * couple of millimetres of lift you only notice on the sun-facing rim. So the
+ * groove takes the weight and the rim is left as the small highlight it should
+ * always have been. It also fixes most of the aliasing complaint for free —
+ * the stair-stepping was the derivative bump running at full strength on the
+ * brightest, most continuous feature in the map. */
+float crackH = (ck.b * 0.26 - ck.r * 1.35) * panW * crkF;
 /* Weak on purpose. The curl rim is a couple of millimetres of lift on a plate a
    hand's width across, and a rim strong enough to be unmissable is a bright wire —
    the pan came out as a net of glowing filaments over dark cores, which is the
@@ -1656,9 +1678,12 @@ gWN = bumpFrom(crackH, gWN, 0.048 * crkF);
    speak of at eight metres, but it is genuinely paler — it dried first, it is
    dustier, and it is the part a passing flood polishes last. Small, and in
    pigment, so it neither aliases nor needs a derivative. */
-gA *= 1.0 + (ck.b - 0.30) * 0.16 * panW * curlF;
+gA *= 1.0 + (ck.b - 0.30) * 0.06 * panW * curlF;
 gA = mix(gA, gA * uSilt * (0.88 + ck.g * 0.30), panW * 0.95);
-gA *= 1.0 - ck.r * panW * 0.34 * (0.30 + 0.70 * crkF);
+/* And the crack darkens harder, for the same reason: the net has to be the dark
+   feature. A shrinkage crack is a slot open to a sliver of sky and nothing else,
+   so it is the darkest thing on a dried pan by a long way. */
+gA *= 1.0 - ck.r * panW * 0.56 * (0.30 + 0.70 * crkF);
 /* Clay dries smoother than the sand it sits in — a separate cue from the relief,
    and one that survives to any distance because it is a roughness difference over
    a whole patch rather than a feature. */
