@@ -573,9 +573,147 @@ export function patchShadowChunk() {
     return min( abs( g.x ) * texel.x + abs( g.y ) * texel.y, ${(4.0 / DEPTH_RANGE).toFixed(8)} );
   }
 
+  #if defined( SHADOWMAP_TYPE_PCF_SOFT )
+  #define SUN_PCSS 1
+
+  /* ---- a penumbra the size of the sun ----
+   * The sun is a disc half a degree across, not a point, so a shadow edge is a
+   * gradient whose width is the occluder's distance times that angle: about
+   * 9.3 mm of softness per metre of gap. Nothing in three's shadow path knows
+   * this. Worse, shadowRadius — which reads as the control for it, and which
+   * this rig has been setting to 3.5 and 1.7 texels — is *ignored* by the
+   * PCF_SOFT branch, whose kernel is a fixed bilinear-weighted 3x3 over one
+   * texel. The project runs PCF_SOFT everywhere above the lowest tier, so the
+   * radius has never done anything at all. That also retracts an experiment
+   * recorded further down this file: widening the radius from 3.5 to 10 texels
+   * measured no change in floor grad/L, and the reason was not that penumbra
+   * width cannot move gradient, it was that both numbers compiled to the same
+   * one-texel kernel.
+   *
+   * The cost of that shows up as a named artifact. In the wall_shade framing a
+   * facet of wallL is lit through a grazing gap in the same wall's crest 170 m
+   * up-canyon — geometrically correct, confirmed by raycast in
+   * tools/_slabmap.mjs, which finds nothing between that facet and the sun and
+   * finds the crest across every neighbouring sample. But 170 m of gap is
+   * 1.6 m of penumbra, and a one-texel kernel on the 208 m cascade gives 5 cm.
+   * Measured on the sRGB frame the terminator rises 10 to 90 percent in 3 px
+   * where the geometry says 30. So the patch reads as a hard-edged
+   * parallelogram pasted on the rock — the "floating slab" — when it should
+   * read as a soft shaft of light. Critics have been calling it geometry for
+   * hours and it is not: it is the shadow filter refusing to admit the sun has
+   * a size.
+   *
+   * So size the filter from the blocker distance instead. Search the map for
+   * occluders, average their depth, and set the kernel width from the gap:
+   * Fernando 2005. Three details are worth more than the sketch.
+   *
+   * The kernel is a disc in *world* space, not in UV. Both cascades cover more
+   * ground across than up — 208 by 124, 36 by 31 — over a square map, so a
+   * circle in texels is an ellipse on the rock, off by 1.7x. Scaling the
+   * offsets by metres-per-UV per axis costs one multiply and gets it right.
+   *
+   * Bias is per tap and exact, which is what makes a wide kernel affordable at
+   * all. rpBias above estimates one number for the whole kernel from its
+   * radius, and at 30 texels that estimate is nonsense: the cap would either
+   * eat contact shadows or let the wash floor shadow itself, and this rig has
+   * already been round that loop once. Here the receiver plane's depth
+   * gradient is evaluated at each tap's own offset, so a floor's own samples
+   * land on its own plane and never register as blockers, at any radius, with
+   * no cap doing the work. The slope is still limited, because across a
+   * silhouette the derivative is garbage and a wide kernel would amplify it,
+   * but the limit is per texel of offset rather than a flat ceiling.
+   *
+   * Tap count follows the radius. A contact shadow is a couple of texels wide
+   * and eight taps resolve it; only a penumbra metres across pays for 28. The
+   * disc is a golden-angle spiral rotated per pixel, so the places where the
+   * taps under-sample become noise at the 1/n step rather than concentric
+   * rings, and it stays deterministic because the rotation is a function of the
+   * fragment's own coordinate. */
+  const float SUN_TAN = 0.00931;    /* tan of the sun's 0.533 degree diameter */
+  /* The steepest depth-per-texel it will believe from a derivative. A floor
+     under a 15 degree sun runs 0.19 m of depth per texel of the coarse
+     cascade, so this clears the honest worst case with margin and still
+     refuses the spikes that appear along a silhouette. */
+  const float SUN_MAXSLOPE = ${(0.35 / DEPTH_RANGE).toFixed(9)};
+
+  /* Metres across the map, x and y. Keyed on resolution because that is the
+     only thing the chunk is handed that distinguishes the cascades. */
+  vec2 sunExtent( vec2 mapSize ) {
+    return mapSize.x > 3000.0
+      ? vec2( ${(FAR_BOX.xHi - FAR_BOX.xLo).toFixed(1)}, ${(FAR_BOX.yHi - FAR_BOX.yLo).toFixed(1)} )
+      : vec2( ${(NEAR_BOX.xHi - NEAR_BOX.xLo).toFixed(1)}, ${(NEAR_BOX.yHi - NEAR_BOX.yLo).toFixed(1)} );
+  }
+
+  /* Depth per unit UV of the receiver plane, from the same 2x2 solve rpBias
+     uses. Zero where the projected quad collapses: no plane, so no correction. */
+  vec2 sunPlane( vec3 p ) {
+    vec2 duvdx = dFdx( p.xy ), duvdy = dFdy( p.xy );
+    float det = duvdx.x * duvdy.y - duvdx.y * duvdy.x;
+    if ( abs( det ) < 1e-14 ) return vec2( 0.0 );
+    float dzdx = dFdx( p.z ), dzdy = dFdy( p.z );
+    return vec2( dzdx * duvdy.y - dzdy * duvdx.y,
+                 dzdy * duvdx.x - dzdx * duvdy.x ) / det;
+  }
+
+  /* How much deeper the receiver's own surface is at this tap's offset. */
+  float sunSlope( vec2 g, vec2 o, vec2 mapSize ) {
+    float lim = SUN_MAXSLOPE * length( o * mapSize );
+    return clamp( dot( g, o ), -lim, lim );
+  }
+
+  vec2 sunSpiral( int i, int n, float rot ) {
+    float a = float( i ) * 2.39996323 + rot;
+    return sqrt( ( float( i ) + 0.5 ) / float( n ) ) * vec2( cos( a ), sin( a ) );
+  }
+
+  float sunSoftShadow( sampler2D map, vec2 mapSize, float intensity, float bias, vec4 coord ) {
+    vec3 p = coord.xyz / coord.w;
+    if ( p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0 ) return 1.0;
+
+    vec2 ext = sunExtent( mapSize );
+    vec2 uvPerM = 1.0 / ext;
+    float texelM = ext.x / mapSize.x;
+    /* The widest penumbra each cascade can express. The fine cascade only
+       covers 36 m, so nothing inside it can be far enough away to throw more
+       than a third of a metre; the coarse one is capped for the search cost. */
+    float maxPen = mapSize.x > 3000.0 ? 2.0 : 0.5;
+    vec2 g = sunPlane( p );
+    float rot = 6.2831853 * fract( 52.9829189 *
+      fract( dot( gl_FragCoord.xy, vec2( 0.06711056, 0.00583715 ) ) ) );
+
+    /* Blocker search, over half the widest penumbra: a point further outside
+       the hard edge than this finds nothing and stays lit, which is exactly
+       the outer limit of the gradient the filter can then draw. */
+    float search = 0.5 * maxPen, sum = 0.0, cnt = 0.0;
+    for ( int i = 0; i < 12; i ++ ) {
+      vec2 o = sunSpiral( i, 12, rot ) * search * uvPerM;
+      float d = unpackRGBAToDepth( texture2D( map, p.xy + o ) );
+      if ( d < p.z + bias + sunSlope( g, o, mapSize ) ) { sum += d; cnt += 1.0; }
+    }
+    if ( cnt < 0.5 ) return 1.0;
+
+    float pen = clamp( ( p.z - sum / cnt ) * ${DEPTH_RANGE.toFixed(1)} * SUN_TAN,
+      1.5 * texelM, maxPen );
+    float r = 0.5 * pen;
+    int n = int( clamp( r / texelM * 1.2, 8.0, 28.0 ) );
+    float s = 0.0;
+    for ( int i = 0; i < 28; i ++ ) {
+      if ( i >= n ) break;
+      vec2 o = sunSpiral( i, n, rot ) * r * uvPerM;
+      float d = unpackRGBAToDepth( texture2D( map, p.xy + o ) );
+      s += step( p.z + bias + sunSlope( g, o, mapSize ), d );
+    }
+    return mix( 1.0, s / float( n ), intensity );
+  }
+  #endif
+
   float getShadow( sampler2D shadowMap, vec2 shadowMapSize, float shadowIntensity, float shadowBias, float shadowRadius, vec4 shadowCoord ) {
-    float b = shadowBias - rpBias( shadowCoord.xyz / shadowCoord.w, shadowMapSize, shadowRadius );
-    float s = getShadowCascade( shadowMap, shadowMapSize, shadowIntensity, b, shadowRadius, shadowCoord );
+    #ifdef SUN_PCSS
+      float s = sunSoftShadow( shadowMap, shadowMapSize, shadowIntensity, shadowBias, shadowCoord );
+    #else
+      float b = shadowBias - rpBias( shadowCoord.xyz / shadowCoord.w, shadowMapSize, shadowRadius );
+      float s = getShadowCascade( shadowMap, shadowMapSize, shadowIntensity, b, shadowRadius, shadowCoord );
+    #endif
     #if NUM_DIR_LIGHT_SHADOWS > 1
       vec4 nc = vDirectionalShadowCoord[ 1 ];
       vec3 np = nc.xyz / nc.w;
@@ -584,9 +722,14 @@ export function patchShadowChunk() {
                    * step( 0.0, np.z ) * step( np.z, 1.0 );
       if ( inNear > 0.0 ) {
         DirectionalLightShadow n = directionalLightShadows[ 1 ];
-        float bn = n.shadowBias - rpBias( np, n.shadowMapSize, n.shadowRadius );
-        float sn = getShadowCascade( directionalShadowMap[ 1 ], n.shadowMapSize,
-          n.shadowIntensity, bn, n.shadowRadius, nc );
+        #ifdef SUN_PCSS
+          float sn = sunSoftShadow( directionalShadowMap[ 1 ], n.shadowMapSize,
+            n.shadowIntensity, n.shadowBias, nc );
+        #else
+          float bn = n.shadowBias - rpBias( np, n.shadowMapSize, n.shadowRadius );
+          float sn = getShadowCascade( directionalShadowMap[ 1 ], n.shadowMapSize,
+            n.shadowIntensity, bn, n.shadowRadius, nc );
+        #endif
         s = mix( s, min( s, sn ), inNear );
       }
     #endif
@@ -613,25 +756,25 @@ export function buildLights() {
     THREE.LinearSRGBColorSpace);
   sun.intensity = peak * SCALE;
 
-  /* Penumbra, on the coarse cascade. The sun is half a degree across, so a
-     shadow cast 240 m throws a 2 m soft edge, and a hard edge at that distance
-     is the loudest "this is a renderer" tell in a long raking shot. three's PCF
-     kernel at 3.5 texels is 0.18 m here — short of the truth, but an order of
-     magnitude closer than one texel.
+  /* Penumbra is no longer set here, and these two numbers no longer do
+     anything on the path this project renders on. three's PCF_SOFT branch
+     ignores `shadowRadius` outright — its kernel is a fixed bilinear 3x3 over
+     one texel — so 3.5 and 1.7 were inert from the day they were written, and
+     the earlier note claiming 3.5 texels bought 0.18 m of soft edge was simply
+     wrong about what the renderer does with the number. Penumbra width is now
+     derived per fragment from the blocker distance and the sun's angular
+     diameter, up in the shadow chunk; see the comment on sunSoftShadow.
 
-     Measured, and left alone. Widening to 10 texels (0.51 m, which is the
-     physical figure for a half-degree sun behind rock 50 m away) was tried as a
-     way to recover the floor structure that deepening the shade had cost, on the
-     theory that hard edges convert shadow depth into local gradient. It does
-     not: floor grad/L reads 0.186 at 3.5 texels and 0.186 at 10, and the shaded
-     wall face 0.019 against 0.021. Cast-shadow edges are too small a share of a
-     region's pixels to show up in a nine-pixel high-pass; what sets floor grad/L
-     is the ratio of direct to fill, because the bed's structure is a modulation
-     of direct light. Reverted rather than kept, because rpBias scales its texel
-     estimate with radius and 10 texels nearly triples the receiver-plane bias on
-     the far cascade — an unmeasured risk of shadows detaching from contact, in
-     exchange for no measured benefit. A penumbra that widens with occluder
-     distance is a real want, but PCF cannot express it; that needs PCSS. */
+     The experiment that used to be recorded here is retracted rather than
+     merely superseded, because it reached a true conclusion by a false route.
+     Widening the radius from 3.5 to 10 texels measured floor grad/L at 0.186
+     both times and the shaded wall at 0.019 against 0.021, and that was read as
+     evidence that cast-shadow edges are too small a share of a region's pixels
+     to move a nine-pixel high-pass. They may well be, but this did not show it:
+     both settings compiled to the identical one-texel kernel, so the null was
+     the null of an experiment that never varied its independent variable. The
+     figures below are kept because they still feed rpBias on the low tiers,
+     where PCFShadowMap does read the radius. */
   /* Both constants come down hard now that rpBias measures the depth slope
      instead of the rig guessing a worst case for it. 0.28 m and 0.028 m were
      sized for a horizontal floor at eight degrees and were still three times
