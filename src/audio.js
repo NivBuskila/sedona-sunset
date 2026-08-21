@@ -88,6 +88,17 @@ const EDGE_LADDER = [880, 1180, 1560, 2050, 2700, 3400];
 const HARM = {
   howl: [0, 0.75, 1.00, 0.66, 0.46, 0.31, 0.20, 0.13, 0.085, 0.05],
   yip: [0, 0.62, 1.00, 0.88, 0.66, 0.47, 0.33, 0.22, 0.15, 0.10],
+  /* Rock wren: a dry buzzy trill, so more partials than a whistle and a
+     deliberately uneven ladder — the unevenness is what makes it read as dry
+     rather than as a sawtooth. */
+  rockwren: [0, 1.00, 0.62, 0.40, 0.26, 0.14, 0.08, 0.04],
+  /* Black-throated sparrow: two clear notes then a trill. Nearly a whistle,
+     with just enough of a second partial to have a throat. */
+  sparrow: [0, 1.00, 0.28, 0.09, 0.03],
+  /* Cactus wren: a low harsh churr. Broad, dense and inharmonic-sounding
+     because the partials are nearly equal in strength, which is what a
+     rattling voice measures like. */
+  cactus: [0, 0.90, 1.00, 0.95, 0.80, 0.66, 0.52, 0.40, 0.30, 0.22, 0.16],
   /* A canyon wren is nearly a pure whistle, but nearly is not exactly: at h2
      fourteen decibels down the second partial fell under any usable analysis
      floor and each note measured as a lone sinusoid, which reads as a
@@ -95,6 +106,81 @@ const HARM = {
      and is visible. */
   wren: [0, 1.00, 0.35, 0.13, 0.05, 0.02],
   raven: [0, 0.85, 1.00, 0.90, 0.72, 0.58, 0.44, 0.33, 0.25, 0.18, 0.13, 0.09],
+};
+
+/* ── the two soundscapes ───────────────────────────────────────────────────
+ *
+ * `plain` is the default and is what ships. `full` is the earlier design, kept
+ * whole.
+ *
+ * The difference between them is not a volume. It is a difference of *density*,
+ * and the reason it has to be is worth writing down, because the earlier design
+ * was not a failure of execution — it measured well twice — it was a failure of
+ * brief. It put eighty-eight per cent of the timeline below -45 dBFS, ran a bed
+ * around -60, and placed two or three distant animal calls in two minutes with
+ * exponential gaps between them. Every one of those numbers was hit on purpose
+ * and defended as "the quiet is the feature". They are also, exactly, how a
+ * horror ambience is built: an empty world where a rare, far-off, unanswered
+ * voice arrives out of nothing. A listener called it creepy on first hearing and
+ * they were right — emptiness *is* the unease, and no amount of realism in the
+ * individual events changes it, because the dread is in the gaps and not in the
+ * sounds.
+ *
+ * A pleasant ambience inverts all of it: continuous, layered and gently busy, so
+ * that nothing can arrive out of nowhere because something is always there. The
+ * numbers below come from a working reference — the sibling jungle build, which
+ * reads as warm — and the two that matter most are that its *insects sit above
+ * its wind* rather than far beneath it, and that a bird calls every few seconds
+ * rather than every few minutes.
+ *
+ *   ·  bed     per-band multiplier on the wind's bed floors
+ *   ·  drive   per-band multiplier on the gust response
+ *   ·  insects level of the cicada and cricket beds
+ *   ·  edge    level of the rock-edge tones. Zero in `plain`: a narrow partial
+ *              that swells and glides over a quiet bed is a drone, and drones
+ *              read as dread whatever their physics.
+ *   ·  birds   which species rotate, and how often
+ *   ·  gust    gap, duration and peak of the gust schedule. Short gaps in
+ *              `plain` so gusts overlap and the wind is a presence rather than
+ *              an event.
+ */
+const MODES = {
+  plain: {
+    /* Up about twelve decibels. This is the single biggest number in the file
+       and it is the one that stops the world being empty. */
+    bed: 4.1,
+    /* And the gust response comes down, so lifting the bed closes the gap from
+       both sides instead of making everything louder. A gust should be a change
+       in the weather, not an arrival. */
+    drive: 0.72,
+    insects: 1.0,
+    edge: 0,
+    fauna: ['canyonwren', 'rockwren', 'sparrow', 'cactuswren'],
+    /* Mean quiet time per species in seconds, then calls per bout and the gap
+       between calls inside one. Four species at these means put a bout every
+       seven seconds or so and a call every three, which is the reference build's
+       density; a bird every three seconds is companionable, and it is roughly
+       thirty times more often than the earlier design managed. */
+    bird: {
+      canyonwren: { quiet: 34, bout: [1, 2], gap: [3.0, 6.0], dist: [40, 130] },
+      rockwren: { quiet: 26, bout: [2, 4], gap: [1.8, 4.0], dist: [25, 90] },
+      sparrow: { quiet: 22, bout: [2, 5], gap: [1.5, 3.5], dist: [14, 55] },
+      cactuswren: { quiet: 40, bout: [2, 3], gap: [2.0, 4.0], dist: [30, 100] },
+    },
+    gust: { gap: [5, 11], dur: [7, 13], peak: [0.13, 0.40, 1.3] },
+  },
+  full: {
+    bed: 1,
+    drive: 1,
+    /* Not zero even here. A critic of the earlier design asked for the
+       "ever-present far-field insect floor" and was right about it; it was
+       simply far too quiet to be one. */
+    insects: 0.22,
+    edge: 2.0,
+    fauna: ['coyote', 'wren', 'raven'],
+    bird: null,
+    gust: { gap: [11, 32], dur: [5, 11], peak: [0.16, 0.74, 2.1] },
+  },
 };
 
 /* ── small helpers ─────────────────────────────────────────────────────── */
@@ -113,7 +199,31 @@ const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 const lerp = (a, b, t) => a + (b - a) * t;
 
+/* Every non-finite automation write this module has refused, and the first
+   parameter it happened on. Counted rather than thrown, and counted rather than
+   swallowed.
+   The contract says the sound must never be able to stop the scene, and until
+   now nothing enforced it: one NaN reaching `linearRampToValueAtTime` throws,
+   the throw unwinds out of `update()`, and in the live page it took the whole
+   frame loop with it — atmosphere, post and render — for the rest of the
+   session, every frame, at the same line. A soundscape is not allowed to do
+   that. So the guard lives at the one function every wind parameter goes
+   through, which is narrow enough to be honest and wide enough that no future
+   parameter can reintroduce the same failure. */
+const badWrites = { n: 0, first: null };
+
 function ramp(param, value, t) {
+  if (!Number.isFinite(value) || !Number.isFinite(t)) {
+    badWrites.n++;
+    if (!badWrites.first) {
+      badWrites.first = { value, t };
+      console.warn('audio: refused a non-finite automation write', value, 'at', t);
+    }
+    /* Skipped, not substituted. The parameter holds its last scheduled value,
+       which is the previous quarter-second's target and therefore audibly
+       correct; inventing a number here would hide the bug instead. */
+    return;
+  }
   param.linearRampToValueAtTime(value, t);
 }
 
@@ -125,6 +235,11 @@ function ramp(param, value, t) {
  * cannot leave a tail running under the next one.
  */
 function burst(param, t0, peak, attack, decay) {
+  if (!Number.isFinite(t0) || !Number.isFinite(peak)) {
+    badWrites.n++;
+    if (!badWrites.first) badWrites.first = { value: peak, t: t0 };
+    return;
+  }
   param.setValueAtTime(0, t0);
   param.linearRampToValueAtTime(peak, t0 + attack);
   param.setTargetAtTime(0, t0 + attack, decay * 0.26);
@@ -455,6 +570,8 @@ export class Soundscape {
     /* `quiet` suppresses the random schedule so that a forced-event render
        measures one thing at a time. */
     this.quiet = !!opts.quiet;
+    this.mode = opts.mode === 'full' ? 'full' : 'plain';
+    this.M = MODES[this.mode];
     const rand = this.rand = mulberry32(this.seed);
     this.erand = mulberry32(this.seed ^ 0x9e3779b9);
 
@@ -598,8 +715,77 @@ export class Soundscape {
     this.airTilt.gain.value = -1.8;
     this.air.gain.disconnect();
     this.air.gain.connect(this.airTilt).connect(this.windBus);
-    /* And one barely-there narrow band in the insect register, breathing on a
-       half-minute cycle so the floor is not a flat hiss. */
+    /* ── insects: the continuous bed ────────────────────────────────────
+       In any warm-country recording the insects are the floor everything else
+       sits on, and in the reference build they run six decibels *above* the wind
+       wash. That is the inversion this file got wrong: it had one barely-there
+       narrow band at a level about forty decibels under the wind, breathing on a
+       half-minute cycle, which is not a floor — it is an occasional hint of one.
+       It is also the cheapest possible fix for the 4-8 kHz hole that two rounds
+       of critique were spent on, because that is exactly the band insects own.
+
+       Two kinds, because they do different jobs. The cicada colonies are the
+       warm continuous sheet; the cricket tribes are the shimmer on top of it. */
+    this.insects = g(1);
+    this.insects.connect(this.dry);
+    /* A little of it into the wash, so the bed sits in the same space as
+       everything else rather than in front of it. */
+    this.insectSend = g(0.22);
+    this.insects.connect(this.insectSend).connect(this.wash);
+
+    /* A cicada chorus is not N oscillators. One insect is a pulse train, but a
+       hundred of them smear into coloured noise, so the smear is synthesized
+       directly. What stops that being plain filtered noise is the roughness:
+       real choruses beat against each other at wing-muscle rates around two
+       hundred hertz. Modulating with narrowband *noise* at that rate rather than
+       with a sine is the whole trick — a sine there sounds like a fax machine,
+       because it gives the roughness a pitch. */
+    this.cicada = [];
+    for (const [fc, q, pan, rough] of [[4300, 1.5, -0.55, 168], [5600, 1.3, 0.6, 196],
+      [6600, 1.7, -0.25, 212]]) {
+      const src = fc > 5000 ? wh2L : whR;
+      const bp = bq('bandpass', fc, q);
+      const bp2 = bq('bandpass', fc * 0.72, 2.0);
+      src.connect(bp); src.connect(bp2);
+      const am = g(0.66);
+      bp.connect(am); bp2.connect(g(0.45)).connect(am);
+      const rn = bq('bandpass', rough, 2.4);
+      (fc > 5000 ? wh2R : whL).connect(rn);
+      const rd = g(0.34);
+      rn.connect(rd).connect(am.gain);
+      const lvl = g(0);
+      am.connect(lvl).connect(sp(pan)).connect(this.insects);
+      this.cicada.push({ lvl, base: 1 });
+    }
+
+    /* Crickets: a few tribes trilling at slightly different rates, which is what
+       makes the bed shimmer rather than pulse. Bandpassed noise at a highish Q
+       rather than a tone — a real tree cricket is close to a pure whistle, but a
+       bare sustained partial over a quiet bed is the drone this soundscape is
+       specifically not allowed to have, and at Q nine the pitch is perfectly
+       clear without there being a sinusoid anywhere in it. The gate is a sine
+       LFO offset to unipolar, which is a raised cosine, which is the envelope of
+       a real trill. */
+    this.cricket = [];
+    this.cricketLFO = [];
+    for (const [fc, rate, pan] of [[4150, 24.3, 0.5], [4700, 29.7, -0.6],
+      [5300, 34.1, 0.2]]) {
+      const bp = bq('bandpass', fc, 9);
+      (fc > 4500 ? whL : wh2R).connect(bp);
+      const gate = g(0.5);
+      const lfo = ctx.createOscillator();
+      lfo.type = 'sine'; lfo.frequency.value = rate;
+      const depth = g(0.5);
+      lfo.connect(depth).connect(gate.gain);
+      this.cricketLFO.push(lfo);
+      const lvl = g(0);
+      bp.connect(gate).connect(lvl).connect(sp(pan)).connect(this.insects);
+      this.cricket.push({ lvl, base: 1 });
+    }
+
+    /* The old narrow band is kept, much quieter, as the far-field layer behind
+       the two beds — the one that is meant to sound like distance rather than
+       like insects in the next bush. */
     this.stridul = band(wh2R, wh2L, 'bandpass', 4600, 7, 0);
 
     /* Rock-edge tones. Panned hard and opposite, with the stronger of the two
@@ -784,6 +970,48 @@ export class Soundscape {
     this.wrenEcho = g(0.11);
     this.wrenPan.connect(this.wrenEcho).connect(this.echo);
 
+    /* ── songbirds ──────────────────────────────────────────────────────
+       Three identical voices rather than one per species, because the thing that
+       stops a soundscape sounding like one lonely bird is not the number of
+       recipes — it is whether two of them can be sounding at once, from
+       different distances. One voice serialises every species into a queue and
+       no two calls can ever overlap, which is audibly a single bird taking turns
+       with itself. Three is enough for the density below to produce genuine
+       overlap several times a minute.
+
+       Species live in the gesture, not in the hardware: the harmonic ladder is
+       written to the oscillator at call time, and the pitch and envelope
+       trajectory is what distinguishes a wren's cascade from a sparrow's two
+       notes and a trill. That is the same design the canyon wren already used,
+       and the wren is kept exactly as it was — a critic called its descending
+       cascade the best-modelled gesture in the piece, so it becomes the
+       centrepiece of the new rotation rather than a casualty of it. */
+    this.birds = [];
+    this.birdWave = {};
+    for (const k of ['wren', 'rockwren', 'sparrow', 'cactus']) {
+      this.birdWave[k] = ctx.createPeriodicWave(
+        new Float32Array(HARM[k].length), Float32Array.from(HARM[k]),
+        { disableNormalization: false });
+    }
+    for (let i = 0; i < 3; i++) {
+      const osc = ctx.createOscillator();
+      osc.setPeriodicWave(this.birdWave.sparrow);
+      const gain = g(0);
+      const lp = bq('lowpass', 7200, 0.6);
+      const pan = ctx.createPanner();
+      pan.panningModel = 'equalpower';
+      pan.distanceModel = 'inverse';
+      pan.refDistance = 22; pan.maxDistance = 900; pan.rolloffFactor = 1;
+      pan.positionZ.value = -40;
+      osc.connect(gain).connect(lp).connect(pan);
+      pan.connect(this.dry);
+      const echo = g(0.09);
+      pan.connect(echo).connect(this.echo);
+      /* Busy until this time, so the scheduler can pick a voice that is free
+         instead of cutting one off mid-gesture. */
+      this.birds.push({ osc, gain, lp, pan, echo, free: 0 });
+    }
+
     /* Raven: a croak is a harsh harmonic stack chopped by a roughness in the
        hundred-hertz region, which is amplitude modulation and not a filter. */
     this.raven = ctx.createOscillator();
@@ -815,7 +1043,10 @@ export class Soundscape {
     this.gusts = [];
     this.calls = [];          // {t0, kind, done, …}
     this.gustsTo = 0;
+    this.gustStart = 0;
     this.callsTo = { coyote: 0, wren: 0, raven: 0 };
+    this.birdState = null;
+    this.birdsTo = 0;
     this.schedHead = 0;
     this.prox = 0.5;
     this.strideAcc = 0;
@@ -831,6 +1062,46 @@ export class Soundscape {
     };
   }
 
+  /**
+   * Switch soundscape. `plain` is the warm, continuous default; `full` is the
+   * earlier sparse one, preserved whole.
+   *
+   * Everything mode-dependent is read at schedule time rather than baked into a
+   * node, so this is one assignment plus a rewind. The rewind is the only subtle
+   * part: the wind automation is written two seconds ahead, so without it the
+   * old mode's levels stay on the parameters until that horizon is consumed and
+   * the switch appears not to have worked.
+   */
+  setMode(mode) {
+    const m = mode === 'full' ? 'full' : 'plain';
+    if (m === this.mode) return this.mode;
+    this.mode = m;
+    this.M = MODES[m];
+    /* Pending calls belong to the outgoing mode's species list, so they are
+       dropped rather than translated — a coyote scheduled under `full` must not
+       fire two seconds after someone asked for `plain`. */
+    this.calls.length = 0;
+    for (const k in this.callsTo) this.callsTo[k] = 0;
+    this.birdState = null;
+    /* Cancelling matters as much as rewinding. Writing a ramp earlier than an
+       already-scheduled one does not remove it, so without this the outgoing
+       mode's automation keeps arriving for the length of the horizon and the
+       switch looks like it did nothing for two seconds. */
+    const now = this.ctx.currentTime;
+    for (const p of this._modeParams()) p.cancelScheduledValues(now);
+    this.schedHead = 0;
+    return this.mode;
+  }
+
+  /** Every parameter whose value depends on the mode. */
+  _modeParams() {
+    const ps = [this.rush.gain.gain, this.body.gain.gain, this.hiss.gain.gain,
+      this.rasp.gain.gain, this.air.gain.gain, this.eg1.gain, this.eg2.gain];
+    for (const c of this.cicada) ps.push(c.lvl.gain);
+    for (const c of this.cricket) ps.push(c.lvl.gain);
+    return ps;
+  }
+
   /** Start every long-lived source. Call once, before any scheduling. */
   start(t0) {
     if (this.started) return;
@@ -838,6 +1109,8 @@ export class Soundscape {
     for (const s of this.srcs) s.start(t0, s._offset % s.buffer.duration);
     this.coyA.start(t0); this.coyB.start(t0);
     this.vib.start(t0);
+    for (const l of this.cricketLFO) l.start(t0);
+    for (const b of this.birds) b.osc.start(t0);
     this.wren.start(t0);
     this.raven.start(t0); this.ravenLFO.start(t0);
     this.schedHead = t0;
@@ -858,15 +1131,24 @@ export class Soundscape {
     if (this.quiet) { this.gustsTo = Math.max(this.gustsTo, until); return; }
     while (this.gustsTo < until) {
       const r = this.erand;
-      const gap = 11 + r() * 32;
-      const t0 = this.gustsTo + gap;
-      const dur = 5 + r() * 11;
-      /* Bottom-heavy: a strong gust has to stay an event rather than becoming
-         a rhythm. */
-      const peak = 0.16 + 0.74 * Math.pow(r(), 2.1);
+      const G = this.M.gust;
+      const gap = G.gap[0] + r() * (G.gap[1] - G.gap[0]);
+      /* Measured from the *start* of the previous gust rather than its end, so
+         in `plain` — where gaps are shorter than durations — gusts genuinely
+         overlap. Overlapping gusts are what turn the wind from a sequence of
+         arrivals into a continuous presence that rises and falls, and the
+         arrival is the thing being removed. */
+      const t0 = (this.M.bird ? this.gustStart || 0 : this.gustsTo) + gap;
+      const dur = G.dur[0] + r() * (G.dur[1] - G.dur[0]);
+      /* Bottom-heavy, but less so and with a lower ceiling in `plain`: a strong
+         gust has to stay an event rather than becoming a rhythm, and in a
+         soundscape with no silences to punctuate it does not need to be as
+         strong to be heard. */
+      const peak = G.peak[0] + G.peak[1] * Math.pow(r(), G.peak[2]);
       const gust = this._makeGust(t0, dur, peak);
       this.gusts.push(gust);
-      this.gustsTo = t0 + dur;
+      this.gustStart = t0;
+      this.gustsTo = Math.max(this.gustsTo, t0 + dur);
       if (this.gusts.length > 64) this.gusts.splice(0, 32);
     }
   }
@@ -1033,13 +1315,14 @@ export class Soundscape {
          and the gust still stands twenty-eight decibels clear of the bed —
          which is a hard gust in a quiet place, and about what a real one
          measures. */
+      const M = this.M;
       const bed = [0.0075, 0.0042, 0.0014, 0.00045];
       const drive = [0.108, 0.063, 0.032, 0.0178];
       const expo = [2.20, 2.00, 1.55, 1.45];
       const nodes = [this.rush, this.body, this.hiss, this.rasp];
       for (let b = 0; b < 4; b++) {
-        const v = bed[b] * common * Math.exp(0.62 * this._drift(b, t)) +
-                  drive[b] * Math.pow(bg[b], expo[b]);
+        const v = bed[b] * M.bed * common * Math.exp(0.62 * this._drift(b, t)) +
+                  drive[b] * M.drive * Math.pow(bg[b], expo[b]);
         ramp(nodes[b].gain.gain, v, t);
       }
 
@@ -1062,11 +1345,36 @@ export class Soundscape {
          quietly re-couple the top of the spectrum to the bottom — those two
          already share a correlation block, and the low bands stay out of it. */
       ramp(this.air.gain.gain,
-        AIR_FLOOR * Math.exp(0.30 * this._drift(4, t)) * (1 + 2.4 * clamp01(bg[3])), t);
-      /* The insect band comes and goes on a half-minute cycle and only the
-         bottom third of its range is audible at all. */
+        AIR_FLOOR * M.bed * Math.exp(0.30 * this._drift(4, t)) *
+        (1 + 2.4 * clamp01(bg[3])), t);
+      /* The far-field narrow band comes and goes on a half-minute cycle. Behind
+         the beds below now, rather than standing in for them. */
       const bug = clamp01(Math.sin(TAU * t / 37.3 + 1.1) * 0.5 + 0.5 - 0.45) / 0.55;
       ramp(this.stridul.gain.gain, 0.0034 * bug * bug, t);
+
+      /* The insect beds. Continuous by construction — the level never reaches
+         zero, and that is the point: this is the layer that guarantees something
+         is always sounding, so no other event can arrive out of nowhere.
+         What it does have is a slow swell, on its own long periods, plus a
+         gentle thinning while the wind is up. The thinning is both real (insects
+         quieten in a gust) and mix hygiene: cicadas and the rasp band share
+         4-8 kHz, and at full level in a strong gust the two together turn into
+         undifferentiated hiss. */
+      const ins = M.insects;
+      if (ins > 0) {
+        const swell = Math.exp(0.26 * this._drift(2, t * 0.35));
+        const calm = 1 - 0.34 * clamp01(bg[2]);
+        for (let i = 0; i < this.cicada.length; i++) {
+          const ph = 0.5 + 0.5 * Math.sin(TAU * t / (71 + i * 23) + i * 2.1);
+          ramp(this.cicada[i].lvl.gain,
+            ins * 0.030 * swell * calm * (0.55 + 0.45 * ph), t);
+        }
+        for (let i = 0; i < this.cricket.length; i++) {
+          const ph = 0.5 + 0.5 * Math.sin(TAU * t / (53 + i * 19) + i * 3.7);
+          ramp(this.cricket[i].lvl.gain,
+            ins * 0.0125 * swell * calm * (0.5 + 0.5 * ph), t);
+        }
+      }
 
       /* Rock edges. Driven by the hiss band, not the overall gust: an edge
          tone exists because fast air is separating off a lip, which is the
@@ -1079,10 +1387,10 @@ export class Soundscape {
          existed when the player hugged a bank, which in practice meant never —
          and an inaudible feature is not a feature. */
       const wall = 0.45 + 0.55 * prox;
-      const eA = this.edgeLvl * edge * edge * wall;
+      const eA = M.edge * edge * edge * wall;
       ramp(this.eg1.gain, eA, t);
       ramp(this.eg2.gain, eA, t);
-      if (gu) {
+      if (gu && M.edge > 0) {
         /* Which lip is on which side changes gust to gust — the wind is coming
            from a slightly different quarter each time — but the ladder of
            available pitches does not, because a resonance is a property of a
@@ -1171,8 +1479,10 @@ export class Soundscape {
   _ensureCalls(until) {
     if (this.quiet) {
       for (const k in this.callsTo) this.callsTo[k] = Math.max(this.callsTo[k], until);
+      this.birdsTo = Math.max(this.birdsTo || 0, until);
       return;
     }
+    if (this.M.bird) return this._ensureBirds(until);
     const r = this.erand;
     /* First-of-kind offsets are staggered so the three species do not all
        arrive in the first minute, and so a two-minute measurement catches at
@@ -1206,6 +1516,54 @@ export class Soundscape {
       }
     }
     if (this.calls.length > 48) this.calls.splice(0, 24);
+  }
+
+  /**
+   * Songbirds, scheduled in bouts.
+   *
+   * The unit is a bout and not a call, and that is the whole design. A bird
+   * repeats locally and is silent globally: it sings a handful of times from one
+   * perch with irregular gaps of a few seconds, then stops for a minute or two.
+   * Drawing each call from one exponential distribution instead gets both halves
+   * wrong at once — it scatters single calls evenly, which reads as a timer, and
+   * it never gives you the small conversational cluster that is most of what
+   * makes birdsong sound companionable rather than incidental.
+   *
+   * Position is per bout, not per call, for the same reason. A bird that
+   * teleports between its own two notes is more obviously synthetic than any
+   * flaw in the notes themselves.
+   */
+  _ensureBirds(until) {
+    const r = this.erand;
+    const spec = this.M.bird;
+    if (!this.birdState) {
+      this.birdState = {};
+      for (const k of this.M.fauna) {
+        /* Staggered first entries, and much earlier than a full mean, so the
+           soundscape is already populated in the first few seconds rather than
+           opening on the silence it is meant to be replacing. */
+        this.birdState[k] = { t: 1.5 + r() * spec[k].quiet * 0.35, left: 0,
+          bearing: 0, dist: 0 };
+      }
+    }
+    for (const kind of this.M.fauna) {
+      const s = this.birdState[kind], sp = spec[kind];
+      while (s.t < until) {
+        if (s.left <= 0) {
+          s.left = sp.bout[0] + Math.floor(r() * (sp.bout[1] - sp.bout[0] + 1));
+          s.bearing = (r() * 2 - 1) * Math.PI;
+          s.dist = sp.dist[0] + r() * (sp.dist[1] - sp.dist[0]);
+        }
+        this.calls.push({ t0: s.t, kind, done: false, bearing: s.bearing,
+          dist: s.dist });
+        s.left--;
+        s.t += s.left > 0
+          ? sp.gap[0] + r() * (sp.gap[1] - sp.gap[0])
+          : -sp.quiet * Math.log(1 - r() * 0.999);
+      }
+    }
+    this.calls.sort((a, b) => a.t0 - b.t0);
+    if (this.calls.length > 256) this.calls.splice(0, 128);
   }
 
   /**
@@ -1394,12 +1752,121 @@ export class Soundscape {
   }
 
   /**
+   * A free songbird voice at time `t`, or the one that frees up soonest.
+   *
+   * Picking a busy voice is what turns three birds back into one: the gain
+   * envelope of the incoming call overwrites the outgoing one mid-gesture, so
+   * both are truncated and the result is a stutter rather than two birds.
+   */
+  _birdVoice(t) {
+    let best = this.birds[0];
+    for (const b of this.birds) {
+      if (b.free <= t) return b;
+      if (b.free < best.free) best = b;
+    }
+    return best;
+  }
+
+  /** Place a songbird voice at a bearing and distance. */
+  _birdAt(v, t, bearing, dist, elev) {
+    const at = Math.max(0, t - 0.05);
+    v.pan.positionX.setValueAtTime(Math.sin(bearing) * dist, at);
+    v.pan.positionY.setValueAtTime(elev, at);
+    v.pan.positionZ.setValueAtTime(Math.cos(bearing) * dist, at);
+    /* Air eats treble before it eats level, which is most of what makes a
+       distant bird sound distant rather than small. */
+    v.lp.frequency.setValueAtTime(9000 / (1 + dist / 90), at);
+  }
+
+  /**
+   * One songbird call. The species is the gesture.
+   *
+   * @param {string} kind canyonwren | rockwren | sparrow | cactuswren
+   * @returns {number} when the voice is free again
+   */
+  _fireBird(kind, t0, bearing, dist) {
+    const r = this.erand;
+    if (kind === 'canyonwren') return this._fireWren(t0, bearing, dist);
+    const v = this._birdVoice(t0);
+    const f = v.osc.frequency, g = v.gain.gain;
+    this._birdAt(v, t0, bearing, dist, 4 + r() * 12);
+    let t = t0;
+
+    if (kind === 'rockwren') {
+      /* A dry buzzy trill on a nearly level pitch, delivered as a run of short
+         notes rather than as one sustained buzz — the individual ticks are
+         audible in the real bird and they are what keeps it from reading as an
+         electrical hum. */
+      v.osc.setPeriodicWave(this.birdWave.rockwren);
+      const f0 = 2300 + r() * 900;
+      const n = 6 + Math.floor(r() * 7);
+      const lvl = 0.030 + r() * 0.016;
+      for (let i = 0; i < n; i++) {
+        const len = 0.026 + r() * 0.014;
+        const fc = f0 * (1 + 0.06 * Math.sin(i * 1.9)) * (1 - 0.10 * (i / n));
+        f.setValueAtTime(fc, t);
+        f.linearRampToValueAtTime(fc * 0.94, t + len);
+        burst(g, t, lvl * (0.75 + r() * 0.35), 0.004, len);
+        t += len + 0.030 + r() * 0.016;
+      }
+    } else if (kind === 'sparrow') {
+      /* Black-throated sparrow: two clear, slightly falling notes, then a short
+         dry trill a little lower. The two notes first is the whole recognisable
+         shape, and the trill has to be shorter than the notes or it becomes the
+         subject of the phrase. */
+      v.osc.setPeriodicWave(this.birdWave.sparrow);
+      const f0 = 3400 + r() * 900;
+      const lvl = 0.034 + r() * 0.018;
+      for (let i = 0; i < 2; i++) {
+        const len = 0.11 + r() * 0.05;
+        const fc = f0 * (i ? 0.90 : 1);
+        f.setValueAtTime(fc, t);
+        f.exponentialRampToValueAtTime(fc * 0.93, t + len);
+        burst(g, t, lvl * (i ? 0.85 : 1), 0.010, len);
+        t += len + 0.075 + r() * 0.05;
+      }
+      const nt = 4 + Math.floor(r() * 4);
+      for (let i = 0; i < nt; i++) {
+        const len = 0.030 + r() * 0.012;
+        const fc = f0 * (0.66 + 0.04 * Math.sin(i * 2.3));
+        f.setValueAtTime(fc, t);
+        f.linearRampToValueAtTime(fc * 0.95, t + len);
+        burst(g, t, lvl * 0.60, 0.005, len);
+        t += len + 0.026 + r() * 0.010;
+      }
+    } else {
+      /* Cactus wren: a low, harsh, evenly-spaced churr that accelerates
+         slightly. Nearly-equal partials make the voice rattle, and the even
+         spacing is the signature — this is the one desert bird most people can
+         identify without knowing its name. */
+      v.osc.setPeriodicWave(this.birdWave.cactus);
+      const f0 = 420 + r() * 150;
+      const n = 5 + Math.floor(r() * 5);
+      const lvl = 0.028 + r() * 0.014;
+      let gap = 0.155 + r() * 0.045;
+      for (let i = 0; i < n; i++) {
+        const len = 0.070 + r() * 0.024;
+        const fc = f0 * (1 + 0.05 * (i & 1));
+        f.setValueAtTime(fc * 1.06, t);
+        f.exponentialRampToValueAtTime(fc * 0.90, t + len);
+        burst(g, t, lvl * (0.8 + r() * 0.3), 0.007, len * 0.9);
+        t += len + gap;
+        gap *= 0.955;
+      }
+    }
+    v.free = t + 0.1;
+    this.fired.push({ kind, t: +t0.toFixed(2), dur: +(t - t0).toFixed(2),
+      dist: Math.round(dist) });
+    return v.free;
+  }
+
+  /**
    * Canyon wren: ten to sixteen clear whistled notes falling through a couple
    * of octaves, decelerating as they go, ending in two or three buzzy notes.
    * The deceleration is the recognisable part — an evenly spaced descending
    * scale is a doorbell.
    */
-  _fireWren(t0, bearing) {
+  _fireWren(t0, bearing, distance) {
     const r = this.erand;
     const f = this.wren.frequency;
     const g = this.wrenGain.gain;
@@ -1409,7 +1876,7 @@ export class Soundscape {
     const top = 4500 + r() * 1000;
     const bottom = 1100 + r() * 300;
     const n = 9 + Math.floor(r() * 5);
-    const dist = 110 + r() * 150;
+    const dist = distance === undefined ? 110 + r() * 150 : distance;
     this.wrenPan.positionX.setValueAtTime(Math.sin(bearing) * dist, Math.max(0, t0 - 0.05));
     this.wrenPan.positionY.setValueAtTime(8 + r() * 14, Math.max(0, t0 - 0.05));
     this.wrenPan.positionZ.setValueAtTime(Math.cos(bearing) * dist, Math.max(0, t0 - 0.05));
@@ -1419,7 +1886,12 @@ export class Soundscape {
        strengthening the second and third partials made the PeriodicWave
        renormalise, which quietly took that much off the fundamental and left the
        bird eight decibels further away than it was meant to be. */
-    const lvl = 0.058 + r() * 0.031;
+    /* The panner's rolloff is zero, so distance carries the stereo image and
+       nothing else; the level has to be spent by hand or every bird in the
+       rotation is equally close and the "several individuals at different
+       distances" is only a stereo effect. Referenced at 150 m, which is where
+       this level was originally calibrated. */
+    const lvl = (0.058 + r() * 0.031) * clamp(150 / Math.max(30, dist), 0.6, 2.0);
     for (let i = 0; i < n; i++) {
       const u = i / (n - 1);
       const fc = top * Math.pow(bottom / top, Math.pow(u, 0.86));
@@ -1603,9 +2075,19 @@ export class Soundscape {
     W.dirX = w.dirX; W.dirZ = w.dirZ; W.speed = w.speed;
     W.rush = w.bg[0]; W.hiss = w.bg[2];
 
+    /* The player's offset across the wash, which is the one input to this
+       system that comes from another system's state.
+       `clamp01` does not stop a NaN — both of its comparisons are false for one,
+       so it returns it — and `path.uOf` returns NaN for a NaN position. That is
+       how a single bad frame of player state became a permanent non-finite write
+       into the edge-tone gain: `prox` is remembered between frames, so once it
+       went NaN it stayed NaN with no further help from upstream. Held at its last
+       good value instead, which is both correct (the player has not teleported)
+       and self-healing (one good frame restores it). */
     let u = st.u;
     if (u === undefined) u = this.path ? this.path.uOf(st.x, st.z) : 0;
-    this.prox = clamp01(Math.abs(u) / WASH_HALF);
+    if (Number.isFinite(u)) this.prox = clamp01(Math.abs(u) / WASH_HALF);
+    else this.badPos = (this.badPos || 0) + 1;
 
     this._scheduleWind(now);
 
@@ -1621,7 +2103,8 @@ export class Soundscape {
       c.done = true;
       if (c.kind === 'coyote') this._fireCoyote(c.t0, c.bearing);
       else if (c.kind === 'wren') this._fireWren(c.t0, c.bearing);
-      else this._fireRaven(c.t0, c.bearing);
+      else if (c.kind === 'raven') this._fireRaven(c.t0, c.bearing);
+      else this._fireBird(c.kind, c.t0, c.bearing, c.dist);
     }
 
     if (now - (this._sandPlaced || -1) > 1.0) {
@@ -1681,6 +2164,7 @@ export function createAudio({ camera, canvas, path, seed } = {}) {
     update() {},
     api: {
       setEnabled() {}, gust() {}, coyote() {}, wren() {}, raven() {}, available: false,
+      setMode() { return 'plain'; }, mode: 'plain', badWrites: 0,
       wind: { heading: WIND_HEADING, dirX: Math.sin(WIND_HEADING), dirZ: Math.cos(WIND_HEADING), gust: 0, speed: 0, base: 0, hiss: 0, rush: 0 },
       windAt() { return { g: 0, heading: WIND_HEADING, dirX: 0, dirZ: 1, speed: 0, base: 0, bg: [0, 0, 0] }; },
       gusts() { return []; },
@@ -1801,6 +2285,14 @@ export function createAudio({ camera, canvas, path, seed } = {}) {
     },
     get time() { return ctx.currentTime; },
     get state() { return ctx.state; },
+    /**
+     * Which soundscape is playing. `plain` is warm, continuous and the default;
+     * `full` is the earlier sparse one, kept whole. Returns the mode in effect.
+     */
+    setMode(m) { return sc.setMode(m); },
+    get mode() { return sc.mode; },
+    /** Non-finite automation writes this system has refused. Should be zero. */
+    get badWrites() { return badWrites.n; },
     /** Offline render of this exact graph; see tools/audioprobe.mjs. */
     renderOffline: (opts) => renderOffline({ path, seed, ...(opts || {}) }),
     /** Offline render with every rare voice cued at a known time. */
@@ -1863,10 +2355,10 @@ function pack(buf, extra) {
  * a shelf. Halving the rate halves the render time and the transfer size for no
  * measurable loss.
  */
-async function simulate({ seconds, sampleRate, seed, path, segments, quiet, cue }) {
+async function simulate({ seconds, sampleRate, seed, path, segments, quiet, cue, mode }) {
   const len = Math.ceil(seconds * sampleRate);
   const oc = new OfflineAudioContext(2, len, sampleRate);
-  const sc = new Soundscape(oc, oc.destination, { seed, path, quiet });
+  const sc = new Soundscape(oc, oc.destination, { seed, path, quiet, mode });
   sc.start(0);
 
   const walking = (t) => segments.some(([a, d]) => t >= a && t < a + d);
@@ -1903,12 +2395,12 @@ async function simulate({ seconds, sampleRate, seed, path, segments, quiet, cue 
 
 /** The honest take: the real schedule, a scripted walk, nothing forced. */
 export async function renderOffline({
-  seconds = 120, sampleRate = 24000, seed, path = null, walk = null,
+  seconds = 120, sampleRate = 24000, seed, path = null, walk = null, mode,
 } = {}) {
   const segments = walk || [[14, 22], [58, 16], [92, 19]];
-  const { sc, buf } = await simulate({ seconds, sampleRate, seed, path, segments });
+  const { sc, buf } = await simulate({ seconds, sampleRate, seed, path, segments, mode });
   return pack(buf, {
-    seconds, sampleRate, segments,
+    seconds, sampleRate, segments, mode: sc.mode,
     gusts: sc.gusts.filter(g => g.t0 < seconds).map(g => ({
       t: +g.t0.toFixed(2), dur: +g.dur.toFixed(2), peak: +g.peak.toFixed(3),
       char: +g.char.toFixed(2),
@@ -1926,10 +2418,22 @@ export async function renderOffline({
  * suppressed, so harmonic structure, pitch trajectory and the reverb's
  * discrete arrivals can be measured against a clean background.
  */
-export async function renderVoices({ sampleRate = 24000, seed, path = null } = {}) {
+export async function renderVoices({ sampleRate = 24000, seed, path = null, mode } = {}) {
   const seconds = 66;
   const segments = [[52, 12]];
-  const plan = [
+  /* The plan follows the mode, because a cue for a voice the mode does not have
+     renders silence and then gets measured as a failed voice rather than as an
+     absent one. `plain` cues its four songbirds; `full` cues what it always
+     did. The two gusts and the walk are common to both. */
+  const plain = (mode || 'plain') !== 'full';
+  const plan = plain ? [
+    { t: 2.0, kind: 'gust-rumble' },
+    { t: 16.0, kind: 'gust-hiss' },
+    { t: 29.0, kind: 'sparrow' },
+    { t: 34.0, kind: 'rockwren' },
+    { t: 39.0, kind: 'cactuswren' },
+    { t: 44.0, kind: 'canyonwren' },
+  ] : [
     { t: 2.0, kind: 'gust-rumble' },
     { t: 16.0, kind: 'gust-hiss' },
     { t: 29.0, kind: 'coyote' },
@@ -2019,16 +2523,37 @@ export async function renderVoices({ sampleRate = 24000, seed, path = null } = {
       } else if (c.kind === 'wren') {
         const w = sc._fireWren(c.t, -1.2);
         cues.push({ t: c.t, kind: 'wren', note: `cascade to +${(w.end - c.t).toFixed(2)}s` });
-      } else {
+      } else if (c.kind === 'raven') {
         sc._fireRaven(c.t, 2.4);
         cues.push({ t: c.t, kind: 'raven', measure: 'harmonics', offset: 0.09,
           f0lo: 260, f0hi: 520, note: 'croak' });
+      } else if (c.kind === 'canyonwren') {
+        const w = sc._fireWren(c.t, -1.2, 70);
+        cues.push({ t: c.t, kind: 'canyonwren',
+          note: `cascade to +${(w.end - c.t).toFixed(2)}s` });
+      } else {
+        /* The three new songbirds, each at a fixed bearing and a plausible
+           distance so the render is comparable between runs. Harmonics are
+           measured on the first note, which is the one with a settled pitch —
+           a trill's notes are too short for a usable spectrum. */
+        const bear = { sparrow: -0.8, rockwren: 1.1, cactuswren: 2.3 }[c.kind];
+        const dist = { sparrow: 22, rockwren: 40, cactuswren: 55 }[c.kind];
+        const end = sc._fireBird(c.kind, c.t, bear, dist);
+        const f0 = { sparrow: [3200, 4500], rockwren: [2100, 3400],
+          cactuswren: [380, 620] }[c.kind];
+        cues.push({
+          t: c.t, kind: c.kind, measure: 'harmonics', offset: 0.03,
+          f0lo: f0[0], f0hi: f0[1],
+          note: `${dist} m, phrase to +${(end - c.t).toFixed(2)}s`,
+        });
       }
     }
   };
   const { sc, buf } = await simulate({
-    seconds, sampleRate, seed, path, segments, quiet: true, cue,
+    seconds, sampleRate, seed, path, segments, quiet: true, cue, mode,
   });
   cues.push({ t: 52, kind: 'walk', note: '12 s of walking' });
-  return pack(buf, { seconds, sampleRate, segments, cues, gusts: [], calls: sc.fired });
+  return pack(buf, {
+    seconds, sampleRate, segments, cues, gusts: [], calls: sc.fired, mode: sc.mode,
+  });
 }

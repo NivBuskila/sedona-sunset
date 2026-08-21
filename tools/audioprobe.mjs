@@ -51,6 +51,11 @@ const SECONDS = Number(getf('seconds', 120));
 const SR = Number(getf('sr', 24000));
 const SEED = getf('seed', '') === '' ? undefined : Number(getf('seed'));
 const VOICES = has('voices');
+/* Which soundscape to measure. `plain` is the default because it is what ships;
+   `full` measures the earlier sparse one, which is kept behind the same switch
+   the audio uses. Every section below has to work for both, because a report
+   that only understands one of them cannot tell you the switch still works. */
+const MODE = getf('mode', 'plain') === 'full' ? 'full' : 'plain';
 
 const db = (x) => 20 * Math.log10(Math.max(x, 1e-12));
 const f2 = (x) => (Number.isFinite(x) ? x.toFixed(2) : 'n/a');
@@ -302,6 +307,72 @@ function transients(x, sr, riseDb = 6, minGap = 0.22) {
  * decorrelates within three or four; a scheduler with a fixed stride length
  * stays correlated indefinitely, and that is audible as a machine walking.
  */
+/**
+ * How continuous the soundscape is, which is the question the rest of this file
+ * was not built to ask.
+ *
+ * Every other measurement here treats sound as the exception and quiet as the
+ * ground state, because that is what the original brief wanted. The numbers
+ * below invert that. They exist because a listener found the result unsettling,
+ * and the reason it was unsettling is not in any of the other numbers: it is
+ * that the world was empty, so anything that happened arrived out of nothing.
+ *
+ * Four things, and the last two matter most:
+ *
+ *  · `abovePct`   how much of the timeline is audible at all, against a fixed
+ *                 absolute floor rather than against the piece's own bed. A
+ *                 relative threshold would call any bed continuous, including
+ *                 an inaudible one.
+ *  · `activePct`  how much of the timeline lies inside a discrete event. This is
+ *                 "something is happening", as distinct from "something is on".
+ *  · `longestGap` the longest stretch with nothing but bed. One long gap does
+ *                 more damage than many short ones, so the maximum is the
+ *                 statistic and not the mean.
+ *  · `startle`    how far the loudest windows stand over the typical one. This
+ *                 is the actual mechanism of unease and the only one of the four
+ *                 that a louder mix does not improve: raise everything and it
+ *                 does not move. A field recording of a warm place runs ten to
+ *                 fifteen decibels here; the first version of this piece ran
+ *                 twenty-seven, and was described as creepy.
+ */
+function continuity(wl, W, sr, evs, seconds, pc) {
+  const FLOOR = -55;
+  let above = 0;
+  for (let i = 0; i < wl.length; i++) if (wl[i] > FLOOR) above++;
+  /* Union of the event spans, not the sum: overlapping events are one stretch
+     of "something is happening", and a soundscape busy enough to overlap would
+     otherwise be scored above a hundred per cent. */
+  const spans = evs.map(e => [e.t, e.t + Math.max(e.dur, 0.05)])
+    .sort((a, b) => a[0] - b[0]);
+  let active = 0, gapMax = 0, cursor = 0;
+  const gaps = [];
+  for (const [s, e] of spans) {
+    if (s > cursor) {
+      const gap = s - cursor;
+      gaps.push(gap);
+      if (gap > gapMax) gapMax = gap;
+      cursor = s;
+    }
+    if (e > cursor) { active += e - cursor; cursor = e; }
+  }
+  if (seconds > cursor) {
+    const gap = seconds - cursor;
+    gaps.push(gap);
+    if (gap > gapMax) gapMax = gap;
+  }
+  gaps.sort((a, b) => a - b);
+  const calls = evs.filter(e => e.kind !== 'wind' && e.kind !== 'step');
+  return {
+    abovePct: 100 * above / wl.length,
+    activePct: 100 * active / seconds,
+    longestGap: gapMax,
+    medianGap: gaps.length ? gaps[gaps.length >> 1] : NaN,
+    startle: pc(0.99) - pc(0.5),
+    perMin: 60 * evs.length / seconds,
+    callsPerMin: 60 * calls.length / seconds,
+  };
+}
+
 function gait(steps) {
   const iv = [];
   for (let i = 1; i < steps.length; i++) {
@@ -780,6 +851,7 @@ function analyse(x, sr, meta) {
     bed, thr, events: evs, windEvents: windEvs, callEvents: callEvs,
     gapStats: gaps.length
       ? { min: gaps[0], median: gaps[gaps.length >> 1], max: gaps[gaps.length - 1] } : null,
+    continuity: continuity(wl, W, sr, evs, seconds, pc),
     footsteps: {
       inWalk: stepsIn.length, outsideWalk: stepsOut.length, walkSeconds,
       level: stepLv.length
@@ -1387,8 +1459,9 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
   console.log(`  rendering ${SECONDS}s offline at ${SR} Hz …`);
   const t0 = Date.now();
   const res = await withTimeout('offline render', Math.max(180000, SECONDS * 4000), () => page.evaluate(
-    ([seconds, sampleRate, seed]) => window.__game.audio.renderOffline({ seconds, sampleRate, seed }),
-    [SECONDS, SR, SEED]), null);
+    ([seconds, sampleRate, seed, mode]) =>
+      window.__game.audio.renderOffline({ seconds, sampleRate, seed, mode }),
+    [SECONDS, SR, SEED, MODE]), null);
   if (!res) {
     console.log(`  ${warnings.join('; ')}`);
     console.log('  nothing to analyse — rerun when the machine is less busy');
@@ -1451,6 +1524,11 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
 
   say('');
   say(`── level ───────────────────────────────────────────────`);
+  say(`  soundscape      ${res.mode || 'unknown'}` +
+      (res.mode === 'plain'
+        ? '   (warm and continuous: wind, insects, songbirds, boots)'
+        : res.mode === 'full'
+          ? '   (the earlier sparse one: coyote, edge tones, long silences)' : ''));
   say(`  duration        ${f2(a.seconds)} s @ ${a.sampleRate} Hz   (context: ${ctxState})`);
   say(`  true peak       ${f2(db(truePeak))} dBFS   (L ${f2(db(res.peakL))}, R ${f2(db(res.peakR))})`);
   say(`  mono-sum peak   ${f2(a.peakMono)} dBFS   RMS ${f2(a.rmsMono)} dBFS   crest ${f2(a.crest)} dB`);
@@ -1507,6 +1585,30 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
   if (q) say(`  standing still   p5 ${f2(q.p5)}  p50 ${f2(q.p50)}  p90 ${f2(q.p90)}  p99 ${f2(q.p99)}  max ${f2(q.max)}` +
              `   (${a.stillWindows}/${a.totalWindows} windows)`);
   say(`  bed level (p20 of 20 ms) ${f2(a.bed)} dBFS; event threshold ${f2(a.thr)} dBFS`);
+  say('');
+  /* ── continuity ──
+     The headline for the warm soundscape, and the one section written from the
+     opposite premise to everything above it.
+     "The quiet" measures how much of the timeline is near-silent, and it was
+     built when that was the goal. It is now the failure mode: emptiness is what
+     made this read as unsettling, because a rare event arriving out of nothing
+     is how dread is constructed whatever the event is. So the numbers that
+     matter are how much of the time something is sounding, how often, and how
+     far above the bed events sit — the last one being the startle measure. A
+     soundscape where events tower over the bed startles; one where they lean out
+     of it does not. */
+  const cont = a.continuity;
+  say(`── continuity ──────────────────────────────────────────`);
+  say(`  audible at all      ${f1(cont.abovePct)}% of 50 ms windows clear -55 dBFS ` +
+      `(a plausible floor at normal playback)`);
+  say(`  something sounding  ${f1(cont.activePct)}% of the timeline is within a ` +
+      `discrete event, not only bed`);
+  say(`  longest bed-only    ${f2(cont.longestGap)}s   (median gap between events ` +
+      `${f2(cont.medianGap)}s)`);
+  say(`  startle margin      p99 stands ${f2(cont.startle)} dB over the median ` +
+      `window; under about 15 dB nothing arrives out of nowhere`);
+  say(`  event density       ${f1(cont.perMin)} discrete events per minute, of which ` +
+      `${f1(cont.callsPerMin)} are voices`);
   say('');
   say(`── events ──────────────────────────────────────────────`);
   say(`  ${a.events.length} discrete events above the bed: ` +
@@ -1654,7 +1756,8 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
   say(`  spectrogram → shots/${path.basename(specFile)}  (${dims.W}x${dims.H})`);
 
   const out = {
-    seconds: a.seconds, sampleRate: a.sampleRate, seed: SEED === undefined ? 'default' : SEED,
+    seconds: a.seconds, sampleRate: a.sampleRate, mode: res.mode,
+    seed: SEED === undefined ? 'default' : SEED,
     truePeak: db(truePeak), peakL: db(res.peakL), peakR: db(res.peakR),
     monoPeak: a.peakMono, monoRms: a.rmsMono, crest: a.crest, centroid: a.centroid,
     fullTakeBands: Object.fromEntries(bandName.map((n, i) => [n, a.bandRms[i]])),
@@ -1666,7 +1769,7 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
     stillBelowWinPct: a.stillBelowWinPct
       ? Object.fromEntries(T.map((t, i) => [t, a.stillBelowWinPct[i]])) : null,
     winPercentiles: a.winPercentiles, stillPercentiles: a.stillPercentiles,
-    bed: a.bed, events: a.events, gapStats: a.gapStats,
+    bed: a.bed, events: a.events, gapStats: a.gapStats, continuity: a.continuity,
     narrow: a.narrow, loudFrames: a.loudFrames,
     footsteps: a.footsteps, scheduledGait: sg,
     gusts: res.gusts, calls: res.calls || res.coyotes,
@@ -1688,8 +1791,9 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
     } else await (async () => {
       console.log('  rendering forced-voice take …');
       const vr = await withTimeout('forced-voice render', 300000, () => page.evaluate(
-        ([sampleRate, seed]) => window.__game.audio.renderVoices({ sampleRate, seed }),
-        [SR, SEED]), null);
+        ([sampleRate, seed, mode]) =>
+          window.__game.audio.renderVoices({ sampleRate, seed, mode }),
+        [SR, SEED, MODE]), null);
       if (!vr) { say('  --voices: render timed out; skipped'); return; }
       const vx = decode(vr);
       const va = analyse(vx, vr.sampleRate, vr);

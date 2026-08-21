@@ -506,8 +506,16 @@ export function buildLights() {
   /* Penumbra, on the coarse cascade. The sun is half a degree across, so a
      shadow cast 240 m throws a 2 m soft edge, and a hard edge at that distance
      is the loudest "this is a renderer" tell in a long raking shot. three's PCF
-     kernel at 3.5 texels is 0.16 m here — short of the truth, but an order of
-     magnitude closer than one texel. */
+     kernel at 3.5 texels was 0.18 m here — short of the truth, and the shortfall
+     turned out to be load-bearing. A half-degree sun behind rock 50 m away
+     throws a 0.46 m penumbra perpendicular, and an eleven-degree sun stretches
+     that along the ground by 1/sin(11) to well over a metre, so 0.18 m is two to
+     ten times too sharp. That matters because deepening the shade to reach the
+     shadow-to-sunlit band drove floor grad/L from 0.141 to 0.19 against a
+     0.12-0.16 target: hard edges convert shadow depth straight into local
+     gradient. Widening to 10 texels, 0.51 m, is both the physical figure for the
+     occluder distance that dominates here and the term that lets the two gates
+     hold at once. */
   /* Both constants come down hard now that rpBias measures the depth slope
      instead of the rig guessing a worst case for it. 0.28 m and 0.028 m were
      sized for a horizontal floor at eight degrees and were still three times
@@ -516,11 +524,11 @@ export function buildLights() {
      is left here covers only depth quantisation and the wobble a normal map
      puts on the geometric normal, so a pebble now keeps its shadow to within
      a few centimetres of its base rather than losing the first 30 cm. */
-  configureCascade(sun, FAR_BOX, 4096, 0.06, 0.010, 3.5);
+  configureCascade(sun, FAR_BOX, 4096, 0.06, 0.010, 10.0);
   sun.name = 'sun';
 
   const sunNear = new THREE.DirectionalLight(0xffffff, 0);
-  configureCascade(sunNear, NEAR_BOX, 2048, 0.02, 0.005, 1.7);
+  configureCascade(sunNear, NEAR_BOX, 2048, 0.02, 0.005, 5.0);
   sunNear.name = 'sunNear';
 
   /* The fill: the SH9 irradiance of sky, wash floor and opposite wall. This is

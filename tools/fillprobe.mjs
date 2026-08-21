@@ -66,7 +66,54 @@ function report(label, A) {
   }
 }
 
-if (process.argv[2] === '--floor') {
+if (process.argv[2] === '--ratio') {
+  /* The shadow-to-sunlit gate, exactly as CONTRACT.md defines it: mean relative
+     luminance of the shadowed population over the sunlit one, both read off the
+     sRGB-encoded PNG. Populations are the darkest and brightest 40% by value,
+     the same split tools/sat.mjs and tools/hue.mjs use, so a ratio and a colour
+     always describe the same two populations.
+     Both halves come from one capture, so this number is immune to the
+     capture-to-capture nondeterminism that currently affects paired frames.
+     Reported per region, because the ratio is a strong function of how much beam
+     the sunlit population actually receives and a single figure for a frame is
+     not meaningful. */
+  const REG = {
+    wall_lit: [['rock', [0.30, 0.24, 0.34, 0.34]], ['midwall', [0.16, 0.30, 0.20, 0.20]]],
+    wash_mid: [['floor', [0.18, 0.62, 0.64, 0.30]]],
+    wash_low: [['floor', [0.18, 0.62, 0.64, 0.30]]],
+    ground: [['floor', [0.18, 0.62, 0.64, 0.30]]],
+    bend: [['sand', [0.18, 0.62, 0.64, 0.30]]],
+    sun_gap: [['floor', [0.30, 0.66, 0.44, 0.26]]],
+    wall_shade: [['face', [0.30, 0.24, 0.34, 0.34]]],
+  };
+  const relLum = (r, g, b) => (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  console.log('region                        shade    sunlit   ratio   target 0.15-0.25');
+  for (const f of process.argv.slice(3)) {
+    const base = f.replace(/^.*[\\/]/, '').replace(/\.png$/, '');
+    const key = Object.keys(REG).find((k) => base.endsWith('_' + k));
+    if (!key || !existsSync(f)) continue;
+    const { w, h, ch, px } = decode(readFileSync(f));
+    for (const [label, [rx, ry, rw, rh]] of REG[key]) {
+      const vals = [];
+      for (let y = Math.round(ry * h); y < Math.round((ry + rh) * h); y++) {
+        for (let x = Math.round(rx * w); x < Math.round((rx + rw) * w); x++) {
+          const i = (y * w + x) * ch;
+          const L = relLum(px[i], px[i + 1], px[i + 2]);
+          const v = Math.max(px[i], px[i + 1], px[i + 2]) / 255;
+          if (v >= 0.06) vals.push([L, v]);
+        }
+      }
+      if (vals.length < 40) continue;
+      vals.sort((a, b) => b[1] - a[1]);
+      const n = Math.round(vals.length * 0.40);
+      const mean = (arr) => arr.reduce((s, x) => s + x[0], 0) / arr.length;
+      const lit = mean(vals.slice(0, n)), sh = mean(vals.slice(-n));
+      const r = sh / lit;
+      console.log(`${(base + ' ' + label).padEnd(30)}${sh.toFixed(4)}   ${lit.toFixed(4)}   ` +
+        `${r.toFixed(3)}   ${r >= 0.15 && r <= 0.25 ? 'in band' : r > 0.25 ? 'TOO HIGH' : 'too low'}`);
+    }
+  }
+} else if (process.argv[2] === '--floor') {
   /* FLOOR_SUNLIT, measured. The two levels are this model's own predicted floor
      radiances pushed through ACES; a floor pixel above their midpoint is in sun.
      The same threshold on a shadow-map-off capture gives the ceiling, which is

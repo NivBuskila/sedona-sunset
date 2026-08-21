@@ -681,14 +681,50 @@ export function computeAtmosphere(over = {}) {
      the sky is not a free lunch either way: it takes blue out and puts red
      back, which is most of why shade here reads as warm-dark rather than as a
      blue hole. */
-  const COVER_MAX = over.coverMax ?? 0.46;          // fraction of the horizon that is rock
-  const COVER_TOP = over.coverTop ?? 0.52;          // sin of the elevation it thins out at (~31 deg)
+  /* Those two constants were reasoned, and tools/skyview.mjs has now measured
+     what they were guessing at by firing a hemisphere of rays from the standard
+     viewpoints. The skyline round a point on the wash floor stands at 36 to 54
+     degrees at eleven of twelve bearings, with a single window at 15 degrees —
+     and that window is at bearing 189, which is the sun's own bearing to within
+     a degree. The corridor is a room with one lit doorway.
+     Both old constants were badly low, and the lateral weighting was worse than
+     low: it credited open sky up-canyon, where the skyline is 45 degrees, and
+     up-canyon is exactly the bearing the away-from-sun fill integrates over. A
+     wall face was being given 0.89 of the sky where geometry gives it 0.215. */
+  const SKYLINE = (over.skylineDeg ?? 45) * DEG;    // rock skyline away from the window
+  const GAP_EL = (over.gapDeg ?? 15) * DEG;         // skyline inside the sun window
+  const GAP_W = Math.cos((over.gapHalfWidthDeg ?? 22) * DEG);
+  const GAP_W2 = Math.cos((over.gapHalfWidthDeg ?? 22) * DEG + 28 * DEG);
+  const WALL_SKYVIS = over.wallSkyVis ?? 0.20;      // the far wall is in the same room
+  /* Measured, not chosen. tools/skyview.mjs rays to the skyline and then shadow-
+     rays from the hit toward the sun: the cosine-weighted sunlit fraction of the
+     skyline is 0.123, 0.170, 0.161, 0.218 at the four viewpoints, and it is zero
+     over the lower forty percent of the wall and 0.5 to 0.75 at the crest. A
+     smoothstep integrates to exactly one half over its span, so a crest of 0.57
+     starting at four tenths of the skyline height gives a mean of 0.171 against
+     a measured 0.170. This is the only escarpment parameter that matters: the
+     sweep in tools/_wsweep.mjs moves the shaded fill from B/R 0.27 to 0.94
+     across its range, while the wall's own sky visibility moves the ratio by
+     0.002 and can be left alone. */
+  const WALL_LIT = over.wallLit ?? 0.57;            // sunlit fraction at the crest
+  const LIT_FOOT = over.litFoot ?? 0.40;            // height it starts, as a fraction
+  const FLOOR_VIEW = over.floorView ?? 0.5;         // vertical face over an infinite plane
   const sunH = [SUN_DIR.x, 0, SUN_DIR.z];
   { const l = Math.hypot(sunH[0], sunH[2]); sunH[0] /= l; sunH[2] /= l; }
   /* Sky irradiance on a vertical, needed before the wall term can be evaluated;
      taken from the coarse sweep rather than iterated again. */
   const skyVertLum = 0.5 * specLum(meanSky) * Math.PI;
 
+  const smooth = (a, b, x) => {
+    const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+    return t * t * (3 - 2 * t);
+  };
+  const skylineSin = (d) => {
+    const hl = Math.hypot(d[0], d[2]) || 1e-6;
+    const towardSun = (d[0] * sunH[0] + d[2] * sunH[2]) / hl;
+    const gap = smooth(GAP_W2, GAP_W, towardSun);
+    return Math.sin(SKYLINE + (GAP_EL - SKYLINE) * gap);
+  };
   const wallRadiance = (d, out) => {
     const hl = Math.hypot(d[0], d[2]) || 1e-6;
     /* A wall seen in direction d faces back along -d, so its cosine to the sun
@@ -697,27 +733,43 @@ export function computeAtmosphere(over = {}) {
        degrees off the axis they run along — which is why replacing sky with rock
        darkens the environment here rather than brightening it. */
     const facing = Math.max(0, -(d[0] * sunH[0] + d[2] * sunH[2]) / hl);
-    const eDirect = facing * Math.cos(SUN_EL);
+    /* A geometric cosine is not enough: with the sun eleven degrees up, a wall
+       that faces it is still shadowed over most of its height by whatever stands
+       between, which is why the wash floor was in shadow at all until the sun
+       was raised. Lit fraction therefore climbs from nothing at the wall's foot
+       to full at its crest. Without this the up-canyon skyline reads as a fully
+       sunlit cliff and *raises* the shaded fill, which is what it just did. */
+    const hs = skylineSin(d);
+    const lit = WALL_LIT * smooth(LIT_FOOT * hs, hs, d[1]);
+    const eDirect = facing * lit * Math.cos(SUN_EL);
     for (let k = 0; k < 3; k++) {
-      out[k] = ROCK_ALBEDO[k] * (eDirect * sunRGB[k] + skyVertLum * 0.5) / Math.PI;
+      /* The wall opposite is standing in the same canyon, so it sees the same
+         restricted sky the near wall does. Crediting it half the dome made it
+         nearly as bright as the sky it replaced, which is why substituting it
+         moved the fill by two percent instead of the factor it should. */
+      /* And it stands over a floor that is seventy percent sunlit, which a wall
+         cannot help but see. A vertical face looking at an infinite Lambertian
+         plane collects radiance * pi / 2, so the coefficient is geometry rather
+         than a knob. Leaving this out is what took the shadow ratio past the
+         bottom of its band and started crushing the shaded wall's structure:
+         grad/L on that face had fallen to 0.019. */
+      out[k] = ROCK_ALBEDO[k] * (eDirect * sunRGB[k] + skyVertLum * WALL_SKYVIS
+        + groundRGB[k] * Math.PI * FLOOR_VIEW) / Math.PI;
     }
     return out;
   };
-  /* The escarpment is not all the way round: the corridor is open along its own
-     axis and walled across it, so coverage follows the lateral component of the
-     view direction. Without this the model credits a wall in the down-wash
-     direction, where there is only more wash, and that phantom wall is square to
-     the sun and therefore the brightest thing in the environment — it was
-     raising the fill instead of lowering it. */
-  const AXIS = [-SUN_DIR.z, SUN_DIR.x];        // horizontal, across the corridor
-  { const l = Math.hypot(AXIS[0], AXIS[1]); AXIS[0] /= l; AXIS[1] /= l; }
+  /* Coverage is now a skyline rather than a lateral band: rock below it, sky
+     above, with the doorway toward the sun. The soft edge is there because a
+     ridge is not a straight line and because a hard step in the environment
+     rings the SH fit. */
   const coverAt = (d) => {
     const y = d[1];
     if (y < 0) return 1;
-    if (y >= COVER_TOP) return 0;
     const hl = Math.hypot(d[0], d[2]) || 1e-6;
-    const lat = Math.abs((d[0] * AXIS[0] + d[2] * AXIS[1]) / hl);
-    return COVER_MAX * (1 - y / COVER_TOP) * lat;
+    const towardSun = (d[0] * sunH[0] + d[2] * sunH[2]) / hl;
+    const gap = smooth(GAP_W2, GAP_W, towardSun);
+    const hs = Math.sin(SKYLINE + (GAP_EL - SKYLINE) * gap);
+    return 1 - smooth(hs - 0.07, hs + 0.07, y);
   };
 
   /* SH9 of that environment. Three's LightProbe takes exactly this and returns

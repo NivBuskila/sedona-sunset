@@ -149,6 +149,24 @@ moved: generate at lower resolution first and refine, defer textures not needed 
 first frame, move generation into workers, or cache into IndexedDB after the first visit.
 Unowned and unscheduled; worth doing before this is ever shown to anyone.
 
+## Open, unassigned: white/black faceted shards in the near foreground
+
+Visible bottom-left of `sys3e_wall_shade.png` — a cluster of hard-edged facets, some pure
+white and some pure black, in the immediate foreground. It reads as a clast or talus block
+whose shading has failed rather than as geometry that is merely ugly: pure black beside pure
+white on adjacent facets of one object is the signature of a bad normal, a NaN, or a
+material that is not receiving light at all.
+
+Confirmed **not** System 3's — the nearest vegetation instance of any class to that camera
+is 8.8 m away and is a grass card. So it belongs to whoever owns the clast or talus it is.
+Note the juniper's NaN was found by scanning buffers **pre-merge** with `tools/nanhunt.mjs`,
+which names the limb and ring instead of an index into 30,000 merged vertices; the same
+technique will localise this quickly if it is a NaN.
+
+Three separate critics have already had to write around an untextured object in these frames.
+Whoever picks this up should verify from a magnified crop that it is gone from `wall_shade`,
+`wall_lit` and `wash_mid`.
+
 ## Working alongside other agents
 
 Several systems are built in parallel, so more than one agent may be editing the tree at

@@ -186,6 +186,7 @@ try {
       const n = o.name || '';
       if (/^(veg-|juniper-)/.test(n) && o.visible) veg.push(o);
     });
+    const far = scene.getObjectByName('farridge');
     const shimmerOn = () => { atmo.setShimmer(true); };
     const post = g._post;
     /* System 7's chain, in two ablations rather than one, because they answer
@@ -226,6 +227,14 @@ try {
       noPostOpt: {
         on: () => { if (post) post.setLevel({ bloom: 0, dofTaps: 0, flare: 0 }); },
         off: () => { if (post) post.setLevel(postLevel); },
+        run: frame,
+      },
+      /* System 2's far band: four ridgeline curtains at 2.3 to 7.3 km. Added
+         because it is new geometry whose whole claim is that it costs nothing,
+         and a claim about cost belongs in the table that measures cost. */
+      noFar: {
+        on: () => { if (far) far.visible = false; },
+        off: () => { if (far) far.visible = true; },
         run: frame,
       },
       halfRes: {
@@ -274,7 +283,7 @@ try {
   if (!JSON_OUT) {
     console.log('\n  ── where the frame goes, at the top tier ──');
     console.log('  all figures are milliseconds per frame, median of ' + BLOCKS + ' blocks of ' + REPS);
-    console.log('\n  view        full   -shimmer  -particles  -shadow    -veg   -post -postopt @0.7res    calls     tris');
+    console.log('\n  view        full   -shimmer  -particles  -shadow    -veg   -post -postopt    -far @0.7res    calls     tris');
   }
   for (const v of VIEWS) {
     const r = await measure(v);
@@ -282,7 +291,7 @@ try {
     if (!JSON_OUT) {
       const f = (x) => String(x.toFixed(2)).padStart(7);
       console.log(`  ${v.name.padEnd(10)}${f(r.full)}${f(r.noShimmer)}${f(r.noParticles)}` +
-                  `${f(r.noShadow)}${f(r.noVeg)}${f(r.noPost)}${f(r.noPostOpt)}${f(r.halfRes)}   ` +
+                  `${f(r.noShadow)}${f(r.noVeg)}${f(r.noPost)}${f(r.noPostOpt)}${f(r.noFar)}${f(r.halfRes)}   ` +
                   `${String(r.info.calls).padStart(6)}  ${(r.info.triangles / 1e6).toFixed(2)}M`);
     }
   }
