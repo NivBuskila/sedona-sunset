@@ -2459,6 +2459,36 @@ unclipped blue one raises it mechanically. **Re-read this figure after the penum
 and read the clipped fraction beside it**; nothing in `src/rock.js` moved between the two
 captures except the head of the corridor, forty metres behind this camera.
 
+**Re-read on settled geometry, and it does not reproduce.** `sys7k`, `rock.js` at `84837d7`,
+twelve views paired, zero page errors in both manifests:
+
+| | `s2x` | `sys7k` ungraded | `sys7k` graded |
+| --- | --- | --- | --- |
+| lit-population saturation | 0.687 | **0.615** | **0.615** |
+| saturation q25–q75 | — | 0.56–0.68 | 0.56–0.68 |
+| saturation p95 | **1.000** | 0.732 | 0.732 |
+| hue | 19.1° | 21.1° | 20.9° |
+| B/G | 0.642 | 0.637 | 0.639 |
+| mean max channel | 56.7 cv | 175.7 cv | 175.2 cv |
+| pixels with a channel at 254+ | 0.33% | **0.00%** | **0.02%** |
+| pixels with a channel at 250+ | — | 0.04% | 0.26% |
+
+The diagnosis was right and the mechanism has cleared: the saturation p95 of **1.000** was the
+signature — a population whose minimum channel is at literal zero, which is a clipped channel
+and not a pigment — and on settled geometry there is no such tail. Saturation is at the bottom
+edge of the band rather than through the top of it, and the grade moves it by 0.000.
+
+Two notes for whoever quotes this next. The **clipped fraction is now a standing column** in
+`tools/_p7col.mjs`, which also refuses to print a colour figure at all when the capture's own
+manifest logged anything, and prints the interquartile spread beside every mean — the three
+guards this episode and its predecessor each paid for. And the residual 0.02% at 254+ is
+System 7's: a pivoted gain crosses one at 0.9854 encoded, so it used to flatten every input
+from 251 code values up to white. `POST_DEFAULTS.shoulderTop` replaces the line above 0.86
+with a Hermite landing on exactly (1, 1), which makes white reachable only from white and holds
+251, 252 and 253 apart where all three used to read 255. **`V` is out of band at 0.687 against
+0.589–0.600, in the ungraded control as well as the graded frame, so it is an exposure question
+and not a grading one.**
+
 ## Triangles are not what this frame costs, and the frame costs 31 ms
 
 `tools/bench.mjs` on the real adapter, 2560×1440, top tier, median of seven blocks of thirty:
