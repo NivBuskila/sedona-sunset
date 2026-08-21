@@ -160,7 +160,17 @@ export const POST_DEFAULTS = {
   /* Bloom and flare, in scene-linear radiance. The threshold is above anything
      the rock or the floor reaches, so only the sky near the sun and the sun
      itself feed it. */
-  bloomThresh: 0.55, bloomKnee: 0.35, bloomGain: 0.055,
+  /* The gain was 0.055 and it was the one term in the audit that arithmetic
+     could not bound, because a halo's height depends on what is on the other
+     side of the edge. Measured on a frozen pair, it put +8.3 code values on the
+     rock two pixels under the skyline of `bend`, decaying to nothing over about
+     thirty — a glow hugging a ridge line, which is the most recognisable render
+     tell in the list and worse than anything the grade was doing. The addition
+     is linear in this gain, so a quarter of it lands the same edge near 2 cv.
+     If the sun ever needs a bigger glow than that, raise `bloomThresh` toward
+     the sky's own radiance instead: it is the threshold, not the gain, that
+     decides whether an ordinary bright sky counts as a highlight. */
+  bloomThresh: 0.55, bloomKnee: 0.35, bloomGain: 0.013,
   ghostGain: 0.030, veilGain: 0.055, streakGain: 0.030,
   /* Ceiling on the flare *source*, not on the flare. Every flare term is
      proportional to the radiance in the bright buffer, which is what makes

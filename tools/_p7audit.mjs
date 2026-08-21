@@ -27,7 +27,7 @@ const PAIR = arg('--pair', 'sys7b');
 /* ── the chain's tail, verbatim ─────────────────────────────────────────────*/
 
 const P = {
-  vignette: 0.20, aberration: 0.9, grain: 0.013,
+  vignette: 0.05, aberration: 0.0, grain: 0.013,
   contrast: 1.03, contrastPivot: 0.18, toeTop: 0.111, toeSlope: 0.20,
   focal: 0.024, fStop: 11.0, focus: 20.0, cocMax: 4.0, skipPx: 0.75,
   bloomThresh: 0.55, bloomKnee: 0.35, bloomGain: 0.055,
@@ -169,10 +169,10 @@ console.log('    so this is inside the lens it claims to be)');
    profile graded-minus-ungraded against distance from the edge. A grade shows
    as a flat offset; a bloom shows as a ramp that decays with distance. */
 function load(f) {
-  const { width, height, data } = decode(readFileSync(f));
-  return { w: width, h: height, d: data };
+  const { w, h, ch, px } = decode(readFileSync(f));
+  return { w, h, ch, d: px };
 }
-const lum = (im, i) => 0.2126 * im.d[i * 4] + 0.7152 * im.d[i * 4 + 1] + 0.0722 * im.d[i * 4 + 2];
+const lum = (im, i) => 0.2126 * im.d[i * im.ch] + 0.7152 * im.d[i * im.ch + 1] + 0.0722 * im.d[i * im.ch + 2];
 
 /** Mean luminance k pixels below every strong bright-to-dark vertical step. */
 function silhouette(g, n) {
@@ -182,6 +182,10 @@ function silhouette(g, n) {
     /* The edge is the first place a column falls hard, found on the *ungraded*
        frame so the grade cannot move where the profile is measured from. Two
        pixels of run either side, so a lone dark texel is not an edge. */
+    /* The column has to *start* in sky, or the first hard fall down a frame of
+       nothing but wash floor counts as a silhouette — which is how the first
+       version of this picked the one view with no sky in it at all. */
+    if (lum(n, 2 * g.w + x) < 150) continue;
     let edge = -1;
     for (let y = 4; y < g.h - 40; y++) {
       const a2 = (lum(n, (y - 2) * g.w + x) + lum(n, (y - 1) * g.w + x)) / 2;
@@ -226,5 +230,54 @@ if (!best) {
   }
   console.log('   (a flat delta down the column is the grade; a delta that decays');
   console.log('    with distance from the edge is a halo, and is nameable)');
+}
+
+/* ── 6. vignette, measured against the prediction ──────────────────────────*/
+
+/* The arithmetic above is only worth having if it agrees with the render, and
+ * that is testable without a special capture — but only just, and the first
+ * attempt got it wrong in a way worth recording. The grade is a function of
+ * level and the vignette is a function of radius, so binning the
+ * graded-minus-ungraded difference by radius within a narrow band of ungraded
+ * *level* looks like it holds the grade constant and leaves the radial term
+ * alone. It does not: the grade's split tone and vibrance are functions of
+ * chroma as well as level, and different radii hold different materials, so
+ * that version read a 5.6 cv radial span out of a 3.8 cv effect and put a
+ * brightening in the centre, which a light loss cannot do.
+ *
+ * Holding the *material* fixed as well as the level is what makes it work. Sky
+ * only, well inside the skyline so the bloom halo is not in the sample, and one
+ * narrow level band: then the slope across the bins is the vignette.
+ */
+for (const v of ['bend', 'juniper', 'wash_low']) {
+  let g, n;
+  try { g = load(`shots/${PAIR}_${v}.png`); n = load(`shots/${PAIR}_nopost_${v}.png`); }
+  catch { continue; }
+  const BAND = [170, 230];
+  const bins = Array.from({ length: 5 }, () => ({ s: 0, c: 0, l: 0 }));
+  const asp = g.w / g.h, half = Math.hypot(asp, 1) * 0.5;
+  for (let y = 0; y < g.h * 0.45; y++) {
+    for (let x = 0; x < g.w; x++) {
+      const i = y * g.w + x;
+      if (n.d[i * n.ch + 2] < n.d[i * n.ch]) continue;      // sky is blue-dominant
+      const l0 = lum(n, i);
+      if (l0 < BAND[0] || l0 > BAND[1]) continue;
+      const rN = Math.hypot((x / g.w - 0.5) * asp, y / g.h - 0.5) / half;
+      const b = Math.min(4, Math.floor(rN * 5));
+      bins[b].s += lum(g, i) - l0; bins[b].c++; bins[b].l += l0;
+    }
+  }
+  const ok = bins.filter(b => b.c > 300);
+  if (ok.length < 2) continue;
+  const at = rN => { const t = Math.min(1, Math.max(0, (rN - 0.30) / 0.76)); return t * t * (3 - 2 * t); };
+  const lvl = ok.reduce((s, b) => s + b.l, 0) / ok.reduce((s, b) => s + b.c, 0);
+  const pr = r => fwd(inv(lvl) * (1 - P.vignette * at(r))) - lvl;
+  console.log(`\n── vignette, measured ──  ${PAIR}_${v}, sky at ${lvl.toFixed(0)} cv`);
+  console.log('  rN      0-.2    .2-.4    .4-.6    .6-.8   .8-1.0');
+  console.log('  delta ' + bins.map(b => (b.c > 300 ? (b.s / b.c).toFixed(2) : 'n/a').padStart(8)).join(''));
+  const lo = bins.findIndex(b => b.c > 300), hi = bins.reduce((k, b, j) => b.c > 300 ? j : k, -1);
+  console.log(`  slope ${(bins[hi].s / bins[hi].c - bins[lo].s / bins[lo].c).toFixed(2)} cv across ` +
+              `rN ${(lo * 0.2 + 0.1).toFixed(1)} to ${(hi * 0.2 + 0.1).toFixed(1)}, ` +
+              `predicted ${(pr(hi * 0.2 + 0.1) - pr(lo * 0.2 + 0.1)).toFixed(2)}`);
 }
 console.log();
