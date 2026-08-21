@@ -183,35 +183,64 @@ export async function capture(page, file) {
  * capture. Released in run()'s finally, and tame.mjs's teardown covers the
  * paths finally cannot.
  */
-const LOCK = new URL('../.renderlock', import.meta.url);
+const LOCKDIR = new URL('../.renderlock.d/', import.meta.url);
 
 function alive(pid) {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
+/* A ticket queue rather than a race.
+ *
+ * The first version was a single lockfile that every waiter retried for. That is
+ * a race, not a queue: with six agents contending, whoever happens to poll in
+ * the instant after a release wins, so a two-minute probe can starve behind a
+ * succession of twenty-minute captures and never acquire at all. Three separate
+ * runs hit the 45-minute timeout that way in one afternoon without ever holding
+ * the lock once.
+ *
+ * Each waiter now drops a ticket named `<timestamp>-<pid>` and holds the lock
+ * when it owns the oldest live ticket, so service is first-come-first-served and
+ * a waiter's position can only improve. Tickets whose pid is gone are swept, for
+ * the same reason the old file carried a pid: a hard-killed run must not wedge
+ * every future capture.
+ *
+ * Ordering ties on identical timestamps break on the string, which includes the
+ * pid, so two waiters can never both believe they are first.
+ */
 async function acquireLock(timeoutMs = 45 * 60 * 1000) {
+  fs.mkdirSync(LOCKDIR, { recursive: true });
+  const ticket = `${Date.now().toString().padStart(14, '0')}-${process.pid}`;
+  const mine = new URL(ticket, LOCKDIR);
+  fs.writeFileSync(mine, '');
+  const release = () => { try { fs.unlinkSync(mine); } catch {} };
+
   const started = Date.now();
   let announced = false;
-  for (;;) {
-    try {
-      fs.writeFileSync(LOCK, String(process.pid), { flag: 'wx' });
-      return () => { try { fs.unlinkSync(LOCK); } catch {} };
-    } catch (e) {
-      if (e.code !== 'EEXIST') throw e;
-      const held = Number(fs.readFileSync(LOCK, 'utf8').trim());
-      if (!held || !alive(held)) {          // stale — the holder died hard
-        try { fs.unlinkSync(LOCK); } catch {}
-        continue;
-      }
+  try {
+    for (;;) {
+      const live = fs.readdirSync(LOCKDIR).filter(name => {
+        const pid = Number(name.split('-')[1]);
+        if (pid && alive(pid)) return true;
+        if (name !== ticket) { try { fs.unlinkSync(new URL(name, LOCKDIR)); } catch {} }
+        return false;
+      }).sort();
+
+      if (live[0] === ticket) return release;
+
       if (!announced) {
-        console.log(`… waiting for the capture held by pid ${held}`);
+        console.log(`… queued for the capture lock behind ${live.indexOf(ticket)}` +
+                    ` (holder pid ${live[0].split('-')[1]})`);
         announced = true;
       }
       if (Date.now() - started > timeoutMs) {
-        throw new Error(`render lock held by pid ${held} for over ${Math.round(timeoutMs / 60000)} min`);
+        release();
+        throw new Error(`waited over ${Math.round(timeoutMs / 60000)} min for the capture lock`);
       }
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, 1500));
     }
+  } catch (e) {
+    release();
+    throw e;
   }
 }
 

@@ -9,3 +9,4 @@ shots/
 # transient frozen-source snapshot from tools/postpair.mjs
 pairsrc/
 index.pair.html
+.renderlock.d/
