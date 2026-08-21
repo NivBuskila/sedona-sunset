@@ -1640,6 +1640,56 @@ eight views** — the term that would do this is currently not landing. **Routed
 System 4's contribution is the ramp re-fit, worth 0.02, and it is not worth capturing on its
 own.
 
+## The aureole is System 4's, and it is not the stale dial it looked like
+
+Two aureoles exist and only one is the sky. `src/atmos.js` `MIE_G` plus the Mie integral in
+the sky LUT's alpha, multiplied back analytically by `src/sky.js` through `uMieG` and
+`uMieTint`, is the dome's forward lobe — the bright patch around the sun. **System 4's.**
+`src/aerial.js` `W_BROAD/G_BROAD/W_NARROW/G_NARROW` is the in-scatter phase over scene
+geometry, is what the depth ladder is made of, and has `fog: false` on the dome so it never
+touches it. **System 5's.** The near-sun sky is dome, so the lever needs no routing.
+
+`tools/aureole.mjs` prices it without a solve per variant, and predicts 244 cv at 1° from the
+sun against 245.7 measured, so it can be trusted:
+
+| variant | sky cv at 1° | disc step | sky irradiance |
+| --- | --- | --- | --- |
+| as shipped, AOD 0.032 | 244 | 11 cv | — |
+| amplitude 0.50 | 236 | 19 cv | −7.0% |
+| amplitude 0.30 | 230 | 25 cv | −9.8% |
+| no Mie at all | 211 | 44 cv | −13.9% |
+| **tighter g 0.85** | **251** | **4 cv** | +1.5% |
+
+Two results worth keeping. **Tightening the lobe makes the disc harder to see, not easier** —
+a higher `g` concentrates the same energy into the core, so the sky at 1° goes *up* to 251.
+And **the amplitude is not stale.** AOD550 is 0.032 against a documented Colorado Plateau
+range of 0.025–0.04, so it is already at the thin end; the amplitudes that make the disc read
+correspond to AOD 0.010–0.016, below any real desert atmosphere, and `src/atmos.js:181`
+records that below 0.02 the horizon glow disappears and the sky goes hard cyan. Reducing it
+also costs 7–10% of sky irradiance, which is fill, on the same shaded walls the critique
+says are too dark.
+
+Note the cross-system disagreement this exposes: AOD 0.032 over a 1200 m scale height implies
+a **106 km visual range**, while System 5's aerial is at **19 km**. Matching them would make
+the aureole 5.6× *brighter*, not dimmer. Clear Sedona air is 80–150 km, so the sky is the one
+holding the defensible number.
+
+The falloff, against the reference of "a small hard white disc with a tight warm halo in a sky
+still blue overhead":
+
+| degrees from sun | 1 | 15 | 30 | 60 | 90 |
+| --- | --- | --- | --- | --- | --- |
+| cv | 244 | 233 | 217 | 197 | 185 |
+| saturation | 0.002 | 0.023 | 0.084 | 0.160 | 0.198 |
+
+The halo is tight and the sky is blue at hue 211 by 15°, so the shape is right. What is wrong
+is the level: **saturation 0.198 at 90° against 0.30–0.45 in the reference.** The sky is pale
+rather than blue, and that is exposure, not aerosol — dropping exposure from 1.15 to 0.70
+takes the 90° sky to saturation 0.280 and the disc step to 20 cv, moving both toward the
+reference at once. It is the only lever measured so far that helps the disc and the sky
+together, and its cost is the one already recorded above: global exposure lifts the shaded
+numerator faster than the sunlit denominator and works against the gate.
+
 ## `tools/sundisc.mjs` was raycasting from a camera nobody photographs
 
 Its `VIEWS` table was hand-copied from `tools/shoot.mjs` and had drifted: `wash_low` was
