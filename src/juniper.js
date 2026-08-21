@@ -132,19 +132,50 @@ function makeProfile(seed, nLobes, nDead) {
     },
   };
 
-  /* The lobe sum's range, sampled, so the flute amplitude below is a *fraction
-     of the radius* rather than an arbitrary number that has to be retuned every
-     time the lobe count changes. The first build normalised against the mean
-     only, which left the trunk varying by six percent of its radius — a smooth
-     pipe. A real juniper bole varies by twenty. */
+  /* The lobe sum's range, so the flute amplitude below is a *fraction of the
+     radius* rather than an arbitrary number that has to be retuned every time
+     the lobe count changes. The first build normalised against the mean only,
+     which left the trunk varying by six percent of its radius — a smooth pipe.
+     A real juniper bole varies by twenty.
+
+     This has to be a genuine bound, not an estimate. It was previously sampled
+     on a 96x6 lattice in (theta, s), and `shape` below — which is the position
+     within this range, and is fed to a fractional `Math.pow` — was assumed to
+     land in [0,1] as a result. It did not. The lattice covered s only as far as
+     2.75 while limbs are evaluated anywhere on a 4.4 m tree, and each lobe's
+     envelope has a period in s of between 2.7 and 9, so at an unsampled height
+     the envelopes can sit near their common minimum inside a groove and the sum
+     falls below the sampled floor. `shape` then goes very slightly negative,
+     `Math.pow(negative, 0.85)` is NaN, and the NaN lands in all three channels
+     of the vertex colour, which multiplies straight into diffuse.
+
+     That was worth 18 non-finite vertices here and, downstream, a hard-edged
+     black rectangle across the sky of an unrelated view once System 7's bright
+     pass had divided by luminance and blurred it twice.
+
+     The fix is to stop sampling the s axis at all. `r` is a sum of independent
+     terms `amp * env(s) * g(theta)`, and `env` is a sine mapped to exactly
+     [0.42, 1] regardless of s — so the extremes over all s are available in
+     closed form by substituting those two constants. Only theta then needs
+     sampling, it is one-dimensional and periodic, and 1024 samples across a
+     lobe no narrower than 0.17 rad resolves it to well under a part in a
+     thousand. The result is a true envelope of the surface for every height,
+     not just the heights that happened to be probed. */
   let lo = 1e9, hi = -1e9;
-  const o = { r: 0, dead: 0 };
-  for (let k = 0; k < 6; k++) {
-    for (let i = 0; i < 96; i++) {
-      prof.eval(i / 96 * TAU, k * 0.55, o);
-      if (o.r < lo) lo = o.r;
-      if (o.r > hi) hi = o.r;
+  const NT = 1024;
+  for (let i = 0; i < NT; i++) {
+    const theta = i / NT * TAU;
+    let rMin = 0, rMax = 0;
+    for (let q = 0; q < lobes.length; q++) {
+      const L = lobes[q];
+      let d = theta - L.a;
+      d = d - TAU * Math.round(d / TAU);
+      const g = L.amp * Math.exp(-(d * d) / (2 * L.w * L.w));
+      rMin += g * 0.42;                 // env at its floor
+      rMax += g;                        // env at its ceiling
     }
+    if (rMin < lo) lo = rMin;
+    if (rMax > hi) hi = rMax;
   }
   prof.lo = lo;
   prof.span = Math.max(1e-3, hi - lo);
@@ -194,7 +225,13 @@ function limbGeometry(pts, radii, seg, prof, twistRate, s0, flute, deadBase = 0,
     for (let j = 0; j < cols; j++) {
       const th = (j % seg) / seg * TAU;
       prof.eval(th + twistRate * (s0 + si), s0 + si, o);
-      const shape = (o.r - prof.lo) / prof.span;      // 0 in a groove, 1 on a ridge
+      /* 0 in a groove, 1 on a ridge. `prof.lo`/`span` are a true envelope of the
+         lobe sum (see `makeProfile`), so this is in range on the arithmetic; the
+         clamp holds it in range in the floating point too, since a value a few
+         ulps below zero is still enough to make the fractional `Math.pow` below
+         return NaN. This is the definition of the coordinate being enforced
+         where it is defined, not a guard on a result somewhere downstream. */
+      const shape = clamp((o.r - prof.lo) / prof.span, 0, 1);
       /* Shredding. Juniper bark separates into vertical strings that lift away
          at their edges, so the outline of a trunk is furred rather than smooth —
          and a smooth outline was the giveaway that the bark was a texture on a
@@ -206,8 +243,18 @@ function limbGeometry(pts, radii, seg, prof, twistRate, s0, flute, deadBase = 0,
         Math.sin(th * 23 + (s0 + si) * 7.1) * 0.5 +
         Math.sin(th * 37 - (s0 + si) * 11.3) * 0.3 +
         Math.sin(th * 13 + (s0 + si) * 19.0) * 0.2) * (1 - 0.85 * o.dead);
-      const r = radii[i] * (1 - flute * 0.5 + flute * shape + 0.035 * o.dead
-                            + shred * bristle);
+      /* Deadwood loses the flute along with the bark. Fluting is a bark
+         structure; once the bark has gone the wood beneath is smooth and
+         sinuous, and it sits *below* the surrounding bark ridge rather than
+         bulging above it. Keeping the flute on the snags was also what put the
+         row of bright specks along every dead rim: at eight to twelve segments
+         the lobes are coarse enough that individual facets turn to face the sun
+         right at the silhouette, and a strong normal map on top made each one
+         a bead. Flattening the dead cross-section removes the cause instead of
+         dimming the symptom. */
+      const deadFlat = 1 - 0.85 * o.dead;
+      const r = radii[i] * (1 - flute * deadFlat * 0.5 + flute * deadFlat * shape
+                            - 0.030 * o.dead + shred * bristle);
       const k = i * cols + j;
       const c = Math.cos(th), sn = Math.sin(th);
       pos[k * 3] = pts[i].x + nor[i].x * c * r + bin[i].x * sn * r;
@@ -315,7 +362,11 @@ const TREE_LIFT = 0.10;
    come nearest the camera and at seven segments a limb has a 51° facet, reads
    as a flat ribbon with a bright top and an abruptly dark underside, and has a
    dead straight silhouette. */
-const SEG_BY_DEPTH = [72, 30, 18, 12, 8];
+/* Depths 2 and 3 raised from 18/12. These are the gauges the bare snags live at,
+   and a twelve-sided tube shows its facets at the silhouette. Cheap: these are
+   short members and the extra rings cost a few thousand triangles against a
+   budget with most of it unspent. */
+const SEG_BY_DEPTH = [72, 30, 22, 16, 8];
 /* Peak-to-trough as a fraction of the mean radius. Twenty percent on the bole
    is measured off photographs of old Utah junipers, not chosen for effect; the
    grooves between the ridges are deep enough to hold shadow all day and that is
@@ -422,6 +473,19 @@ export function buildTree(seed) {
     geoms.push(limbGeometry(pts, radii, seg, prof, twistRate, s0, FLUTE_BY_DEPTH[depth],
       deadness > 0.5 ? 1 : 0, SHRED_BY_DEPTH[depth], STRIP_BY_DEPTH[depth]));
 
+    /* A dead limb stops here rather than growing another two generations of dead
+       twigs. This is the mechanism that actually built the wire lattice, and it
+       took a mask render to find: deadness is *inherited*, so the one wholly dead
+       stem plus a 30% chance on each heavy limb was seeding entire four-level dead
+       subtrees, and a mask of the crown came back almost solid red. Tuning the
+       per-limb probability could not touch it — the probability only applies to
+       limbs whose parent is alive.
+       It is also just wrong anatomically. Fine twigs are the first thing to break
+       off a dead branch: a snag is a forked, tapering, kinked armature, not a
+       dead copy of a live shoot system. So dead wood forks — which is what the
+       critique asked for and is preserved — but it stops two levels short. */
+    if (depth >= 3 && deadness > 0.5) return;
+
     if (depth >= 4) {
       if (deadness < 0.5) {
         /* One spray at the tip, sometimes a second behind it. Foliage spread
@@ -465,7 +529,7 @@ export function buildTree(seed) {
        holding girth to the very end, and the length, both now fixed, so the
        forking can come back. */
     const nSide = deadness > 0.5
-      ? [2, 2, 1, 1, 0][depth] + (rand() < 0.35 ? 1 : 0)
+      ? [2, 2, 1, 0, 0][depth] + (rand() < 0.30 ? 1 : 0)
       : [2, 2, 2, 1, 0][depth] + (rand() < 0.45 ? 1 : 0);
     const kids = [];
     for (let i = 0; i < nSide; i++) {
@@ -723,7 +787,10 @@ function crownOcclusion(clumps) {
   };
 }
 
-function foliageGeometry(clumps, seed) {
+/* Exported for `tools/nanhunt.mjs`, which scans these buffers for non-finite
+ * values in node. Building them through `buildJuniper` would need a WebGL
+ * context for the textures; building them directly does not. */
+export function foliageGeometry(clumps, seed) {
   const rand = rng(seed);
   const pos = [], nrm = [], uvs = [], idx = [], vcol = [], vsun = [];
   const density = crownOcclusion(clumps);
@@ -939,7 +1006,8 @@ export function makeBarkMaterial(bark) {
        albedo and the top is rolled off rather than clipped. Same fix as the
        foliage's uDirCap, and the same underlying mistake, which is treating a
        ratio target as if it constrained a distribution. */
-    uDeadKnee: { value: 1.60 },
+    uDeadKnee: { value: 1.05 },
+    uDeadAmb: { value: 1.55 },
     uDebugMask: { value: 0 },
   };
   mat.userData.uniforms = u;
@@ -961,7 +1029,7 @@ export function makeBarkMaterial(bark) {
         'varying float vDead;\nvarying float vGauge;\n' +
         'uniform vec3 uLiveCol;\nuniform vec3 uDeadCol;\n' +
         'uniform sampler2D uDeadMap;\nuniform sampler2D uDeadNrm;\nuniform float uDebugMask;\n' +
-        'uniform float uDeadKnee;')
+        'uniform float uDeadKnee;\nuniform float uDeadAmb;')
       /* Kill the sheen at its source instead of fighting it with roughness.
          Roughness spreads a highlight; it does not remove the energy, and at a
          dielectric F0 of 0.04 on a thin cylinder crossed by a strong normal map
@@ -980,6 +1048,15 @@ export function makeBarkMaterial(bark) {
           vec3 dd = reflectedLight.directDiffuse;
           reflectedLight.directDiffuse =
             mix( dd, dd / ( 1.0 + dd / uDeadKnee ), vDead );
+          /* And lift the ambient side. The target is a median, and most deadwood
+             pixels are on faces the sun never reaches — so the median is set by
+             the fill, while the sunlit peaks that decide whether this reads as
+             wood or as wire are set by the direct term. Raising the albedo moves
+             both together, which is why every attempt to reach the ratio by
+             albedo alone blew the highlights out. Lifting the fill and capping
+             the direct moves them independently. Bleached wood does bounce far
+             more light than the bark beside it, so the direction is right. */
+          reflectedLight.indirectDiffuse *= mix( 1.0, uDeadAmb, vDead );
         }`)
       /* The mask is written *after* dithering, which is the last chunk in the
          fragment program, because everything between `opaque_fragment` and here
@@ -1149,7 +1226,7 @@ export function makeFoliageMaterial(map) {
 
 /* ── the mound, the litter and the dead grass ──────────────────────────────*/
 
-function hummock(terrain, cx, cz, seed) {
+export function hummock(terrain, cx, cz, seed) {
   const rand = rng(seed);
   /* Widened from 2.15 m to reach the drip line of a seven-metre crown. A mound
      that stops well inside the foliage is a mound nobody attributes to the
@@ -1162,9 +1239,23 @@ function hummock(terrain, cx, cz, seed) {
   const pos = [], uv = [], idx = [], col = [];
   const lobes = [];
   for (let i = 0; i < 5; i++) lobes.push({ a: rand() * TAU, m: 0.5 + rand() * 0.9 });
+  /* The centre is one shared apex vertex, and the innermost band is a fan onto
+     it, rather than a ring of `SEG + 1` coincident vertices quadded to ring one.
+     The old form put 44 zero-area triangles in the buffer — one per segment,
+     since each innermost quad had both of its inner corners at the same point —
+     and left the apex vertex at j = 0 bordering nothing but degenerate faces, so
+     `computeVertexNormals` handed it a zero-length normal. A zero normal is a
+     NaN the moment anything normalises it, and 44 zero-area triangles are 44
+     triangles of a tight budget spent on nothing. Both were reported from an
+     independent buffer scan.
+
+     `ri` is the ring index within the vertex array: the apex occupies slot 0 and
+     ring `i` begins at `1 + (i - 1) * (SEG + 1)`. */
   for (let i = 0; i <= RINGS; i++) {
     const t = i / RINGS;
-    for (let j = 0; j <= SEG; j++) {
+    const nj = i === 0 ? 0 : SEG;              // the apex is a single vertex
+    const rowBase = i === 0 ? 0 : 1 + (i - 1) * (SEG + 1);
+    for (let j = 0; j <= nj; j++) {
       const th = j / SEG * TAU;
       /* An irregular outline: a round mound is a pudding. */
       let sh = 1;
@@ -1194,9 +1285,11 @@ function hummock(terrain, cx, cz, seed) {
       const mot = 0.86 + 0.28 * fbm(x * 3.1, z * 3.1, 3, 4417);
       const k = duff * mot;
       col.push(mix(1, 0.66, k), mix(1, 0.615, k), mix(1, 0.60, k));
-      if (i > 0 && j < SEG) {
-        const a = (i - 1) * (SEG + 1) + j, b = a + 1;
-        const c = i * (SEG + 1) + j, d = c + 1;
+      if (i === 1 && j < SEG) {
+        idx.push(0, rowBase + j, rowBase + j + 1);          // fan onto the apex
+      } else if (i > 1 && j < SEG) {
+        const a = 1 + (i - 2) * (SEG + 1) + j, b = a + 1;
+        const c = rowBase + j, d = c + 1;
         idx.push(a, c, b, b, c, d);
       }
     }

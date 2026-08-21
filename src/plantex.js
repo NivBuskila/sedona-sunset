@@ -308,7 +308,7 @@ export function makeDeadwood(size = 512) {
      are small and see less of the wall, measured 21.6 from the same albedo. The
      stated target is a figure on the render, so the albedo is set to hit it
      there. */
-  const HUE = [1.0, 0.905, 0.700];        // hue 41.0 deg, sat 0.300
+  const HUE = [1.0, 0.880, 0.700];        // hue 36.0 deg, sat 0.300
   /* Levels chosen so that level * HUE.r * the blotch's 1.14 ceiling stays under
      1.0. Above that the texture's own clamp bites the red channel first, which
      both flattens the value range and *changes the hue* — the brightest crests
@@ -324,7 +324,14 @@ export function makeDeadwood(size = 512) {
      produces a bright dot wherever a grain crest lands on the lit side. Weathered
      wood does not have a 4:1 albedo range anyway. Its contrast is relief, which
      is what the normal map carries and what survives the mip chain honestly. */
-  const LEVEL_DARK = 0.420;               // deep in a fissure
+  /* Dropped from 0.420. The median value and the hue were both on target while
+     the snags still read as uniform pale rods, because a 0.42-0.66 band is
+     barely a band at all — every pixel was the same bone grey. Real weathered
+     wood is mottled: the fissure floors go nearly black, and it is that
+     variation, not the average, that stops a rod looking like extruded plastic.
+     Fissure floors are a minority of the pixels, so this darkens the look far
+     more than it moves the measured median. */
+  const LEVEL_DARK = 0.255;               // deep in a fissure
   const LEVEL_MID = 0.560;
   /* 0.70, down from 0.90. Times the tint and the blotch that reached 1.36, and a
      sunlit snag went to white — the round-one failure again, arrived at from the
@@ -368,11 +375,17 @@ export function makeDeadwood(size = 512) {
     for (let x = 0; x < size; x++) {
       const l = h[y * size + wr(x - 1)], r = h[y * size + wr(x + 1)];
       const d = h[wr(y - 1) * size + x], u = h[wr(y + 1) * size + x];
-      /* 12 across the grain against the bark map's 6, and 7 along it. The relief
-         is genuinely deeper — a fissure in bare heartwood is a centimetre where a
-         lifted bark string is a few millimetres — and the anisotropy between the
-         two axes *is* what grain looks like. */
-      let nx = (l - r) * 12.0, ny = (d - u) * 7.0;
+      /* 6.5 across the grain against the bark map's 6.0, and 4.5 along it.
+         This was 12 and 7, on the argument that bare heartwood has deeper relief
+         than bark — which is true of the wood and false of the render. A normal
+         that strong on a cylinder eight radial segments around perturbs N dot L
+         enough to put a bright facet on each segment, and the result is a line of
+         beads down every branch. They looked like specular aliasing and were
+         chased as such for two rounds; they are diffuse. Above the bark's
+         amplitude is what the critique asked for and 6.5 is above it; the grain
+         character comes from the anisotropy between the axes rather than from the
+         absolute strength, and that survives at any amplitude. */
+      let nx = (l - r) * 6.5, ny = (d - u) * 4.5;
       const inv = 1 / Math.sqrt(nx * nx + ny * ny + 1);
       const i = (y * size + x) * 4;
       nrm[i] = (nx * inv * 0.5 + 0.5) * 255;
