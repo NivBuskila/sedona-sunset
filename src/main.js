@@ -15,7 +15,7 @@ import { WashPath } from './path.js';
 import { Terrain, buildTerrainMesh, makeTerrainMaterial } from './terrain.js';
 import { buildScatter } from './scatter.js';
 import { buildWalls, buildDistantButtes, buildTalus, makeRockMaterial } from './rock.js';
-import { buildSky, buildLights, SUN_DIR, FOG, SHADOW_HALF } from './sky.js';
+import { buildSky, buildLights, makeShadowRig, FOG, EXPOSURE } from './sky.js';
 import { buildJuniper } from './juniper.js';
 import { buildVegetation } from './vegetation.js';
 import { setPlantAnisotropy } from './plantex.js';
@@ -44,20 +44,11 @@ renderer.setPixelRatio(1);
 renderer.setSize(window.innerWidth, window.innerHeight, false);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-/* Exposed for the midtones, not the floor. The scene's real dynamic range at
-   two degrees of solar elevation is about twenty to one between a sun-facing
-   rock face and level ground, so an exposure that lifts the wash floor to a
-   comfortable middle grey flattens everything else into pale cream. A
-   photographer would let the floor sit dark and keep the walls.
-   Trimmed, but only a little, and the measurement is the reason it is only a
-   little. Five of the eight frames had their floor sitting at value 0.76 to 0.87
-   where the tone curve's shoulder has no room left for chroma, so exposure was the
-   obvious suspect. Inverting the curve on those exact pixels says otherwise: two
-   thirds of a stop down buys six hundredths of saturation and costs the lit rock
-   face a third of its value. The washed-out regions were washed out because they
-   were pale sand, and the pigment is fixed in textures.js. This much is worth
-   having for the highlight roll-off; more would be paying for nothing. */
-renderer.toneMappingExposure = 0.74;
+/* System 4 owns this now, and derives it: the lights carry real irradiances, so
+   the exposure is the one number that turns them into pixels and it is chosen to
+   land a sunlit rock face in the 0.59-0.73 that reference photographs sit at.
+   See EXPOSURE in sky.js. */
+renderer.toneMappingExposure = EXPOSURE;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.shadowMap.autoUpdate = true;
@@ -124,8 +115,10 @@ const sky = buildSky();
 sky.scale.setScalar(5000);
 scene.add(sky);
 
-const { sun, hemi, glow, bounce } = buildLights();
-scene.add(sun, sun.target, hemi, glow, bounce);
+/* Order matters: the cascade patch in sky.js reads shadow index 1, and the
+   index is assigned in the order the scene is traversed. sunNear second. */
+const { sun, sunNear, probe } = buildLights();
+scene.add(sun, sun.target, sunNear, sunNear.target, probe);
 
 /* System 6. Silent until a gesture resumes the context, and inert if the
    browser has no audio at all — it must never be able to stop the scene. */
@@ -165,18 +158,13 @@ function syncCamera() {
   camera.rotation.set(player.pitch, -player.yaw, 0, 'YXZ');
 }
 
-/* Shadow camera rides with the player, quantised so the map does not shimmer
-   and, more importantly, so the same player position always yields the same
-   shadow texels. The step is four shadow texels, small enough that walking does
-   not visibly pop and coarse enough to stay exactly reproducible. */
-const SHADOW_Q = (SHADOW_HALF * 2) / 1024;
+/* Both cascade cameras ride with the player, each quantised to its own texel
+   grid so the maps do not shimmer while walking and — the part the harness
+   depends on — so the same player position always yields the same shadow
+   texels. sky.js owns the arithmetic. */
+const shadowRig = makeShadowRig(sun, sunNear);
 function syncShadow() {
-  const q = (v) => Math.round(v / SHADOW_Q) * SHADOW_Q;
-  const qx = q(player.x), qz = q(player.z), qy = q(player.y);
-  sun.target.position.set(qx, qy, qz);
-  sun.position.set(qx + SUN_DIR.x * 600, qy + SUN_DIR.y * 600, qz + SUN_DIR.z * 600);
-  sun.target.updateMatrixWorld();
-  sun.updateMatrixWorld();
+  shadowRig(player.x, player.y, player.z);
 }
 
 placeAt(0);
