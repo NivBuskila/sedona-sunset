@@ -66,7 +66,7 @@ const FEET = 1.41;
    the scheduler's copy silently won, so changing the constructor's value moved
    the full-take band RMS (which the scheduler does not reach at render start)
    without moving the bed spectrum at all. */
-const AIR_FLOOR = 0.00098;
+const AIR_FLOOR = 0.0043;
 
 const TAU = Math.PI * 2;
 
@@ -88,7 +88,12 @@ const EDGE_LADDER = [880, 1180, 1560, 2050, 2700, 3400];
 const HARM = {
   howl: [0, 0.75, 1.00, 0.66, 0.46, 0.31, 0.20, 0.13, 0.085, 0.05],
   yip: [0, 0.62, 1.00, 0.88, 0.66, 0.47, 0.33, 0.22, 0.15, 0.10],
-  wren: [0, 1.00, 0.21, 0.058, 0.022, 0.009],
+  /* A canyon wren is nearly a pure whistle, but nearly is not exactly: at h2
+     fourteen decibels down the second partial fell under any usable analysis
+     floor and each note measured as a lone sinusoid, which reads as a
+     synthesizer blip rather than a bird. Nine decibels down is still a whistle
+     and is visible. */
+  wren: [0, 1.00, 0.35, 0.13, 0.05, 0.02],
   raven: [0, 0.85, 1.00, 0.90, 0.72, 0.58, 0.44, 0.33, 0.25, 0.18, 0.13, 0.09],
 };
 
@@ -564,18 +569,33 @@ export class Soundscape {
        2 kHz to 4 kHz however carefully the gain is drawn — and a locked pair
        an octave apart is exactly the artefact the band split exists to remove. */
     this.rasp = band(wh2R, wh2L, 'bandpass', 4200, 0.6, 0);
-    /* Air: the bed's high-frequency floor. Real quiet is never zero up here —
-       moving air, insects, and in any real recording the capsule's own noise —
-       and a bed that reaches exactly nothing above five kilohertz reads as a
-       muted track rather than as empty desert. Forty-odd decibels under the
-       rush, tilted down so it does not become a rising shelf, and meant never
-       to be identified, only missed. */
-    this.air = band(wh2L, wh2R, 'highpass', 5200, 0.6, AIR_FLOOR);
-    /* A gentle shelf rather than a lowpass. A lowpass corner anywhere near the
-       render's Nyquist collapses the top of the band, which then reads as "the
-       bed dies above ten kilohertz" — the same defect one octave higher. */
-    this.airTilt = bq('highshelf', 8000);
-    this.airTilt.gain.value = -1.5;
+    /* Air: the bed's high-frequency floor, and the thing that says "outdoors".
+       Real desert quiet is not quiet up here. It is a fine continuous hiss off
+       sand, dry grass and juniper needles with the far-field insect floor under
+       it, and that hiss is most of what tells the ear the space is open. Without
+       it the whole piece reads as a filtered rumble with events on top rather
+       than as a place.
+       This band was previously forty-odd decibels under the rush and cornered at
+       5.2 kHz, which put it about one decibel above the measurement floor: a
+       number that improved twice without the condition ever improving once,
+       because both values were silence. It is sixteen decibels louder now and
+       corners more than an octave lower, so the whole 3-12 kHz span has a real
+       floor instead of a censored one. It is still thirty decibels under the
+       rush and it does not move the overall level — but it is now audible, which
+       was the entire point. */
+    this.air = band(wh2L, wh2R, 'highpass', 3000, 0.55, AIR_FLOOR);
+    /* Tilted, not cut, and only slightly. The natural outdoor spectrum falls
+       through the mid and then flattens out across the top two octaves rather
+       than continuing down, so the target is a shallow plateau from about three
+       kilohertz to Nyquist sitting a couple of decibels over the minimum near
+       one kilohertz. Overshooting this is its own defect: a first pass put
+       2.8 kHz seven decibels *above* 1 kHz, which is a hump, and a hump up there
+       reads as tape hiss rather than as open air. A lowpass corner anywhere near
+       the render's Nyquist is worse still — it collapses the top of the band,
+       which reads as "the bed dies above ten kilohertz", the original defect one
+       octave higher. */
+    this.airTilt = bq('highshelf', 4200);
+    this.airTilt.gain.value = -1.8;
     this.air.gain.disconnect();
     this.air.gain.connect(this.airTilt).connect(this.windBus);
     /* And one barely-there narrow band in the insect register, breathing on a
@@ -667,6 +687,64 @@ export class Soundscape {
     this.stepSend = g(0.22);
     this.feet.connect(this.stepSend).connect(this.wash);
 
+    /* ── slapback off the walls ──
+       The one thing that most says "I am standing between rock faces" is that
+       every transient you make comes back to you a fraction of a second later.
+       Without it each footstep died in place: eleven decibels down inside the
+       first frame and at the local background by a quarter of a second, which is
+       an anechoic chamber, not a wash.
+       Four discrete taps, and the levels are derived rather than dialled. A
+       reflector D away puts the reflected path at 2D against a direct path of
+       about 1.6 m from boot to ears, so the spherical spreading loss is
+       20·log10(2D/1.6); rough sandstone at a glancing angle costs another four
+       or five decibels, and the far tap loses a couple more to air absorption
+       over ninety metres. That arithmetic is the whole design, and it is worth
+       stating what it rules out: a slap ten decibels under your own boot would
+       need a reflector about two metres away. At the distance a butte actually
+       is, the honest answer is thirty to forty decibels down — which lands the
+       near taps just above the bed and the far tap just under it, so they are
+       heard as space rather than as echo. That is what this sounds like
+       outdoors, and it is why the effect has to be built from geometry: dialled
+       by ear it comes out either inaudible or theatrical.
+       Delays are fixed because the wash's dimensions are fixed. Only the level
+       tracks the player, via `prox` below. */
+    this.slap = g(1);
+    this.feet.connect(this.slap);
+    /* Only the very bottom is removed. A rock face tens of metres across is an
+       acoustically large mirror for anything above a couple of hundred hertz, so
+       the step's body does come back; what does not is the sub-100 Hz thump,
+       which is mostly ground-borne and arrives as mud. */
+    this.slapHP = bq('highpass', 180, 0.7);
+    this.slap.connect(this.slapHP);
+    /* Eight returns, not two.
+       Four discrete taps put the audible part of the effect inside the first
+       hundred and fifty milliseconds and nothing after it, which is honest about
+       the spreading loss but wrong about the place: a wash is not two parallel
+       mirrors. It is a channel with a cut bank on one side, a gravel terrace on
+       the other, boulders, juniper, and a butte face standing back from all of
+       it. Every one of those returns something, and their arrivals overlap.
+       Filling in the twenty-to-thirty-five-metre range with the scatterers that
+       are actually there raises the hundred-to-two-hundred-and-fifty millisecond
+       region by a few decibels without any single reflection being louder than
+       geometry allows — which is the difference between a slap and a space. */
+    for (const [D, lp, pan] of [[13.0, 8500, -0.70], [15.6, 8000, 0.75],
+      [19.0, 7000, 0.55], [22.0, 6800, -0.45],
+      [26.0, 6000, 0.35], [31.0, 5200, -0.55],
+      [35.0, 4600, 0.60], [45.0, 3800, -0.30]]) {
+      const path = 2 * D;
+      /* Spreading, reflection loss, and air absorption over the extra path.
+         Two decibels of reflection loss rather than four: a butte face is not a
+         point mirror, it is a large rough surface, so what comes back is the
+         specular return plus everything the whole face scatters, integrated over
+         an area far bigger than the first Fresnel zone. */
+      const lossDb = 20 * Math.log10(path / 1.6) + 1.8 + path * 0.022;
+      const d = ctx.createDelay(1.0);
+      d.delayTime.value = path / 343;
+      const f = bq('lowpass', lp, 0.7);
+      this.slapHP.connect(d).connect(f)
+        .connect(g(Math.pow(10, -lossDb / 20))).connect(sp(pan)).connect(this.master);
+    }
+
     /* animals ----------------------------------------------------------- */
     this.coyA = new Canid(ctx, this.dry, this.echo, HARM.howl, HARM.yip);
     this.coyB = new Canid(ctx, this.dry, this.echo, HARM.howl, HARM.yip);
@@ -690,7 +768,7 @@ export class Soundscape {
       new Float32Array(HARM.wren.length), Float32Array.from(HARM.wren),
       { disableNormalization: false }));
     this.wrenGain = g(0);
-    this.wrenLP = bq('lowpass', 5200, 0.6);
+    this.wrenLP = bq('lowpass', 7000, 0.6);
     this.wrenPan = ctx.createPanner();
     this.wrenPan.panningModel = 'equalpower';
     this.wrenPan.distanceModel = 'inverse';
@@ -698,7 +776,12 @@ export class Soundscape {
     this.wrenPan.positionZ.value = -160;
     this.wren.connect(this.wrenGain).connect(this.wrenLP).connect(this.wrenPan);
     this.wrenPan.connect(this.dry);
-    this.wrenEcho = g(0.30);
+    /* Down from 0.30. At that send the two-second canyon impulse response kept
+       repeating the cascade's last note for another three seconds, so the
+       gesture stopped and the sound did not. A bird two hundred metres out
+       across open air gets much less return relative to its direct path than a
+       boot beside a bank does. */
+    this.wrenEcho = g(0.11);
     this.wrenPan.connect(this.wrenEcho).connect(this.echo);
 
     /* Raven: a croak is a harsh harmonic stack chopped by a roughness in the
@@ -969,12 +1052,21 @@ export class Soundscape {
       ramp(this.rasp.fL.frequency, 3600 + 1900 * clamp01(bg[3]), t);
       ramp(this.rasp.fR.frequency, 3600 + 1900 * clamp01(bg[3]), t);
 
-      /* The air floor drifts by a few decibels over a couple of minutes and
-         never switches off. The insect band comes and goes on a half-minute
-         cycle, and only in the bottom third of its range is it audible at all. */
-      ramp(this.air.gain.gain, AIR_FLOOR * Math.exp(0.30 * this._drift(4, t)), t);
+      /* The air floor drifts by a few decibels over a couple of minutes, never
+         switches off, and rises with the wind.
+         The rise matters as much as the floor. The loudest gust in the piece had
+         nothing at all in its top octave, which is backwards: more flow over the
+         same sand and needles means more hiss, and the top of the spectrum is
+         where a gust announces itself first. It is driven from the rasp band's
+         own gust response rather than the overall gust so that this does not
+         quietly re-couple the top of the spectrum to the bottom — those two
+         already share a correlation block, and the low bands stay out of it. */
+      ramp(this.air.gain.gain,
+        AIR_FLOOR * Math.exp(0.30 * this._drift(4, t)) * (1 + 2.4 * clamp01(bg[3])), t);
+      /* The insect band comes and goes on a half-minute cycle and only the
+         bottom third of its range is audible at all. */
       const bug = clamp01(Math.sin(TAU * t / 37.3 + 1.1) * 0.5 + 0.5 - 0.45) / 0.55;
-      ramp(this.stridul.gain.gain, 0.0016 * bug * bug, t);
+      ramp(this.stridul.gain.gain, 0.0034 * bug * bug, t);
 
       /* Rock edges. Driven by the hiss band, not the overall gust: an edge
          tone exists because fast air is separating off a lip, which is the
@@ -997,14 +1089,32 @@ export class Soundscape {
            place. That is what makes the feature falsifiable. */
         const lo = gu.edgeSwap ? gu.edge[1] : gu.edge[0];
         const hi = gu.edgeSwap ? gu.edge[0] : gu.edge[1];
-        ramp(this.edge1.frequency, lo * (1 + 0.04 * Math.sin(t * 0.9)), t);
-        ramp(this.edge2.frequency, hi * (1 + 0.03 * Math.sin(t * 1.3 + 2)), t);
+        /* Pitch proportional to flow speed. This is the whole physics of an edge
+           tone — Strouhal's number fixes f·d/U, so the frequency is the flow
+           velocity divided by the size of the lip — and it was missing: the
+           ladder entry was fixed and the only movement was a few per cent of
+           cosmetic wobble, so the tones sat still while the gust swung twenty
+           decibels around them. The hiss band's drive is the local flow proxy,
+           and radiated amplitude goes roughly as its cube, so the cube root of
+           the drive is the velocity: about an octave of sweep end to end, which
+           is what the swing is worth.
+           The ladder is still the ladder. It is now the pitch at the reference
+           flow rather than the only pitch, which is both what a real lip does
+           and still falsifiable: the same ledge in the same gust sings the same
+           note. */
+        const flow = 0.62 + 0.80 * Math.cbrt(clamp01(bg[2]));
+        ramp(this.edge1.frequency, lo * flow * (1 + 0.025 * Math.sin(t * 0.9)), t);
+        ramp(this.edge2.frequency, hi * flow * (1 + 0.02 * Math.sin(t * 1.3 + 2)), t);
       }
 
       /* Closer walls means more of the near field arrives as reflection — but
          only a little of it either way. An open-topped wash sends most of the
          energy straight up and never gets it back. */
       ramp(this.washWet.gain, 0.30 + 0.55 * prox, t);
+      /* The slap taps keep their delays — the wash is the width it is — but they
+         get louder as the player drifts towards a bank, which is the audible
+         half of walking across a canyon floor. */
+      ramp(this.slap.gain, 0.72 + 0.62 * prox, t);
       // Only a real gust gets a return off the far walls.
       ramp(this.windEcho.gain, 0.16 * Math.pow(clamp01((w.g - 0.45) / 0.55), 2), t);
 
@@ -1067,16 +1177,29 @@ export class Soundscape {
     /* First-of-kind offsets are staggered so the three species do not all
        arrive in the first minute, and so a two-minute measurement catches at
        most one or two of them. */
+    /* Exponential waiting times, not uniform ones, and longer means.
+       Two things were wrong with the old table. The gaps were drawn uniformly
+       from a narrow window, which is a metronome with jitter rather than a
+       random process: it forbids both the long silence and the coincidence that
+       a real evening has, and because every species had its own near-fixed
+       period the events arrived in a pattern that read as arranged — one in the
+       first minute, four in the second. A Poisson process has exponentially
+       distributed gaps and no memory, so it has no third act. And there were
+       simply too many: five vocalisations in two minutes is more than a wash at
+       golden hour gives you. These means put the expectation at two or three,
+       with a real chance of none, which is the honest number.
+       `refractory` is the one non-Poisson part and it is physical: an animal
+       that has just finished calling does not immediately start again. */
     const spec = {
-      coyote: { first: [46, 40], gap: [168, 165] },
-      wren: { first: [88, 60], gap: [143, 155] },
-      raven: { first: [122, 90], gap: [196, 210] },
+      coyote: { first: 95, mean: 230, refractory: 25 },
+      wren: { first: 120, mean: 200, refractory: 20 },
+      raven: { first: 175, mean: 260, refractory: 30 },
     };
     for (const kind in spec) {
       const s = spec[kind];
       while (this.callsTo[kind] < until) {
-        const first = this.callsTo[kind] === 0;
-        const gap = first ? s.first[0] + r() * s.first[1] : s.gap[0] + r() * s.gap[1];
+        const mean = this.callsTo[kind] === 0 ? s.first : s.mean;
+        const gap = s.refractory - mean * Math.log(1 - r() * 0.999);
         const t0 = this.callsTo[kind] + gap;
         this.calls.push({ t0, kind, done: false, bearing: (r() * 2 - 1) * Math.PI });
         this.callsTo[kind] = t0;
@@ -1094,7 +1217,7 @@ export class Soundscape {
    * relaxes, and either glides down or stops abruptly at the end. Nothing here
    * is a held frequency.
    */
-  _call(voice, vibGain, t0, bearing, f0, distance) {
+  _call(voice, vibGain, t0, bearing, f0, distance, ending) {
     const r = this.erand;
     const fA = voice.oscA.frequency, fB = voice.oscB.frequency, fY = voice.oscY.frequency;
     voice.place(t0 - 0.05, bearing, distance);
@@ -1118,31 +1241,92 @@ export class Soundscape {
     const gap = 0.2 + r() * 0.35;
     const hAt = t + gap;
     const hl = 1.6 + r() * 1.2;
-    const glide = r() < 0.6;
+    /* Rise into the note, glissando down across the sustain, then an ending.
+       A note held to within a couple of per cent with a slow sag is the single
+       thing that most makes a synthesised howl sound synthesised, and that is
+       what this was: an arch about a fifth as deep as it needed to be, fading
+       out at pitch. A real howl falls fifteen to forty per cent across the
+       sustain and finishes with a gesture — it either breaks upward into yips
+       or drops away hard. The mid-sustain waver that used to be drawn into this
+       curve as three extra ramps is gone: the vibrato below is now deep enough
+       to supply it, and a waver made of three ramps is periodic in a way a real
+       one is not. */
+    const peak = 1.02 + r() * 0.06;
+    /* The measured fall comes out a little under the scheduled one, because the
+       tracker reads a median-smoothed trend and the vibrato rounds off both
+       extremes of it. A scheduled 0.17 measured 15.8%, which is the bar itself,
+       so the bottom of the range sits at 0.22 to keep the quietest seed clear
+       of it. */
+    const fall = 0.22 + r() * 0.18;
+    const endMul = peak * (1 - fall);
+    /* `ending` exists for the measurement, not for the scene. The reverb tail is
+       measured in the window after the call, and a call that breaks upward into
+       yips puts real vocalisation inside that window, where it is indistinguish-
+       able from a reflection — the first run of this reported the terminal yips
+       as eight discrete arrivals of a two-second reverb. A measurement cue has
+       to be able to ask for the ending that leaves the window clean. */
+    const breaks = ending ? ending === 'break' : r() < 0.45;
+    const tEnd = hAt + hl + (breaks ? 0.07 : 0.13);
     const setF = (param, mul) => {
-      param.setValueAtTime(f0 * 0.72 * mul, hAt);
-      param.exponentialRampToValueAtTime(f0 * mul, hAt + hl * 0.14);
-      param.exponentialRampToValueAtTime(f0 * 1.035 * mul, hAt + hl * 0.34);
-      param.exponentialRampToValueAtTime(f0 * 0.985 * mul, hAt + hl * 0.55);
-      param.exponentialRampToValueAtTime(f0 * 1.02 * mul, hAt + hl * 0.74);
-      param.exponentialRampToValueAtTime(f0 * (glide ? 0.70 : 0.96) * mul, hAt + hl);
+      param.setValueAtTime(f0 * 0.70 * mul, hAt);
+      param.exponentialRampToValueAtTime(f0 * peak * mul, hAt + hl * 0.17);
+      param.exponentialRampToValueAtTime(f0 * (peak - fall * 0.34) * mul, hAt + hl * 0.58);
+      param.exponentialRampToValueAtTime(f0 * endMul * mul, hAt + hl);
+      /* The ending is written onto the same parameter as the sustain so the two
+         cannot drift out of step with each other. */
+      param.exponentialRampToValueAtTime(f0 * endMul * (breaks ? 1.85 : 0.52) * mul, tEnd);
     };
     setF(fA, 1);
     setF(fB, 1.003);
-    vibGain.gain.setValueAtTime(2, hAt);
-    vibGain.gain.linearRampToValueAtTime(4 + r() * 8, hAt + hl * 0.55);
-    vibGain.gain.linearRampToValueAtTime(2, hAt + hl);
+    /* Depth in hertz, because this gain feeds `frequency` rather than `detune`.
+       Three to eight per cent of the fundamental at five-odd hertz, which is
+       what a real howl wavers by. The previous two-to-twelve hertz was a fifth
+       of that at this pitch, and read as a steady tone with a tremble on it. */
+    /* A fixed number of hertz against a falling pitch, so the relative depth
+       grows as the glissando descends — by the end of the fall the same offset is
+       around a third deeper than it is at the top. That is the right direction:
+       a real howl's waver widens as the note drops. The range below is set so
+       that the average across the sustain lands mid-band rather than so that the
+       top of the note does.
+       This coefficient was briefly trimmed to two thirds of what it is now, on
+       the strength of a depth reading of eleven per cent. That reading was the
+       instrument, not the sound: the residual it measured contained the
+       glissando's own curvature and the pitch tracker's bin jitter as well as
+       the waver. Fitting a sinusoid across the vibrato band only, which is what
+       the probe does now, puts this at a little over five per cent. */
+    const vd = f0 * (0.027 + r() * 0.030);
+    vibGain.gain.setValueAtTime(vd * 0.35, hAt);
+    vibGain.gain.linearRampToValueAtTime(vd, hAt + hl * 0.5);
+    vibGain.gain.linearRampToValueAtTime(vd * 0.5, hAt + hl);
+    vibGain.gain.setValueAtTime(0, tEnd + 0.05);
 
     const gs = voice.sustain.gain;
     gs.setValueAtTime(0, hAt);
     gs.linearRampToValueAtTime(0.5, hAt + 0.18);
-    gs.linearRampToValueAtTime(0.44, hAt + hl * 0.7);
-    if (glide) {
-      gs.setTargetAtTime(0, hAt + hl * 0.7, hl * 0.13);
-      gs.setValueAtTime(0, hAt + hl + 0.4);
+    gs.linearRampToValueAtTime(0.44, hAt + hl * 0.72);
+    gs.linearRampToValueAtTime(0.34, hAt + hl);
+    if (breaks) {
+      gs.linearRampToValueAtTime(0, tEnd);
     } else {
-      gs.linearRampToValueAtTime(0.40, hAt + hl - 0.05);
-      gs.linearRampToValueAtTime(0, hAt + hl + 0.03);
+      gs.setTargetAtTime(0, hAt + hl, 0.045);
+      gs.setValueAtTime(0, tEnd + 0.2);
+    }
+
+    /* Breaking upward into yips. This is a real and common ending and it is the
+       one that most clearly reads as an animal deciding to stop, rather than a
+       generator being switched off. */
+    let tail = tEnd;
+    if (breaks) {
+      const nb = 2 + Math.floor(r() * 3);
+      tail = tEnd + 0.03;
+      for (let i = 0; i < nb; i++) {
+        const len = 0.05 + r() * 0.06;
+        const a = f0 * endMul * (1.7 + r() * 0.8);
+        fY.setValueAtTime(a, tail);
+        fY.exponentialRampToValueAtTime(a * (0.72 + r() * 0.2), tail + len);
+        burst(voice.short.gain, tail, 0.40 + r() * 0.25, 0.008, len);
+        tail += len + 0.05 + r() * 0.07;
+      }
     }
 
     /* Held down deliberately. The gentler distance filters pass eleven decibels
@@ -1151,7 +1335,7 @@ export class Soundscape {
        spectrum would be right and the loudness would give it away. */
     const lvl = 0.058 + r() * 0.020;
     voice.level.gain.setValueAtTime(lvl, Math.max(0, t0 - 0.1));
-    return { end: hAt + hl + 0.5, howlAt: hAt, howlEnd: hAt + hl, f0 };
+    return { end: tail + 0.5, howlAt: hAt, howlEnd: hAt + hl, f0 };
   }
 
   /**
@@ -1160,11 +1344,16 @@ export class Soundscape {
    * single call with nothing after it reads as a sound effect; the answer is
    * what makes it an animal.
    */
-  _fireCoyote(t0, bearing) {
+  _fireCoyote(t0, bearing, ending, solo) {
     const r = this.erand;
     const f0 = 430 + r() * 170;
     const dist = 380 + r() * 260;
-    const n = 2 + Math.floor(r() * 3);
+    /* One or two calls, not two to four: the bout was most of the crowding.
+       `solo` is for the reverb measurement only — a second call or an answer
+       lands inside the tail window and is indistinguishable there from a
+       reflection, which is how a bout came to be reported as an eight-second
+       RT60. */
+    const n = solo ? 1 : 1 + Math.floor(r() * 2);
     /* Every call is reported separately, with its own start and duration.
        Reporting only the first leaves the repeats looking like unexplained
        sound, and a measurement that has to account for them will file them as
@@ -1179,7 +1368,7 @@ export class Soundscape {
     for (let i = 0; i < n; i++) {
       const at = t;
       last = this._call(this.coyA, this.vibA, at, bearing + (r() * 2 - 1) * 0.25,
-        f0 * (1 + (r() * 2 - 1) * 0.04), dist);
+        f0 * (1 + (r() * 2 - 1) * 0.04), dist, i === 0 ? ending : undefined);
       parts.push(last);
       recs.push({ kind: 'coyote', t: +at.toFixed(2), dur: +(last.end - at).toFixed(2) });
       t = last.end + 8 + r() * 15;
@@ -1187,7 +1376,7 @@ export class Soundscape {
     /* The answer. Deliberately off the first animal's pitch — coyotes avoid
        each other's frequencies, which is why two of them sound like six. */
     let answer = null;
-    if (r() < 0.55) {
+    if (!solo && r() < 0.40) {
       const semis = (r() < 0.5 ? -1 : 1) * (3 + r() * 4);
       const aAt = parts[Math.min(parts.length - 1, 1 + ((r() * 2) | 0))].end + 1.5 + r() * 5;
       answer = this._call(this.coyB, this.vibB, aAt,
@@ -1214,16 +1403,23 @@ export class Soundscape {
     const r = this.erand;
     const f = this.wren.frequency;
     const g = this.wrenGain.gain;
-    const top = 3000 + r() * 700;
-    const bottom = 1000 + r() * 320;
-    const n = 10 + Math.floor(r() * 7);
+    /* A canyon wren starts near five kilohertz, not three, and the whole
+       cascade is over in a second and a half to three seconds. This started a
+       third too low and ran about twice too long. */
+    const top = 4500 + r() * 1000;
+    const bottom = 1100 + r() * 300;
+    const n = 9 + Math.floor(r() * 5);
     const dist = 110 + r() * 150;
     this.wrenPan.positionX.setValueAtTime(Math.sin(bearing) * dist, Math.max(0, t0 - 0.05));
     this.wrenPan.positionY.setValueAtTime(8 + r() * 14, Math.max(0, t0 - 0.05));
     this.wrenPan.positionZ.setValueAtTime(Math.cos(bearing) * dist, Math.max(0, t0 - 0.05));
 
     let t = t0;
-    const lvl = 0.026 + r() * 0.014;
+    /* Up by seven decibels, and it is a correction rather than a change of mind:
+       strengthening the second and third partials made the PeriodicWave
+       renormalise, which quietly took that much off the fundamental and left the
+       bird eight decibels further away than it was meant to be. */
+    const lvl = 0.058 + r() * 0.031;
     for (let i = 0; i < n; i++) {
       const u = i / (n - 1);
       const fc = top * Math.pow(bottom / top, Math.pow(u, 0.86));
@@ -1234,15 +1430,18 @@ export class Soundscape {
       // Decelerating: notes start about 85 ms apart and end near 165 ms.
       t += len + 0.048 + 0.085 * Math.pow(u, 1.3) + r() * 0.012;
     }
-    // The buzzy tail: two or three lower, rougher notes.
+    /* The buzzy tail, and the ending. A real cascade stops — often on two or
+       three harsh notes — rather than trailing off on a held pitch. These are
+       short and they fall hard inside their own length, which is what makes the
+       last note read as the last note. */
     const nb = 2 + Math.floor(r() * 2);
     for (let i = 0; i < nb; i++) {
-      const fc = bottom * (0.94 - i * 0.04);
-      const len = 0.09 + r() * 0.05;
-      f.setValueAtTime(fc, t);
-      f.linearRampToValueAtTime(fc * 0.96, t + len);
-      burst(g, t, lvl * 0.55, 0.012, len);
-      t += len + 0.06 + r() * 0.05;
+      const fc = bottom * (0.95 - i * 0.06);
+      const len = 0.055 + r() * 0.030;
+      f.setValueAtTime(fc * 1.06, t);
+      f.exponentialRampToValueAtTime(fc * 0.82, t + len);
+      burst(g, t, lvl * (0.62 - i * 0.12), 0.008, len * 0.8);
+      t += len + 0.040 + r() * 0.030;
     }
     this.fired.push({ kind: 'wren', t: +t0.toFixed(2), notes: n + nb,
       dur: +(t - t0).toFixed(2),
@@ -1314,9 +1513,14 @@ export class Soundscape {
     const gravel = this._surfaceAt(x, z, u);
     const left = this.stepSide > 0;
     /* Real gait is asymmetric: one leg lands a little harder and a little
-       brighter than the other, consistently, for as long as you watch. */
-    const legLvl = left ? 1.06 : 0.94;
-    const legTone = left ? 1.05 : 0.95;
+       brighter than the other, consistently, for as long as you watch. Widened,
+       because at six and five per cent the difference was there in the code and
+       not in the autocorrelation — no odd-even alternation survived to be
+       measured, which is the same as the two feet being one foot. The grain
+       layer gets its own offset on top, so the difference is in the timbre and
+       not only in the level. */
+    const legLvl = left ? 1.13 : 0.88;
+    const legTone = left ? 1.11 : 0.90;
     const vary = 0.66 + r() * 0.68;
     const load = clamp(speed / 1.6, 0.55, 1.5);
     const scuff = r() < 0.11;
@@ -1332,17 +1536,34 @@ export class Soundscape {
       this.gStep.playbackRate.setValueAtTime(0.55 + r() * 0.4, t);
       burst(this.crunchGain.gain, t, 0.44 * vary * load, 0.03, len * 1.15);
     } else {
+      /* Which layer leads. A boot in dry wash sand and gravel is mostly the
+         sound of grains shearing against each other, two to eight kilohertz and
+         still going at twelve; the dull body under it is the secondary event.
+         This was the other way round — peaking near a hundred hertz, flat to
+         four kilohertz and then falling off a cliff — which is the spectrum of
+         a mallet on a drum head, not a boot on sand. So the body comes down and
+         the crunch comes up and moves an octave higher with a wider filter.
+         Total power is about where it was: the energy moved up the spectrum
+         rather than being added to. */
       const bodyF = lerp(420, 900, gravel) * (0.85 + r() * 0.3) * legTone;
-      const bodyLvl = lerp(0.48, 0.22, gravel) * vary * load * legLvl;
+      const bodyLvl = lerp(0.30, 0.145, gravel) * vary * load * legLvl;
       const bodyDec = lerp(0.11, 0.055, gravel) * (0.8 + r() * 0.45);
       this.stepLP.frequency.setValueAtTime(bodyF, t);
       burst(this.stepGain.gain, t, bodyLvl, 0.004 + r() * 0.004, bodyDec);
 
-      const crF = lerp(1250, 3100, gravel) * (0.85 + r() * 0.35) * legTone;
-      const crLvl = lerp(0.27, 0.64, gravel) * vary * load * legLvl;
+      const crF = lerp(2300, 5200, gravel) * (0.85 + r() * 0.35) * legTone;
+      /* Widening the filter to a Q under a half quadrupled the bandwidth, so the
+         level has to come back down by about as much or the crunch arrives as a
+         click: the first pass at this put the true peak at -5.9 dBFS with the
+         total power barely moved, which is a crest factor problem rather than a
+         loudness one and would clip on some other seed. */
+      const crLvl = lerp(0.28, 0.62, gravel) * vary * load * legLvl;
       const crDec = lerp(0.075, 0.13, gravel) * (0.8 + r() * 0.5);
       this.crunchBP.frequency.setValueAtTime(crF, t);
-      this.crunchBP.Q.setValueAtTime(0.8 + gravel * 0.9, t);
+      /* Wide, because grain-on-grain noise is broadband. A Q near one made the
+         crunch a resonance sitting on the body rather than a band of hiss over
+         the top of it. */
+      this.crunchBP.Q.setValueAtTime(0.42 + gravel * 0.34, t);
       this.gStep.playbackRate.setValueAtTime(0.7 + r() * 0.85 + gravel * 0.35, t);
       burst(this.crunchGain.gain, t + 0.004, crLvl, 0.003, crDec);
     }
@@ -1419,7 +1640,9 @@ export class Soundscape {
          drift is what stops the sequence being periodic on a longer horizon:
          with only per-step jitter the phase random-walks but the mean stride
          is exact, and an autocorrelation still finds the comb. */
-      const asym = this.stepSide > 0 ? 1.020 : 0.980;
+      /* Four per cent, not two. Two is the bottom of the human range and it did
+         not survive to the autocorrelation; real walking runs two to six. */
+      const asym = this.stepSide > 0 ? 1.040 : 0.960;
       const drift = 1 + 0.028 * Math.sin(now * 0.31) + 0.018 * Math.sin(now * 0.11 + 1.7);
       const stride = base * asym * drift * (1 + (r() * 2 - 1) * 0.045) + this.pause;
       this.strideAcc += speed * st.dt;
@@ -1751,12 +1974,24 @@ export async function renderVoices({ sampleRate = 24000, seed, path = null } = {
           offset: 2.0, span: 4.0,
         });
       } else if (c.kind === 'coyote') {
-        const first = sc._fireCoyote(c.t, 0.9);
+        // One call, dropped ending: the reverb window below stays clean.
+        const first = sc._fireCoyote(c.t, 0.9, 'drop', true);
         cues.push({
           t: c.t, kind: 'coyote', measure: 'harmonics',
           offset: +(first.howlAt - c.t + 0.45).toFixed(3),
           f0lo: Math.round(first.f0 * 0.72), f0hi: Math.round(first.f0 * 1.3),
           note: `f0 ${first.f0.toFixed(0)} Hz, howl at +${(first.howlAt - c.t).toFixed(2)}s`,
+        });
+        cues.push({
+          t: c.t, kind: 'coyote-pitch', measure: 'pitch',
+          offset: +(first.howlAt - c.t).toFixed(3),
+          span: +(first.howlEnd - first.howlAt + 0.2).toFixed(3),
+          /* Around h2, not the fundamental. h2 is the loudest partial of this
+             voice, so a band around h1 loses the track to it as soon as the
+             glide brings h2 inside; a band that only h2 can occupy cannot. */
+          harmonic: 2,
+          f0lo: Math.round(first.f0 * 1.15), f0hi: Math.round(first.f0 * 2.45),
+          note: 'howl trajectory: glissando depth, vibrato and ending',
         });
         cues.push({
           t: c.t, kind: 'coyote-tail', measure: 'tail',
@@ -1770,6 +2005,14 @@ export async function renderVoices({ sampleRate = 24000, seed, path = null } = {
              frame of reference. Without this the reflections read 0.45 s early
              and look like early reflections of an enclosure. */
           ref: 0.45,
+          /* The direct sound is the howl at full voice, not its release. Taking
+             it from the second before the analysis window put the reference
+             inside the closing decay, where the level depends on where the
+             envelope happened to be — which is why the direct-to-reflection
+             ratio moved five decibels between runs that changed nothing about
+             the reverb. */
+          directFrom: +(first.howlAt - c.t + 0.35).toFixed(3),
+          directTo: +(first.howlEnd - c.t - 0.15).toFixed(3),
           band: Math.round(first.f0 * 1.6),
           note: 'canyon slapback after the first howl',
         });

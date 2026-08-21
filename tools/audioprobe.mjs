@@ -156,6 +156,89 @@ function bandpass(x, sr, fc, Q) {
   return y;
 }
 
+/** One RBJ highpass, forward only. Same reasoning as the bandpass above. */
+function highpass(x, sr, fc, Q = 0.7) {
+  const w0 = 2 * Math.PI * fc / sr, a = Math.sin(w0) / (2 * Q), cw = Math.cos(w0);
+  const b0 = (1 + cw) / 2, b1 = -(1 + cw), b2 = (1 + cw) / 2;
+  const a0 = 1 + a, a1 = -2 * cw, a2 = 1 - a;
+  const y = new Float32Array(x.length);
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+  for (let i = 0; i < x.length; i++) {
+    const v = (b0 * x[i] + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2) / a0;
+    x2 = x1; x1 = x[i]; y2 = y1; y1 = v;
+    y[i] = v;
+  }
+  return y;
+}
+
+/**
+ * What a footstep leaves behind it.
+ *
+ * The question is whether a transient tells you how far away the rock is. It is
+ * answered by averaging the post-onset decay of every footstep that has nothing
+ * else near it, in ten-millisecond bins, aligned on each step's own peak and
+ * normalised to it — so a reflection arriving at a fixed delay survives the
+ * average while the bed and the wind do not.
+ *
+ * Reported against the local background rather than in absolute terms, because
+ * "audible" here means "above what was already there".
+ */
+function stepDecay(x, sr, stepTimes, calls, out = 0.34) {
+  const W = Math.round(0.010 * sr);
+  const nb = Math.round(out / 0.010);
+  /* High-passed. The step's low body is thirty decibels up on everything else
+     and decays slowly, so unfiltered it buries any reflection under its own
+     tail — and the low body is the part that does not come back off the rock
+     anyway. */
+  const hp = highpass(x, sr, 300, 0.7);
+  const rms = (i0) => {
+    let s = 0, n = 0;
+    for (let i = i0; i < i0 + W && i < hp.length; i++) { s += hp[i] * hp[i]; n++; }
+    return n ? Math.sqrt(s / n) : 0;
+  };
+  /* Clear of the neighbouring steps and of any animal, but no stricter than
+     that. Requiring a full second of silence either side only admitted the
+     three or four steps that happen to border a pause, and three steps is not
+     an average. Reaching to a third of a second and asking only for four
+     hundred milliseconds of clearance admits most of the walk. */
+  const isolated = stepTimes.filter((t, i) =>
+    (i === 0 || t - stepTimes[i - 1] > 0.42) &&
+    (i === stepTimes.length - 1 || stepTimes[i + 1] - t > out + 0.08) &&
+    !calls.some(c => t > c.t - 2 && t < c.t + (c.dur || 6) + 3) &&
+    (t - 0.34) * sr > 0 && (t + out + 0.02) * sr < hp.length);
+  if (isolated.length < 3) return null;
+  const acc = new Float64Array(nb), bg = [];
+  let used = 0;
+  for (const t of isolated) {
+    // Find the onset peak inside a short search window, then align to it.
+    let best = -1, bi = 0;
+    for (let i = Math.round((t - 0.04) * sr); i < Math.round((t + 0.10) * sr); i += W) {
+      const v = rms(i); if (v > best) { best = v; bi = i; }
+    }
+    if (best <= 0) continue;
+    for (let b = 0; b < nb; b++) acc[b] += rms(bi + b * W) / best;
+    /* Background from just *before* the onset. Taken after the step it would
+       have to sit beyond the reflections it is the reference for, which is what
+       forced the long isolation window; taken before, it is the bed by
+       construction, and it is measured per step so the per-step normalisation
+       still holds. */
+    for (let i = Math.round((t - 0.32) * sr); i < Math.round((t - 0.12) * sr); i += W) {
+      bg.push(rms(i) / best);
+    }
+    used++;
+  }
+  if (!used) return null;
+  const curve = Array.from(acc, v => db(v / used));
+  const back = db(median(bg));
+  const at = (ms) => curve[Math.min(nb - 1, Math.round(ms / 10))];
+  /* Where the trace last stands clear of the background. This is the number
+     that says whether the walls are audible: if it is inside the direct
+     sound's own decay there is no reflection in the output at all. */
+  let lastAbove = 0;
+  for (let b = 1; b < nb; b++) if (curve[b] > back + 3) lastAbove = b * 10;
+  return { curve, background: back, steps: used, lastAboveMs: lastAbove, at };
+}
+
 /**
  * Sharp-attack detection: an 8 ms envelope against its own 200 ms trailing
  * mean, run on the 800 Hz – 4 kHz band.
@@ -177,22 +260,36 @@ function transients(x, sr, riseDb = 6, minGap = 0.22) {
     e[w] = Math.sqrt(s / W);
   }
   const K = Math.max(2, Math.round(0.2 / (W / sr)));
-  const out = [];
-  let last = -1e9, acc = 0;
+  const cand = [];
+  let acc = 0;
   for (let w = 0; w < n; w++) {
     if (w >= K) {
       const mean = acc / K;
       const rise = db(e[w]) - db(mean);
       const t = w * W / sr;
-      if (rise > riseDb && e[w] > e[w - 1] && (w + 1 >= n || e[w] >= e[w + 1]) && t - last > minGap) {
-        last = t;
-        out.push({ t, peak: db(e[w]), rise });
+      if (rise > riseDb && e[w] > e[w - 1] && (w + 1 >= n || e[w] >= e[w + 1])) {
+        cand.push({ t, peak: db(e[w]), rise });
       }
       acc -= e[w - K];
     }
     acc += e[w];
   }
-  return out;
+  /* Strongest-first selection, not first-past-the-post.
+     Taking the earliest qualifying window and then blanking a fixed interval
+     was fine in a dry signal and is not fine in a reverberant one: once each
+     footstep has reflections behind it, the trailing mean is raised, the true
+     onset sometimes fails to clear the threshold, and the detector locks on to
+     a reflection instead — which showed up as the step interval's coefficient
+     of variation tripling while the scheduler's own figure did not move at all.
+     Choosing the loudest onset in each neighbourhood and suppressing the rest
+     puts the mark back on the boot. */
+  cand.sort((p, q) => q.peak - p.peak);
+  const kept = [];
+  for (const c of cand) {
+    if (kept.some(k => Math.abs(k.t - c.t) < minGap)) continue;
+    kept.push(c);
+  }
+  return kept.sort((p, q) => p.t - q.t);
 }
 
 /**
@@ -215,6 +312,18 @@ function gait(steps) {
   const gs = iv.map(v => v.g);
   const mean = gs.reduce((a, b) => a + b, 0) / gs.length;
   const sd = Math.sqrt(gs.reduce((a, b) => a + (b - mean) ** 2, 0) / gs.length);
+  /* A spread that a handful of misdetections cannot dominate.
+     On a detected step train a missed step doubles one interval and a spurious
+     one halves another, and either is worth a quarter of a second against a
+     stride of half. Eight of those in a hundred and ten intervals is enough on
+     its own to put the standard deviation at 150 ms, which then reads as a gait
+     four times looser than the one that was scheduled. The interquartile range
+     over 1.349 is the same quantity for a normal distribution and ignores the
+     tails, so quoting both says whether a large spread is the walk or the
+     instrument. */
+  const srt = Array.from(gs).sort((p, q) => p - q);
+  const iqr = srt[Math.floor(srt.length * 0.75)] - srt[Math.floor(srt.length * 0.25)];
+  const sdRobust = iqr / 1.349;
   const odd = iv.filter(v => v.i % 2).map(v => v.g);
   const even = iv.filter(v => !(v.i % 2)).map(v => v.g);
   const mo = odd.length ? odd.reduce((a, b) => a + b, 0) / odd.length : NaN;
@@ -248,6 +357,7 @@ function gait(steps) {
   for (let i = 0; i < comb.length; i++) { if (comb[i] > 0.2) survives = i + 1; else break; }
   return {
     n: steps.length, mean, sd, cv: 100 * sd / mean,
+    sdRobust, cvRobust: 100 * sdRobust / mean,
     asymmetryMs: Math.abs(mo - me) * 1000, comb, combSurvives: survives, stride,
   };
 }
@@ -488,19 +598,31 @@ function analyse(x, sr, meta) {
     });
     return { f: fc, db: median(vals) };
   });
-  // How much of the top octave is sitting at the display floor of the PNG.
+  /* How much of the top octave of the bed is too quiet to read, against three
+     stated thresholds rather than one.
+     The single figure was ambiguous and the ambiguity mattered: it was quoted
+     against the PNG's nominal floor, but the bottom of the magma ramp has so
+     little contrast that the darkest few decibels are indistinguishable by eye,
+     so anyone reading the image measures a floor several decibels higher and
+     gets a much worse number for the same audio. -102 dB is where that
+     readable floor actually sits. Reporting all three makes the comparison
+     unambiguous, and these are computed from the float render, so the numbers
+     themselves are not floored at all. */
   const floorBins = (() => {
     const b0 = Math.max(1, Math.round(6000 * S.N / sr));
     const b1 = Math.min(S.bins - 1, Math.round(Math.min(12000, sr / 2 - 1) * S.N / sr));
-    if (b1 <= b0 || !quiet.length) return NaN;
-    let at = 0, tot = 0;
+    if (b1 <= b0 || !quiet.length) return null;
+    const levels = [DB_LO, -108, -102];
+    const at = levels.map(() => 0);
+    let tot = 0;
     for (const f of quiet) {
       for (let k = b0; k <= b1; k++) {
         tot++;
-        if (db(Math.sqrt(S.power[f * S.bins + k] / 2)) <= -108) at++;
+        const d = db(Math.sqrt(S.power[f * S.bins + k] / 2));
+        for (let i = 0; i < levels.length; i++) if (d <= levels[i]) at[i]++;
       }
     }
-    return 100 * at / tot;
+    return { levels, pct: at.map(v => 100 * v / tot) };
   })();
 
   /* ── inter-band envelope correlation ──
@@ -520,6 +642,20 @@ function analyse(x, sr, meta) {
   }
   const stillEnvs = envs.map(e => Float64Array.from(stillFrames.map(f => e[f])));
   const corrStill = stillEnvs.map(a => stillEnvs.map(b => +pearson(a, b).toFixed(2)));
+  /* And the walking frames on their own.
+     This exists to settle one specific question. In the full-take matrix the
+     correlation falls as the bands separate and then climbs again at the widest
+     separation, which is the signature of a shared gain sitting under
+     everything — and that is a fair thing to suspect, because it was true once.
+     Splitting the two populations decides it: if the rise is a shared gain it
+     appears in both halves, and if it is the boots it appears only here. */
+  const walkFrames = [];
+  for (let f = 0; f < S.frames; f++) {
+    if (walkingAt((f * S.hop + S.N / 2) / sr)) walkFrames.push(f);
+  }
+  const walkEnvs = envs.map(e => Float64Array.from(walkFrames.map(f => e[f])));
+  const corrWalk = walkFrames.length > 200
+    ? walkEnvs.map(a => walkEnvs.map(b => +pearson(a, b).toFixed(2))) : null;
 
   /* ── recurring narrow peaks ──
      The rock-edge resonances are only real if they can be found: bins standing
@@ -650,11 +786,13 @@ function analyse(x, sr, meta) {
         ? { min: stepLv[0], median: stepLv[stepLv.length >> 1], max: stepLv[stepLv.length - 1],
             spread: stepLv[stepLv.length - 1] - stepLv[0] } : null,
       gait: gait(stepsIn),
+      times: stepsIn.map(s => +s.t.toFixed(3)),
       gustClean: gustClean > -200 ? gustClean : null,
       stillSrc,
+      decay: stepDecay(x, sr, stepTimes, calls),
     },
     bedSpec, bedFloorPct: floorBins, quietFrames: quiet.length,
-    corrBands: CORR_BANDS, corr, corrStill,
+    corrBands: CORR_BANDS, corr, corrStill, corrWalk,
     narrow: narrow.slice(0, 8), promNoise, promBar, loudFrames: loud.length,
     winLevel: wl, spec: S, meta,
   };
@@ -780,6 +918,230 @@ function peakProminence(x, sr, t0, span, freqs) {
  * discrete arrivals, and measure the decay only over the part that is actually
  * above the floor.
  */
+/**
+ * Pitch trajectory of a sustained voiced sound.
+ *
+ * The specific thing being tested is whether the howl is a held note. A
+ * per-frame parabolic-interpolated peak in a narrow search band gives the
+ * fundamental to well under a per cent, which is enough to separate a two per
+ * cent sag from a twenty per cent glissando — and enough to pull the vibrato
+ * out of the residual once the slow trend is removed.
+ */
+function pitchTrack(x, sr, t0, span, flo, fhi, harm = 1) {
+  const N = 2048, hop = 256;
+  const i0 = Math.max(0, Math.round(t0 * sr));
+  const seg = x.subarray(i0, Math.min(x.length, i0 + Math.round(span * sr)));
+  if (seg.length < N * 3) return null;
+  const S = stft(seg, N, hop);
+  const k0 = Math.max(1, Math.floor(flo * N / sr)), k1 = Math.min(S.bins - 2, Math.ceil(fhi * N / sr));
+  const f = [], t = [], en = [], prom = [];
+  for (let fr = 0; fr < S.frames; fr++) {
+    let bk = k0, bv = -1, tot = 0;
+    const all = [];
+    for (let k = k0; k <= k1; k++) {
+      const v = S.power[fr * S.bins + k];
+      tot += v; all.push(v);
+      if (v > bv) { bv = v; bk = k; }
+    }
+    en.push(tot);
+    /* How far the winning bin stands above the rest of the search band. This is
+       the voicing test: a tone towers over its neighbours and noise does not,
+       and unlike an energy threshold it says nothing about what the pitch is. */
+    prom.push(db(Math.sqrt(bv)) - db(Math.sqrt(median(all))));
+    // Parabolic interpolation on the log magnitudes, for sub-bin resolution.
+    const l = Math.log(S.power[fr * S.bins + bk - 1] + 1e-30);
+    const c = Math.log(bv + 1e-30);
+    const rr = Math.log(S.power[fr * S.bins + bk + 1] + 1e-30);
+    const d = 0.5 * (l - rr) / (l - 2 * c + rr || 1e-9);
+    f.push((bk + Math.max(-1, Math.min(1, d))) * sr / N);
+    t.push(fr * hop / sr);
+  }
+  /* Voiced frames selected by energy, not by how close they are to the median
+     frequency. Gating on frequency is circular when the quantity being measured
+     is how far the frequency moves: at a twenty per cent glissando plus eight
+     per cent of vibrato the trajectory spans nearly a factor of two, so a
+     window tight enough to reject unvoiced noise also rejects the bottom of the
+     glide — which silently truncated the fall being measured and reported a
+     healthy trajectory as a five per cent sag. Energy separates voiced from
+     unvoiced cleanly and says nothing about pitch; the ratio test that remains
+     is wide, and is only there to throw out octave errors. */
+  const loudest = Math.max(...en);
+  const voiced = f.map((v, i) => ({ v, i }))
+    .filter(o => prom[o.i] > 8 && en[o.i] > loudest * 1e-2);
+  if (voiced.length < 12) return null;
+  const med = median(voiced.map(o => o.v));
+  const keep = voiced.filter(o => o.v / med > 0.5 && o.v / med < 2.1);
+  if (keep.length < 12) return null;
+  const fv = keep.map(o => o.v), tv = keep.map(o => t[o.i]);
+  /* Two trends, because the two questions want different smoothing. The
+     glissando is a third-of-a-second-and-up gesture and needs a window wider
+     than two vibrato periods or the vibrato leaks into it and the peak lands on
+     whichever waver happened to be highest; the vibrato needs a narrower one or
+     the glissando leaks into the residual and inflates the depth. */
+    const smooth = (secs) => {
+    const w = Math.max(3, Math.round(secs * sr / hop) | 1);
+    return fv.map((_, i) => {
+      const a = Math.max(0, i - (w >> 1)), b = Math.min(fv.length, i + (w >> 1) + 1);
+      return median(fv.slice(a, b));
+    });
+  };
+  /* Three timescales, not two. The extra one is `fast`, a four-frame median that
+     is far shorter than a vibrato period and so preserves the waver entirely,
+     but removes the single-frame jitter of the peak estimate itself — at one bin
+     per one and a half per cent that jitter is comparable with the vibrato being
+     measured, and left in it inflated both the depth and, worse, the rate, by
+     adding zero crossings that were instrument noise. */
+  /* The vibrato trend is deliberately wide — three vibrato periods, not the
+     three quarters of one it used to be. A running median of width comparable
+     with the period tracks the waver instead of ignoring it, so subtracting it
+     cancelled most of the signal and left mainly the difference between a sine
+     and its own median, whose energy sits at multiples of the vibrato rate. That
+     is why deepening the vibrato made the measured depth go down and the
+     measured rate jump to eight hertz while the oscillator sat at 5.4. A median
+     passes a linear ramp through unchanged whatever its width, so a wide window
+     still removes the glissando; and the narrowband fit below rejects the
+     leftover curvature on its own. */
+  const slow = smooth(0.34), trend = smooth(0.60), fast = smooth(0.043);
+  const mean = (arr) => arr.reduce((s, v) => s + v, 0) / arr.length;
+  /* Peak taken from the rise, end from the last fifth — and both selected by
+     elapsed time rather than by position in the surviving frames. That
+     distinction is the whole measurement: unvoiced frames are not spread evenly,
+     they cluster at the release, so "the last fifth of the frames that
+     survived" is somewhere in mid-sustain and the fall gets measured over the
+     part of the glissando that has not happened yet. Fixed windows rather than
+     argmax-then-after, too, for the same reason in reverse: the rise occupies
+     the first sixth of the howl by construction, and searching the whole span
+     for the top of the arch let a late waver win it. */
+  const tSpan = tv[tv.length - 1] - tv[0] || 1;
+  const inHead = tv.map(v => (v - tv[0]) / tSpan < 0.45);
+  const inTail = tv.map(v => (v - tv[0]) / tSpan > 0.78);
+  const peak = Math.max(...slow.filter((_, i) => inHead[i]));
+  const tailVals = slow.filter((_, i) => inTail[i]);
+  const tail = tailVals.length ? mean(tailVals) : slow[slow.length - 1];
+  /* Vibrato: RMS of the residual against the local trend, and zero crossings of
+     it for the rate — but over the sustain only. The rise into the note and the
+     terminal gesture are both deliberate, fast frequency movements, and a 140 ms
+     median trend cannot follow either of them, so including them charges their
+     slope to the vibrato. That is not a small effect: deepening the glissando
+     and adding an ending doubled the measured depth while the vibrato itself was
+     being reduced. The window below is the same part of the note the fall is
+     measured across. */
+  const inSus = tv.map(v => {
+    const u = (v - tv[0]) / tSpan;
+    return u > 0.22 && u < 0.88;
+  });
+  const res = [];
+  const resT = [];
+  for (let i = 0; i < fast.length; i++) {
+    if (!inSus[i]) continue;
+    res.push(fast[i] / trend[i] - 1);
+    resT.push(tv[i]);
+  }
+  let rms = 0;
+  for (let i = 0; i < res.length; i++) rms += res[i] * res[i];
+  rms = Math.sqrt(rms / res.length);
+  /* The depth and the rate both come from fitting a sinusoid to the residual
+     across the plausible vibrato band, rather than from the residual's own
+     statistics.
+     Statistics of the whole residual do not answer the question asked. Zero
+     crossings count the tracker's jitter as well as the waver, and RMS or a
+     percentile charges every non-vibrato wiggle — leftover glissando curvature
+     below the band, bin quantisation above it — to the depth. Measured three
+     ways, the same residual gave 2.4%, 5.8% and 17.7%, which is a sign that the
+     residual is not one thing. A fit at a single frequency is narrowband by
+     construction: it takes only what actually wavers at four to eight hertz and
+     is deaf to the rest. Least squares against the real frame times rather than
+     an FFT, because voiced frames are a filtered subset and so are not uniformly
+     spaced. */
+  let vibHz = NaN, vibAmp = 0;
+  if (res.length >= 8) {
+    for (let hz = 3; hz <= 9.0001; hz += 0.05) {
+      let a = 0, b = 0;
+      for (let i = 0; i < res.length; i++) {
+        const w = 2 * Math.PI * hz * resT[i];
+        a += res[i] * Math.cos(w);
+        b += res[i] * Math.sin(w);
+      }
+      a *= 2 / res.length; b *= 2 / res.length;
+      const amp = Math.hypot(a, b);
+      if (amp > vibAmp) { vibAmp = amp; vibHz = hz; }
+    }
+  }
+  const absRes = res.map(Math.abs).sort((p, q) => p - q);
+  /* Divided down to the fundamental at the end. Which partial gets tracked is
+     the caller's decision and it matters: the strongest partial of this voice is
+     the second, thirteen decibels up on the first, so a search band placed
+     around the fundamental gets hijacked by h2 the moment the glide takes the
+     fundamental low enough to bring h2 inside the band — which reads as the
+     pitch jumping up exactly when it is in fact falling, and turns a real
+     glissando into a two per cent sag. Tracking the loud partial on purpose and
+     dividing avoids the ambiguity entirely; the ratios below are unaffected by
+     the division. */
+  const dn = (v) => v / harm;
+  return {
+    frames: fv.length, harmonic: harm,
+    start: dn(mean(fv.slice(0, Math.max(2, Math.round(fv.length * 0.06))))),
+    peak: dn(peak), end: dn(tail),
+    /* Peak to sustain-end, as a percentage of the peak. This is the number the
+       critique is about: a real howl falls fifteen to forty per cent. */
+    fallPct: 100 * (peak - tail) / peak,
+    // Peak deviation of the fitted waver, as a percentage of the pitch.
+    vibDepthPct: 100 * vibAmp,
+    /* What fraction of the residual's energy the fitted waver accounts for. Near
+       one means the residual is vibrato and the depth is the depth; well under
+       one means most of the wobble is somewhere other than the vibrato band and
+       the depth is the honest part of a messier signal. */
+    vibFit: rms > 0 ? (vibAmp / Math.SQRT2) / rms : 0,
+    vibRmsPct: 100 * rms,
+    vibHz,
+    lo: dn(Math.min(...fv)), hi: dn(Math.max(...fv)),
+  };
+}
+
+/**
+ * How far a narrow peak moves.
+ *
+ * Follows the strongest bin inside a wide window around a nominal frequency,
+ * across the loudest tenth of frames only. Restricting to loud frames is the
+ * whole trick: between gusts there is no tone, the strongest bin is whichever
+ * noise won, and averaging that in would report the width of the search band
+ * rather than the sweep of the tone.
+ */
+function peakGlide(x, sr, t0, span, f) {
+  const N = 2048, hop = 512;
+  const i0 = Math.max(0, Math.round(t0 * sr));
+  const seg = x.subarray(i0, Math.min(x.length, i0 + Math.round(span * sr)));
+  if (seg.length < N * 4) return null;
+  const S = stft(seg, N, hop);
+  const k0 = Math.max(1, Math.floor(f * 0.5 * N / sr));
+  const k1 = Math.min(S.bins - 2, Math.ceil(f * 1.8 * N / sr));
+  /* The most prominent bin, not the loudest one. A tone six or seven decibels
+     over its own skirt is nowhere near the loudest thing in a window an octave
+     and a half wide — the broadband wind is — so tracking the raw maximum
+     followed the wind's spectral tilt and reported a sweep that had nothing to
+     do with the tone. Prominence against a local median finds the peak. */
+  const wsm = Math.max(3, Math.round(0.16 * (k1 - k0)));
+  const rows = [];
+  for (let fr = 0; fr < S.frames; fr++) {
+    let bk = k0, bv = -1e9, tot = 0;
+    for (let k = k0; k <= k1; k++) tot += S.power[fr * S.bins + k];
+    for (let k = k0; k <= k1; k++) {
+      const near = [];
+      for (let j = Math.max(1, k - wsm); j <= Math.min(S.bins - 1, k + wsm); j++) {
+        if (Math.abs(j - k) <= 2) continue;
+        near.push(S.power[fr * S.bins + j]);
+      }
+      const v = db(Math.sqrt(S.power[fr * S.bins + k])) - db(Math.sqrt(median(near)));
+      if (v > bv) { bv = v; bk = k; }
+    }
+    rows.push({ f: bk * sr / N, e: tot });
+  }
+  rows.sort((p, q) => q.e - p.e);
+  const loud = rows.slice(0, Math.max(4, Math.round(rows.length * 0.10))).map(o => o.f).sort((p, q) => p - q);
+  const lo = loud[Math.floor(loud.length * 0.1)], hi = loud[Math.floor(loud.length * 0.9)];
+  return { lo, hi, semitones: 12 * Math.log2(hi / lo) };
+}
+
 function arrivals(x, sr, t0, t1, floorDb) {
   const W = Math.round(0.02 * sr);
   const a = Math.round(t0 * sr / W), b = Math.round(t1 * sr / W);
@@ -879,7 +1241,12 @@ function ramp(t) {
   return RAMP[RAMP.length - 1][1];
 }
 
-const DB_LO = -108, DB_HI = -26;
+/* The displayed range. The floor was -108, which put the bed's top octave hard
+   against the bottom of the colour ramp: anyone reading the spectrogram found
+   the high frequencies censored and could not tell an improvement up there from
+   no improvement at all. -126 leaves the quiet bed a good twenty decibels of
+   visible range to move in. */
+const DB_LO = -126, DB_HI = -26;
 
 function spectrogram(a, file, marks) {
   const S = a.spec, sr = a.sampleRate;
@@ -964,7 +1331,7 @@ function spectrogram(a, file, marks) {
     const t = 1 - y / (PH - 1);
     for (let x = 0; x < 12; x++) c.set(CX + x, TOP + y, ramp(t));
   }
-  for (const d of [-100, -80, -60, -40, -30]) {
+  for (const d of [-120, -110, -100, -80, -60, -40, -30]) {
     const y = TOP + Math.round((1 - (d - DB_LO) / (DB_HI - DB_LO)) * (PH - 1));
     for (let x = CX + 12; x < CX + 15; x++) c.set(x, y, GREY);
     c.text(CX + 16, y - 2, `${d}`, GREY);
@@ -989,8 +1356,29 @@ const shotsDir = path.join(DIR, 'shots');
 fs.mkdirSync(shotsDir, { recursive: true });
 
 await run({ width: 640, height: 360 }, async ({ page, errs }) => {
-  page.setDefaultTimeout(0);
+  /* Generous, but finite. This was 0 — no timeout at all — and under CPU
+     contention from other agents rendering, the contract check sat for half an
+     hour and had to be killed. A measurement tool that can hang is a tool
+     nobody can verify with, so every step below is bounded and every bound
+     degrades to a printed warning rather than a stall. */
+  page.setDefaultTimeout(120000);
   await page.waitForTimeout(1500);
+
+  const warnings = [];
+  const withTimeout = async (label, ms, fn, fallback) => {
+    let timer;
+    try {
+      return await Promise.race([
+        fn(),
+        new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('timeout')), ms); }),
+      ]);
+    } catch (e) {
+      warnings.push(`${label} ${String(e).includes('timeout') ? `timed out after ${ms / 1000}s` : `failed: ${e}`}`);
+      return fallback;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
 
   const ok = await page.evaluate(() =>
     !!(window.__game && window.__game.audio && window.__game.audio.available));
@@ -998,18 +1386,25 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
 
   console.log(`  rendering ${SECONDS}s offline at ${SR} Hz …`);
   const t0 = Date.now();
-  const res = await page.evaluate(
+  const res = await withTimeout('offline render', Math.max(180000, SECONDS * 4000), () => page.evaluate(
     ([seconds, sampleRate, seed]) => window.__game.audio.renderOffline({ seconds, sampleRate, seed }),
-    [SECONDS, SR, SEED]);
+    [SECONDS, SR, SEED]), null);
+  if (!res) {
+    console.log(`  ${warnings.join('; ')}`);
+    console.log('  nothing to analyse — rerun when the machine is less busy');
+    return;
+  }
   console.log(`  offline render + transfer: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
-  const perFrameMs = await page.evaluate(() => window.__game.audio._bench(4000));
-  const ctxState = await page.evaluate(() => window.__game.audio.state);
+  const perFrameMs = await withTimeout('bench', 60000,
+    () => page.evaluate(() => window.__game.audio._bench(4000)), NaN);
+  const ctxState = await withTimeout('state read', 15000,
+    () => page.evaluate(() => window.__game.audio.state), 'unknown');
 
   /* The contract check calls __game.probe(), which renders the scene twice on
      a software rasteriser and costs minutes. Worth it on a real measurement
      run, not worth it while iterating on a filter cutoff. */
-  const contract = has('fast') ? null : await page.evaluate(() => {
+  const contract = has('fast') ? null : await withTimeout('contract check', 420000, () => page.evaluate(() => {
     const g = window.__game, a = g.audio;
     const missing = ['renderer', 'fps', 'begin', 'setPaused', 'renderOnce', 'walkTo',
       'lookAt', 'info', 'probe'].filter(k => g[k] === undefined);
@@ -1029,7 +1424,7 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
       gustsAhead: a.gusts(a.time, a.time + 120).length,
       probeStable: before === JSON.stringify(g.probe()),
     };
-  });
+  }), null);
 
   const a = analyse(decode(res), res.sampleRate, res);
 
@@ -1069,7 +1464,12 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
   say(`── bed spectrum (median bin level, quiet frames only) ──`);
   say(`  ${a.quietFrames} of ${a.spec.frames} frames qualified as bed`);
   a.bedSpec.forEach(b => say(`  ${(hz(b.f) + ' Hz').padEnd(9)} ${f2(b.db).padStart(8)} dB`));
-  say(`  6-12 kHz bins pinned at the -108 dB display floor: ${f1(a.bedFloorPct)}%`);
+  if (a.bedFloorPct) {
+    say(`  6-12 kHz bed bins at or below: ` + a.bedFloorPct.levels
+      .map((l, i) => `${l} dB ${f1(a.bedFloorPct.pct[i])}%`).join(',  '));
+    say(`  (-102 dB is the readable floor of the plotted colour ramp; the numbers ` +
+        `above it are not floored)`);
+  }
   say('');
   const corrSummary = (m, label) => {
     say(`  ${label}`);
@@ -1089,6 +1489,12 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
   corrSummary(a.corr, 'whole take (weather, footsteps and animals together)');
   say('');
   corrSummary(a.corrStill, 'standing still only — this is the wind bed on its own');
+  if (a.corrWalk) {
+    corrSummary(a.corrWalk, 'walking only — the boots, which are broadband by nature');
+    say(`  the full-take figure falling and then rising again at the widest band ` +
+        `separation is the boots, not a shared gain: the rise is in the walking ` +
+        `half and absent from the standing-still half`);
+  }
   say('');
   say(`── the quiet ───────────────────────────────────────────`);
   say(`  threshold   % samples   % 50ms windows   % windows, standing still`);
@@ -1123,7 +1529,12 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
   say(`  ${a.loudFrames} loud frames searched; detector noise ${f2(a.promNoise)} dB, ` +
       `so the bar is ${f2(a.promBar)} dB over third-octave smoothing`);
   say(`  a real edge tone is loud in gusts and gone in the bed; equal in both is a leak`);
-  if (!a.narrow.length) say(`  none: no bin cleared the bar`);
+  if (!a.loudFrames) {
+    say(`  nothing to search: no gust in this take was loud enough to clear the bed ` +
+        `by 8 dB while the player was still and nothing was calling. The ` +
+        `forced-voice render below cues a strong gust on purpose and measures ` +
+        `the tones there.`);
+  } else if (!a.narrow.length) say(`  none: no bin cleared the bar`);
   for (const nn of a.narrow) {
     say(`  ${String(nn.hz).padStart(5)} Hz  ${f2(nn.prom)} dB in gusts, ` +
         `${f2(nn.bedProm)} dB in the bed  (median-referenced; ` +
@@ -1166,6 +1577,7 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
   if (fsx.gait) {
     const g = fsx.gait;
     say(`  detected      mean ${f2(g.mean)}s  sd ${(g.sd * 1000).toFixed(1)}ms  CV ${f1(g.cv)}%` +
+        `  (robust, IQR-based: ${(g.sdRobust * 1000).toFixed(1)}ms, CV ${f1(g.cvRobust)}%)` +
         `  L/R asymmetry ${f1(g.asymmetryMs)}ms`);
   }
   /* The scheduler's own step times, when the build reports them. A detector
@@ -1177,18 +1589,58 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
     say(`  scheduled     mean ${f2(sg.mean)}s  sd ${(sg.sd * 1000).toFixed(1)}ms  ` +
         `CV ${f1(sg.cv)}%  L/R asymmetry ${f1(sg.asymmetryMs)}ms  ` +
         `(${res.steps.filter(s => s.scuff).length} of ${res.steps.length} scuffs)`);
+    /* Where the two disagree, and why. The detected spread is much the larger
+       number and it is tempting to read it as the real one, but the detector
+       works on an 8 ms envelope of a band-limited signal and the scheduler knows
+       the answer, so any gap between them is instrument error. Matching them one
+       to one says which it is: a run of small offsets is placement error, and a
+       pile of unmatched detections is the detector inventing steps. */
+    const sched = res.steps.map(s => s.t).sort((p, q) => p - q);
+    const det = (a.footsteps.times || []).slice();
+    const offs = [], spurious = [];
+    const taken = new Set();
+    for (const d of det) {
+      let bi = -1, bd = 1e9;
+      for (let i = 0; i < sched.length; i++) {
+        const dd = Math.abs(sched[i] - d);
+        if (dd < bd && !taken.has(i)) { bd = dd; bi = i; }
+      }
+      if (bi >= 0 && bd < 0.20) { taken.add(bi); offs.push((d - sched[bi]) * 1000); }
+      else spurious.push(+d.toFixed(2));
+    }
+    if (offs.length) {
+      const abs = offs.map(Math.abs).sort((p, q) => p - q);
+      say(`  agreement     ${offs.length} of ${det.length} detections matched a ` +
+          `scheduled step; median placement error ${f1(abs[abs.length >> 1])} ms, ` +
+          `p90 ${f1(abs[Math.floor(abs.length * 0.9)])} ms`);
+      say(`                ${sched.length - taken.size} scheduled steps missed, ` +
+          `${spurious.length} detections with no step behind them` +
+          (spurious.length && spurious.length <= 8 ? ` (at ${spurious.join('s, ')}s)` : ''));
+    }
   }
   if (fsx.gait) {
     say(`  comb          ${(sg || fsx.gait).comb.join(' ')}`);
     say(`  survives      ${(sg || fsx.gait).combSurvives} strides above r=0.2` +
         `   (detected train: ${fsx.gait.combSurvives})`);
   }
+  if (fsx.decay) {
+    const d = fsx.decay;
+    say('');
+    say(`  what the step leaves behind — mean of ${d.steps} isolated steps, ` +
+        `above 300 Hz, each normalised to its own peak:`);
+    say(`    ` + [30, 60, 90, 110, 130, 150, 180, 200, 230, 260, 300, 330]
+      .map(ms => `${ms}ms ${f1(d.at(ms))}`).join('  '));
+    say(`    local background ${f1(d.background)} dB below the step; the trace ` +
+        `stands clear of it out to ${d.lastAboveMs} ms`);
+    say(`    returns expected at 76, 91, 111, 128, 152, 181, 204 and 262 ms — ` +
+        `banks, terrace, boulders and a butte face at 13 to 45 m`);
+  }
   say('');
   say(`── hygiene ─────────────────────────────────────────────`);
   say(`  clipped samples      ${res.clipped}`);
   say(`  DC offset            L ${res.dcL.toExponential(2)}  R ${res.dcR.toExponential(2)}`);
   say(`  longest true silence ${f1(a.longestSilentMs)} ms`);
-  say(`  main-thread cost     ${perFrameMs.toFixed(4)} ms per update() call`);
+  say(`  main-thread cost     ${Number.isFinite(perFrameMs) ? perFrameMs.toFixed(4) : 'n/a'} ms per update() call`);
   if (contract) {
     say('');
     say(`── contract ────────────────────────────────────────────`);
@@ -1233,10 +1685,12 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
     const supported = await page.evaluate(() => typeof window.__game.audio.renderVoices === 'function');
     if (!supported) {
       say('  --voices: this build has no renderVoices(); skipped');
-    } else {
+    } else await (async () => {
       console.log('  rendering forced-voice take …');
-      const vr = await page.evaluate(([sampleRate, seed]) =>
-        window.__game.audio.renderVoices({ sampleRate, seed }), [SR, SEED]);
+      const vr = await withTimeout('forced-voice render', 300000, () => page.evaluate(
+        ([sampleRate, seed]) => window.__game.audio.renderVoices({ sampleRate, seed }),
+        [SR, SEED]), null);
+      if (!vr) { say('  --voices: render timed out; skipped'); return; }
       const vx = decode(vr);
       const va = analyse(vx, vr.sampleRate, vr);
       const vfile = path.join(shotsDir, `${tag}_voices.png`);
@@ -1291,13 +1745,40 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
             out.voices.measures[c.kind + '_harmonics'] = h;
           }
         }
+        if (c.measure === 'pitch') {
+          const pt = pitchTrack(vx, vr.sampleRate, c.t + (c.offset || 0), c.span || 2.5,
+            c.f0lo || 250, c.f0hi || 900, c.harmonic || 1);
+          if (pt) {
+            say(`  ${c.kind} (tracked on h${pt.harmonic}, quoted as the fundamental): ` +
+                `${f1(pt.start)} Hz in, peak ${f1(pt.peak)}, ` +
+                `out at ${f1(pt.end)} — glissando ${f1(pt.fallPct)}% down across the sustain ` +
+                `(real coyote 15-40%)`);
+            say(`    vibrato ${f1(pt.vibHz)} Hz at ${f2(pt.vibDepthPct)}% peak depth ` +
+                `(${f2(pt.vibRmsPct)}% RMS; real coyote 4-8 Hz, 3-8%), range ` +
+                `${f1(pt.lo)}-${f1(pt.hi)} Hz over ${pt.frames} voiced frames`);
+            say(`    the fitted waver accounts for ${f2(pt.vibFit)} of the residual ` +
+                `amplitude; the rest is glissando curvature and tracker jitter`);
+            out.voices.measures[c.kind] = pt;
+          } else {
+            say(`  ${c.kind}: not enough voiced frames to track`);
+          }
+        }
         if (c.measure === 'peaks' && c.peaks) {
           const pp = peakProminence(vx, vr.sampleRate, c.t + (c.offset || 0), c.span || 4, c.peaks);
           say(`  rock-edge tones during ${c.kind} (p90 of per-frame prominence, ` +
               `median in brackets):`);
+          /* And where the tone went. An aeolian tone's frequency is the flow
+             velocity over the size of the lip, so across a gust that swings
+             twenty decibels it has to sweep — a tone that sits still is a fixed
+             filter, not an edge. Tracked over the loudest tenth of the frames
+             only, because between gusts there is no tone to track and the
+             tracker would just report the width of its own search band. */
           for (const v of pp) {
+            const gl = peakGlide(vx, vr.sampleRate, c.t + (c.offset || 0), c.span || 4, v.f);
             say(`    ${String(v.f).padStart(5)} Hz  +${f1(v.prom)} dB  ` +
-                `[${f1(v.promMedian)}]  peak bin ${f1(v.peakDb)} dBFS`);
+                `[${f1(v.promMedian)}]  peak bin ${f1(v.peakDb)} dBFS` +
+                (gl ? `  swept ${f1(gl.lo)}-${f1(gl.hi)} Hz, ${f1(gl.semitones)} semitones` : ''));
+            if (gl) v.glide = gl;
           }
           out.voices.measures[c.kind + '_peaks'] = pp;
         }
@@ -1308,8 +1789,13 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
           const at = c.t + (c.offset || 0);
           const W = Math.round(0.02 * vr.sampleRate);
           const quietWins = [];
-          for (let w = Math.round((at + 5) * vr.sampleRate / W);
-            w < Math.round((at + 9) * vr.sampleRate / W) && (w + 1) * W < vb.length; w++) {
+          /* Measured *before* the cue, not after. The window after it ran into
+             the next cue — the wren, four seconds of it — and put the band floor
+             thirty decibels high, at which point the gate sat above every
+             reflection and the tail measured as zero arrivals. The lead-in to a
+             cue is quiet by construction. */
+          for (let w = Math.round((c.t - 5) * vr.sampleRate / W);
+            w < Math.round((c.t - 1.5) * vr.sampleRate / W) && (w + 1) * W < vb.length; w++) {
             let s = 0;
             for (let i = w * W; i < (w + 1) * W; i++) s += vb[i] * vb[i];
             quietWins.push(db(Math.sqrt(s / W)));
@@ -1318,9 +1804,22 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
           const ar = arrivals(vb, vr.sampleRate, at, at + 3.4, floor);
           /* Direct against first reflection. At half a kilometre across open
              desert there is a direct path and it arrives first and loudest;
-             a fully-wet routing gets this backwards. */
-          const direct = arrivals(vb, vr.sampleRate, at - 1.2, at, floor);
-          const dLvl = Math.max(...direct.peaks.map(p => p.db), -200);
+             a fully-wet routing gets this backwards.
+             The direct level is the loudest window inside the howl, found by
+             looking. Running the arrival detector over it instead was a category
+             error: that detector wants local maxima standing clear of their
+             neighbours, and a sustained howl has none, so it returned whatever
+             small bump it could find and the ratio came out a decibel when it
+             should have been ten. */
+          const dFrom = c.t + (c.directFrom != null ? c.directFrom : -1.2 + (c.offset || 0));
+          const dTo = c.t + (c.directTo != null ? c.directTo : (c.offset || 0));
+          let dLvl = -200;
+          for (let w = Math.round(dFrom * vr.sampleRate / W);
+            w < Math.round(dTo * vr.sampleRate / W) && (w + 1) * W < vb.length; w++) {
+            let s = 0;
+            for (let i = w * W; i < (w + 1) * W; i++) s += vb[i] * vb[i];
+            dLvl = Math.max(dLvl, db(Math.sqrt(s / W)));
+          }
           const rLvl = ar.peaks.length ? Math.max(...ar.peaks.map(p => p.db)) : -200;
           say(`  tail after ${c.kind}: audible for ${f2(ar.audibleTail)} s, ` +
               `RT60 ${f2(ar.rt60)} s, ${ar.peaks.length} discrete arrivals ` +
@@ -1328,6 +1827,19 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
           if (dLvl > -200 && rLvl > -200) {
             say(`    direct path ${f1(dLvl)} dBFS, loudest reflection ${f1(rLvl)} dBFS ` +
                 `→ direct leads by ${f1(dLvl - rLvl)} dB`);
+            /* What geometry allows, printed next to what was measured, because
+               the two are easy to confuse and the confusion cuts both ways.
+               For a source half a kilometre out the direct and reflected paths
+               are nearly the same length, so the reflection is only a few
+               decibels down — this is the one case where a loud slap is
+               physical. For a source at your feet it is not: a boot's own
+               reflection off a wall D away travels 2D against a direct path of
+               about 1.6 m, which is thirty decibels or more. */
+            const extra = 240, src = 500;
+            const geo = 20 * Math.log10((src + extra) / src) + 1.8 + extra * 0.006;
+            say(`    geometry for a source ${src} m out with a reflector adding ` +
+                `${extra} m of path: ${f1(geo)} dB of spreading, reflection and ` +
+                `absorption. A footstep is the opposite case — see the step decay above.`);
           }
           const ref = c.ref || 0;
           for (const pk of ar.peaks.slice(0, 8)) {
@@ -1338,7 +1850,14 @@ await run({ width: 640, height: 360 }, async ({ page, errs }) => {
         }
       }
       say(`  spectrogram → shots/${path.basename(vfile)}`);
-    }
+    })();
+  }
+
+  if (warnings.length) {
+    say('');
+    say(`── warnings ────────────────────────────────────────────`);
+    for (const w of warnings) say(`  ${w}`);
+    out.warnings = warnings;
   }
 
   fs.writeFileSync(path.join(shotsDir, `${tag}_audio.json`), JSON.stringify(out, null, 2));
