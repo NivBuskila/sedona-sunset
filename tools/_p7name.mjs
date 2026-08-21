@@ -65,13 +65,30 @@ function bandCol(im, x) {
   }
   runs.push(cur);
   runs.sort((p, q) => p - q);
+  /* The longest run is a bad statistic and it took a wasted measurement to see
+     why. Dither does not guarantee short runs: where the underlying value sits
+     near an integer, a 1 LSB triangular offset still rounds to the same level
+     about three times in four, so a run of twelve turns up by chance somewhere in
+     nine hundred rows whether the frame is dithered or not. What separates the
+     two cleanly is the *step density* — how often adjacent pixels differ at all.
+     An undithered staircase with a 12-pixel tread has one step every twelve
+     pixels and is otherwise flat, so its mean absolute row-to-row difference is
+     about 0.08 code values and 92% of neighbouring pairs are identical. A
+     dithered ramp of the same slope has a step almost everywhere. */
+  let flat = 0, dsum = 0;
+  for (let i = 1; i < g.length; i++) {
+    const d = Math.abs(Math.round(g[i]) - Math.round(g[i - 1]));
+    dsum += d;
+    if (d === 0) flat++;
+  }
   return {
     n: g.length,
     levels: levels.size,
     span: Math.abs(g[g.length - 1] - g[0]),
     maxRun: runs[runs.length - 1],
-    p90Run: runs[Math.floor(runs.length * 0.9)],
     medRun: runs[runs.length >> 1],
+    stepCV: dsum / (g.length - 1),
+    flatPct: 100 * flat / (g.length - 1),
   };
 }
 
@@ -82,12 +99,15 @@ function band(im) {
   if (!rows.length) return null;
   const pick = (k) => rows.map((r) => r[k]).sort((p, q) => p - q);
   const mx = pick('maxRun'), lv = pick('levels'), sp = pick('span');
+  const st = pick('stepCV'), fl = pick('flatPct');
   return {
     cols: rows.length,
     worstRun: mx[mx.length - 1],
     medMaxRun: mx[mx.length >> 1],
     medLevels: lv[lv.length >> 1],
     medSpan: sp[sp.length >> 1],
+    stepCV: st[st.length >> 1],
+    flatPct: fl[fl.length >> 1],
     /* Levels actually used against levels available. A perfect dither uses every
        code value in the span; a staircase uses a fraction of them. */
     fill: lv[lv.length >> 1] / Math.max(1, Math.round(sp[sp.length >> 1]) + 1),
@@ -140,9 +160,19 @@ function corners(A, B) {
  * arguing from a corner patch cannot: the corners of this scene are dark and its
  * centre is bright, so level and radius are confounded in exactly the way that
  * makes a tone curve look like a graduated filter. */
-function attrib(A, B) {
+function attrib(A, B, bySat) {
   const LEV = [0, 8, 16, 24, 32, 48, 72, 110, 160, 256];
-  const RAD = [0, 0.35, 0.7, 1.05, 1.5];
+  /* Radius, or HSV saturation of the control pixel. The second axis exists
+     because isolating the vignette by shooting it against itself showed a 2.3%
+     corner pull where the graded-over-ungraded ratio showed 17%, so the corner is
+     mostly not a light loss and the remaining candidate is a chroma term. The
+     split tone is normalised so that dot(tint, Rec.709) is one, which makes it
+     luminance-exact on a *grey* pixel and on nothing else: a cool tint raises B
+     at weight 0.072 while lowering R and G at 0.213 and 0.715, so on a saturated
+     pixel it loses luminance in proportion to how saturated it is. If that is
+     what is pulling the corner, the ratio falls with saturation and this axis
+     will show it where radius cannot. */
+  const RAD = bySat ? [0, 0.15, 0.30, 0.50, 1.01] : [0, 0.35, 0.7, 1.05, 1.5];
   const cx = A.w / 2, cy = A.h / 2, rmax = Math.hypot(cx, cy);
   const sum = [], cnt = [];
   for (let i = 0; i < LEV.length - 1; i++) { sum.push(new Float64Array(RAD.length - 1)); cnt.push(new Float64Array(RAD.length - 1)); }
@@ -152,7 +182,14 @@ function attrib(A, B) {
       const lb = lum(B, x, y);
       if (lb < 1) continue;
       const ratio = lum(A, x, y) / lb;
-      const rn = Math.hypot(x - cx, y - cy) / rmax * 1.5;
+      let rn;
+      if (bySat) {
+        const r = at(B, x, y, 0), g = at(B, x, y, 1), b = at(B, x, y, 2);
+        const mx = Math.max(r, g, b);
+        rn = mx > 0 ? (mx - Math.min(r, g, b)) / mx : 0;
+      } else {
+        rn = Math.hypot(x - cx, y - cy) / rmax * 1.5;
+      }
       let li = 0; while (li < LEV.length - 2 && lb >= LEV[li + 1]) li++;
       let ri = 0; while (ri < RAD.length - 2 && rn >= RAD[ri + 1]) ri++;
       sum[li][ri] += ratio; cnt[li][ri]++;
@@ -181,21 +218,22 @@ function black(im) {
 if (a.includes('--band')) {
   console.log('\n  sky banding: run length of one code value down a column');
   console.log('  ' + 'frame'.padEnd(30) +
-              'cols  worst run  median worst  levels  span  fill');
+              'worst run  median worst   step cv   flat%   span');
   for (const f of files) {
     const b = band(load(f));
     if (!b) { console.log('  ' + short(f).padEnd(30) + '  no sky found'); continue; }
     console.log('  ' + short(f).padEnd(30) +
-      String(b.cols).padStart(4) +
-      String(b.worstRun).padStart(11) +
+      String(b.worstRun).padStart(9) +
       String(b.medMaxRun).padStart(14) +
-      String(b.medLevels).padStart(8) +
-      b.medSpan.toFixed(0).padStart(6) +
-      (b.fill * 100).toFixed(0).padStart(5) + '%');
+      b.stepCV.toFixed(3).padStart(10) +
+      b.flatPct.toFixed(0).padStart(7) + '%' +
+      b.medSpan.toFixed(0).padStart(7));
   }
-  console.log('\n  fill is levels used against levels available across the span.');
-  console.log('  a dithered ramp approaches 100%; a staircase is the reciprocal');
-  console.log('  of its tread length.\n');
+  console.log('\n  step cv is the mean row-to-row difference and flat% is how often');
+  console.log('  there is none. A staircase is near 0.08 and 92%; a ramp carrying a');
+  console.log('  1 LSB dither steps almost everywhere. Run length cannot tell them');
+  console.log('  apart: at 3 chances in 4 of rounding the same way, a 12-pixel run');
+  console.log('  turns up by luck in 900 rows either way.\n');
 }
 
 if (a.includes('--corner')) {
@@ -215,11 +253,13 @@ if (a.includes('--corner')) {
 
 if (a.includes('--attrib')) {
   const A = load(files[0]), B = load(files[1]);
-  const t = attrib(A, B);
-  console.log(`\n  graded over ungraded, by control level and by radius`);
+  const bySat = a.includes('--sat');
+  const t = attrib(A, B, bySat);
+  console.log(`\n  graded over ungraded, by control level and by ${bySat ? 'saturation' : 'radius'}`);
   console.log(`  ${short(files[0])} over ${short(files[1])}`);
   let hdr = '  ' + 'level cv'.padEnd(12);
-  for (let r = 0; r < t.RAD.length - 1; r++) hdr += `r ${t.RAD[r].toFixed(2)}-${t.RAD[r + 1].toFixed(2)}`.padStart(13);
+  const ax = bySat ? 's' : 'r';
+  for (let r = 0; r < t.RAD.length - 1; r++) hdr += `${ax} ${t.RAD[r].toFixed(2)}-${t.RAD[r + 1].toFixed(2)}`.padStart(13);
   console.log(hdr + '        all');
   for (let l = 0; l < t.LEV.length - 1; l++) {
     if (!t.lvCnt[l]) continue;

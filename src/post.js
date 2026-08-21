@@ -144,11 +144,26 @@ export const POST_DEFAULTS = {
      face sat at 33 code values and -10% on one whose face sat at 14. So
      **toeTop wants to be about two and a half times the shaded face level**,
      and it needs revisiting whenever the fill moves. At the present face of
-     ~13 code values 0.111 would be right, and 0.080 is deliberately under it:
-     with the slope at the origin given up, a shallower anchor is the only
-     remaining way to hold the gate near the middle of its band rather than at
-     the top. `#toe=` and `#toes=` sweep it. */
-  toeTop: 0.080, toeSlope: 1.00,
+     ~13 code values that is 0.111.
+
+     With the origin slope pinned at 1, toeTop became the single dial on the whole
+     trade and it is worth writing the numbers down, because the two things it
+     trades are a visible defect against a metric. The toe has to meet the
+     contrast line at the anchor, and the contrast line is what actually crushes
+     the bottom — a pivoted gain at k 1.03 and p 0.5 costs 29% at 12 code values
+     all by itself — so a *higher* anchor means the toe covers more of the bottom
+     and lifts more of it back. Predicted through tools/_p7toe.mjs, at 12 cv:
+
+       anchor 0.080   gate 0.228   dark end at 0.82 of ungraded
+       anchor 0.111   gate 0.237   dark end at 0.90
+       anchor 0.150   gate 0.245   dark end at 0.94
+
+     0.111 is the choice. The gate's band is 0.15-0.25 and 0.237 is inside it with
+     the ungraded frame at 0.258, so the grade is still what brings it into band;
+     the crush is what a critique could see. If the gate has to come back toward
+     0.20 this is the dial, and the cost of moving it is legible above rather than
+     something the next person has to rediscover. `#toe=` and `#toes=` sweep it. */
+  toeTop: 0.111, toeSlope: 1.00,
 
   /* Defocus. A physical thin-lens circle of confusion, so the shape of the
      falloff is not a free parameter: 24 mm at f/11 focused at 20 m on a 24 mm
@@ -511,6 +526,14 @@ export function createPost({ renderer, camera, atmo, sun }) {
   };
   const P = { ...POST_DEFAULTS };
   P.grain = num('grain', P.grain);
+  /* `#vig=0` exists so the vignette can be measured against the rest of the
+     chain rather than against the ungraded frame. Every other radial term — the
+     aberration gate, the flare's veil, the bloom's spill from a bright sky — also
+     varies with radius, so a graded-over-ungraded ratio that falls toward a
+     corner is not evidence about the vignette specifically. Pairing graded
+     against graded-with-this-off is, and it is the only way to attribute the
+     corner without shooting the whole chain term by term. */
+  P.vignette = num('vig', P.vignette);
   P.gradeAmount = num('grade', P.gradeAmount);
   /* A multiplier on the three flare gains, for one specific job: the sun in
      this scene is below the butte skyline from every standard viewpoint, so it
