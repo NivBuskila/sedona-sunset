@@ -190,11 +190,24 @@ try {
     const shimmerOn = () => { atmo.setShimmer(true); };
     const post = g._post;
     /* System 7's chain, in two ablations rather than one, because they answer
-       different questions. -post hands the frame back to System 5's blit
-       entirely, which is what the whole chain costs. -postopt keeps the grade,
-       vignette and grain — one pass that has to exist, since something has to
-       tone map — and drops the low-resolution bloom/flare chain and the
-       defocus gather, which is what the quality ladder can actually spend. */
+       different questions.
+       -postopt keeps the grade, vignette and grain — one pass that has to exist,
+       since something has to tone map — and drops the low-resolution bloom/flare
+       chain and the defocus gather, which is what the quality ladder can actually
+       spend. That column still means what it says.
+       -post no longer does, and the reason is worth knowing before reading it.
+       It used to hand the frame back to System 5's blit, which is what made it a
+       measure of the chain. Since the depth handover their ownership is a latch
+       set by the first renderShafts call, and the latch is sticky for the life of
+       the page — so toggling post off at *runtime*, which is what this does, no
+       longer gives the frame back to anybody. Nothing draws the multisampled
+       target and nothing marches the in-scatter, and the column reads the chain
+       plus the 2.0 ms march plus the 4x resolve. Measured at 3.77 ms against a
+       chain that costs 0.4.
+       A `#nopost` page load is unaffected, because the latch is never set on a
+       build whose chain was disabled at construction, which is the case the
+       control captures actually use. Restoring this column needs an un-latch on
+       System 5's side. */
     const postLevel = post ? post.level : null;
 
     const variants = {
