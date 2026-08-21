@@ -196,9 +196,35 @@ const AOD550 = 0.032;
 const ANGSTROM = 0.8;
 /* Single-scattering albedo of the aerosol. Mineral dust absorbs a little. */
 const MIE_ALBEDO = 0.90;
-/* Henyey-Greenstein asymmetry. 0.76 is the standard continental value and is
-   what makes the aureole around the sun a few degrees wide rather than a point. */
-export const MIE_G = 0.76;
+/* Henyey-Greenstein asymmetry. 0.76 is the standard continental value, and the
+   claim that it "makes the aureole around the sun a few degrees wide" was the
+   thing that turned out not to be true: a single HG lobe at 0.76 falls seven per
+   cent between half a degree from the sun and four degrees from it, which is not
+   an aureole but a tabletop three tens of degrees across. The rendered sky
+   measured 241 cv at half a degree and 237 at four, with the disc sitting on it
+   at 255 - four per cent of contrast, which is why the critique read the sun as a
+   blemish on white paper rather than as a light source.
+   One HG term cannot do this job, and the reason is physical rather than a matter
+   of picking a better g. A real aerosol phase function has two features an order
+   of magnitude apart in angle: a diffraction peak from particles large compared
+   with the wavelength, concentrated within a couple of degrees of forward, and a
+   broad refractive bulk spanning tens of degrees. HG is a one-parameter family
+   and can be fitted to one or the other, never both. Raising g to chase the peak
+   drags the bulk in with it and empties the rest of the sky; lowering it to hold
+   the bulk flattens the peak into the tabletop above. src/aerial.js has carried
+   two terms for airlight since it was written for exactly this reason - the dome
+   was the one place still on a single lobe.
+   So: a narrow lobe at 0.96 carrying a quarter of the weight, over a broad lobe
+   dropped to 0.70 carrying the rest. Each HG term integrates to unity over the
+   sphere, so splitting the weight redistributes the aerosol's scattered light in
+   angle without creating or destroying any of it - which is the whole reason this
+   is affordable. Measured in tools/_skydesign.mjs: the fall from half a degree to
+   eight goes from 14 cv to 48, and the dome's contribution to a horizontal
+   surface moves 0.08%, so the skylight fill and the shadow gate that depends on
+   it do not move at all. */
+export const MIE_G = 0.70;
+export const MIE_G_NARROW = 0.96;
+export const MIE_W_NARROW = 0.25;
 /* Dobson units. 300 is the mid-latitude annual mean. Its Chappuis band is
    centred at 600 nm, so ozone takes a bite out of the *orange*, and it is the
    reason a clear zenith stays blue-violet at sunset instead of going grey. */
@@ -409,10 +435,13 @@ const SUN_SPEC = new Float64Array(NLAM);       // spectral irradiance, normal in
 /* ── the sky ───────────────────────────────────────────────────────────── */
 
 const phaseR = (c) => 0.05968310 * (1 + c * c);          // 3/(16 pi)
-const phaseM = (c) => {
-  const g = MIE_G, g2 = g * g;
-  return (1 - g2) / (12.5663706 * Math.pow(1 + g2 - 2 * g * c, 1.5));
+const hg1 = (c, g) => {
+  const g2 = g * g;
+  return (1 - g2) / (12.5663706 * Math.pow(Math.max(1e-4, 1 + g2 - 2 * g * c), 1.5));
 };
+/* Two terms, narrow over broad. Used by the multiple-scattering solve and by the
+   fill integration as well as the dome, so all three stay the same atmosphere. */
+const phaseM = (c) => (1 - MIE_W_NARROW) * hg1(c, MIE_G) + MIE_W_NARROW * hg1(c, MIE_G_NARROW);
 
 /* March one view ray and return spectral radiance from Rayleigh single
    scattering plus the isotropic multiple-scattering source `msJ`. The Mie

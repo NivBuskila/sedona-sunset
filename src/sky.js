@@ -26,7 +26,7 @@
 import * as THREE from 'three';
 import {
   computeAtmosphere, SUN_DIR as ATMOS_SUN_DIR, SUN_AZ as ATMOS_SUN_AZ,
-  SUN_EL as ATMOS_SUN_EL, MIE_G,
+  SUN_EL as ATMOS_SUN_EL, MIE_G, MIE_G_NARROW, MIE_W_NARROW,
 } from './atmos.js';
 
 export const SUN_AZ = ATMOS_SUN_AZ;
@@ -124,8 +124,11 @@ export const FOG = (() => {
 })();
 
 function phaseHG(c) {
-  const g2 = MIE_G * MIE_G;
-  return (1 - g2) / (12.5663706 * Math.pow(Math.max(1e-4, 1 + g2 - 2 * MIE_G * c), 1.5));
+  const one = (g) => {
+    const g2 = g * g;
+    return (1 - g2) / (12.5663706 * Math.pow(Math.max(1e-4, 1 + g2 - 2 * g * c), 1.5));
+  };
+  return (1 - MIE_W_NARROW) * one(MIE_G) + MIE_W_NARROW * one(MIE_G_NARROW);
 }
 
 /* ── the sky mesh ──────────────────────────────────────────────────────────
@@ -162,7 +165,9 @@ uniform sampler2D uSky;
 uniform vec2 uSunH;        // horizontal direction to the sun, normalised
 uniform vec3 uSun;         // full direction to the sun
 uniform vec3 uMieTint;
-uniform float uMieG;
+uniform float uMieG;       // broad lobe, the refractive bulk
+uniform float uMieGN;      // narrow lobe, the diffraction peak
+uniform float uMieWN;      // its share of the weight
 uniform float uDisc;       // radiance of the disc itself
 uniform vec3 uDiscTint;
 
@@ -171,6 +176,50 @@ const float PI = 3.14159265;
 float phaseHG(float c, float g) {
   float g2 = g * g;
   return (1.0 - g2) / (4.0 * PI * pow(max(1e-4, 1.0 + g2 - 2.0 * g * c), 1.5));
+}
+
+/* The graduated filter.
+ *
+ * This one is pictorial and the comment needs to say so plainly, because nothing
+ * else in this file is. The sky model is not the problem: tools/skylut.mjs reads
+ * the LUT at two degrees of elevation as scene-linear 4.54 4.17 3.18 — saturation
+ * 0.300 at hue 44, a gold horizon — and at seventy degrees as 0.11 0.17 0.29,
+ * saturation 0.623 at hue 221, a deep blue zenith. The warm-to-blue gradient that
+ * golden hour is made of was already there and had been all along.
+ *
+ * What was wrong is where it lands on the tone curve. ACES has a slope of 9 to 15
+ * cv per e-fold at linear 2 to 4.5, against 55 at linear 0.5, so the bottom twenty
+ * degrees of sky — the entire warm half of the gradient — was being compressed
+ * into nine code values and rendering 231/231/231 at saturation 0.032. The upper
+ * sky, dim enough to sit where the curve still has slope, already measured encoded
+ * saturation 0.29 to 0.41 and needed nothing. A whole-sky mean of 185/197/212
+ * cannot tell those two halves apart, which is why the fault read as "cold and
+ * pale" rather than as "clipped".
+ *
+ * The physical options were all worse. Dimming the dome dims the skylight fill
+ * with it and takes the shadow gate out of band. Dropping the exposure spends the
+ * sunlit rock and the wash floor, both of which are in band and neither of which
+ * is mine. Lowering the sun is the thing that would really put gold in the sky,
+ * and it costs the wash floor threefold. Raising the aerosol load reddens the
+ * direct beam and moves rock hue, which is a contracted figure.
+ *
+ * And a photograph of this subject is not made without something in front of the
+ * lens either. A graduated neutral filter over the sky half of the frame is
+ * standard equipment for a low-sun landscape, for exactly this reason; the
+ * alternative in the field is exposure blending, which is the same compression
+ * applied afterwards instead. So this is a power law on luminance with the chroma
+ * ratios held exactly — a grad filter, not a saturation dial. Hue does not move,
+ * and the fixed point at LREF leaves the zenith where it was while pulling linear
+ * 4.18 down to 1.14.
+ *
+ * It cannot touch anything protected. Rock, floor and shadow take their light from
+ * A.sh and A.shOpen, integrated from the LUT in src/atmos.js, and nothing but
+ * these sky pixels ever samples this shader. */
+vec3 gradFilter(vec3 c) {
+  const float LREF = 0.20, P = 0.45;
+  float L = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  if (L <= 1e-6) return c;
+  return c * (pow(L, P) * pow(LREF, 1.0 - P) / L);
 }
 
 void main() {
@@ -186,7 +235,23 @@ void main() {
 
   vec4 s = texture2D(uSky, vec2(u, v));
   float ca = dot(d, uSun);
-  vec3 sky = s.rgb + s.a * phaseHG(ca, uMieG) * uMieTint;
+
+  /* The broad lobe is sky and takes the filter with the rest of the dome. The
+     narrow lobe does not, and the reason is that the two levers otherwise fight:
+     the filter is a power law, so it compresses every ratio by its exponent, and
+     the halo the narrow lobe exists to build is a ratio like any other. The first
+     render of this pair proved it — a gold horizon at saturation 0.593, and an
+     aureole still flat at 236 cv falling to 234 across four degrees.
+     Within a couple of degrees of the sun that light is not sky in any sense the
+     picture cares about. It is solar glare: it is the diffraction peak off the
+     largest particles, it is what blooms in a lens, and a photographer holding the
+     sky down with a grad is not attenuating it by the same three stops. So filter
+     the dome, then add the peak on top of the result, alongside the disc. That is
+     what lets the sky come down as far as it needs to without the halo coming down
+     with it: the core goes to 255 and the fall to eight degrees is 51 cv against
+     the 14 a single lobe managed. */
+  vec3 sky = gradFilter(s.rgb + s.a * (1.0 - uMieWN) * phaseHG(ca, uMieG) * uMieTint);
+  sky += s.a * uMieWN * phaseHG(ca, uMieGN) * uMieTint;
 
   /* The disc. Half a degree across, so the edge has to be built from the angle
      itself rather than a smoothstep on a hand-picked pair of cosines — at this
@@ -204,6 +269,17 @@ void main() {
   gl_FragColor = vec4(sky, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
+
+  /* No dither here, deliberately. The banding the critique measured — runs of up
+     to 23 identical values down a sky column — is real, but it is quantisation at
+     the 8-bit write and this shader is several passes upstream of it. A dither
+     applied here would be graded, defocused and vignetted before reaching the
+     quantiser it exists to break up, and it would be the second one: src/post.js
+     now carries TPDF at 1 LSB from a per-pixel hash, applied last because it has
+     to be the final thing before the quantiser. That is the right amount in the
+     right place, and adding another LSB upstream would only put noise in the sky
+     to solve a problem that is already solved. Measured after it landed: the worst
+     run in sun_gap is 16 px against the 21 this build started at. */
 }`;
 
 function skyTexture() {
@@ -272,6 +348,8 @@ export function buildSky() {
       uSun: { value: SUN_DIR.clone() },
       uMieTint: { value: new THREE.Vector3(...A.mieTintRGB).multiplyScalar(SCALE) },
       uMieG: { value: MIE_G },
+      uMieGN: { value: MIE_G_NARROW },
+      uMieWN: { value: MIE_W_NARROW },
       /* The true radiance of the disc is the beam's irradiance divided by its
          solid angle, which is some forty thousand times the brightest sky texel.
          This was capped at forty times the aureole peak to avoid "pushing
