@@ -34,6 +34,7 @@ const arg = (k, d) => {
 };
 const W = arg('w', 384), H = arg('h', 384);
 const SUNEL = arg('sun', 8) * Math.PI / 180;
+const EXPOSE = arg('expose', 0);
 const oi = process.argv.indexOf('--only');
 const ONLY = oi < 0 ? 'all' : process.argv[oi + 1];
 
@@ -185,7 +186,7 @@ function probe(mpp) {
       let gx = (gr[1] - 0.5) * 1.9, gy = (gr[2] - 0.5) * 1.9;
       const sTerm = Math.max(0, Math.min(1, sl[2]));   // planar wall, one value
       const relW = 1.0 * (0.32 + 0.68 * sTerm);
-      const wgt = 0.72 * (0.06 + 0.94 * sTerm);
+      const wgt = 0.88 * (0.06 + 0.94 * sTerm);
       let Nx = nx * relW, Ny = ny * relW;
       Nx = Nx * (1 - wgt) + gx * wgt; Ny = Ny * (1 - wgt) + gy * wgt;
       let Nz = Math.sqrt(Math.max(1e-4, 1 - Nx * Nx - Ny * Ny));
@@ -199,7 +200,7 @@ function probe(mpp) {
       if (!kC) { Nx *= kG ? 1 : 0; Ny *= kG ? 1 : 0; }
       const lum = Math.max(0.40, Math.min(1.80,
         (1 + (lumC / MEAN - 1) * 0.88 * kC) * (1 + (lumF / MEAN - 1) * 0.62 * kF)
-        * (1 + (gr[0] - 0.5) * 1.55 * kG)));
+        * (1 + (gr[0] - 0.5) * 1.85 * kG)));
       const ao = (kC ? Math.max(0.18, m4[0]) : 1) * (kG ? (0.25 + 0.75 * gr[3]) : 1);
       Nz = Math.sqrt(Math.max(1e-4, 1 - Nx * Nx - Ny * Ny));
 
@@ -207,7 +208,18 @@ function probe(mpp) {
       /* One grazing key plus a flat ambient at a fifth of it, which is roughly
          the ratio a low sun against an open sky dome gives on a canyon wall. */
       const L = 0.30 * lum * (ndl * 1.0 + 0.20 * ao);
-      out[py * W + px] = Math.max(0, Math.min(1, srgb(L)));
+      let v = Math.max(0, Math.min(1, srgb(L)));
+      /* --expose scales the frame to a target mean and then quantises to eight
+         bits, which is what a capture does. It is here because hf/lf is only
+         exposure-invariant in the continuum: a gradient is a difference, and once
+         the difference approaches one code value the fine content is truncated
+         while the coarse content is not, so the ratio falls with exposure even
+         though the material has not changed. At the mean of 0.11 the wall views
+         currently sit at, a 14% per-pixel contrast is four code values wide and
+         everything under it is gone. Worth knowing before spending a round chasing
+         a number that another system's exposure is holding down. */
+      if (EXPOSE > 0) v = Math.round(Math.min(1, v * (EXPOSE / 0.50)) * 255) / 255;
+      out[py * W + px] = v;
     }
   }
   return stats(out, W, H);

@@ -1423,11 +1423,17 @@ vec4 gr = mix(grA, grB, gTw);
    map's histogram is not something to let multiply an albedo unbounded. */
 float lumC = dot(rkA, vec3(0.299, 0.587, 0.114));
 float lum = mix(1.0, lumC / uRockLum, 0.88)
-          * mix(1.0, rkA2 / uRockLum, 0.16 + 0.46 * grainF)
+/* The second, four-times-finer reading of the rock map, weighted up. Isolated in
+   the probe it is the highest-frequency thing in the composition — 0.62 at the
+   close face against 0.43 for the coarse reading — and it was contributing at a
+   sixth. It is also the only term that carries the *lamina* structure at a scale
+   where laminae are a few pixels rather than a few tens, which is the band the
+   close-up was missing between the grain and the bedding. */
+          * mix(1.0, rkA2 / uRockLum, 0.26 + 0.58 * grainF)
 /* Same reasoning as the cavity weight below: a shaded face has no direct light
    for a normal to modulate, so on those facets the grain has to come through as
    tone and occlusion or it does not come through at all. This is the tone half. */
-          * (1.0 + (gr.r - 0.5) * (1.55 + 0.75 * (1.0 - sTerm)));
+          * (1.0 + (gr.r - 0.5) * (1.85 + 0.85 * (1.0 - sTerm)));
 lum = clamp(lum, 0.40, 1.80);
 
 /* Behind the rim, whatever bed capped the summit is buried under its own
@@ -1816,7 +1822,7 @@ vec3 wN = normalize(mix(gN, nDet, relW));
    the reason set out below — these are millimetres of relief and at grazing
    incidence they occlude each other completely rather than sparkling. */
 vec3 gNrm = domApply((gr.gb - 0.5) * 1.9, gN);
-wN = normalize(mix(wN, gNrm, 0.72 * (0.06 + 0.94 * sTerm)));
+wN = normalize(mix(wN, gNrm, 0.88 * (0.06 + 0.94 * sTerm)));
 /* Only the soft contacts, which the mesh deliberately did not step, and only as a
    profile whose derivative is bounded. Everything hard is geometry now: a step
    function put through dFdx is a one-pixel black line beside a one-pixel white
