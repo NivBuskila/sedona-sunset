@@ -277,9 +277,39 @@ and was never live at the artefact. Both changes were reverted; the footprint ba
 limit is written up in place because the reasoning behind it is sound and reusable
 even though it fixed nothing here — see the process note below.
 
-**Still open**, and narrowed to: whatever perturbs `wN` on a bank, which is the
-`mix(gWN, rockWN, rockW)` blend and what feeds it. Not chased further; the budget for
-a far-field artefact at 270 m was spent.
+**Where it is not, second pass.** Three more renders, each checked for liveness by
+diffing against the unablated frame — because one of them was not live and would
+otherwise have been read as an exclusion:
+
+- **The wall-rock branch, `rockWN` and the `rockW` blend.** Substituting `gWN` for the
+  blended normal changed **1.98%** of pixels at a mean of 0.05, i.e. nothing. That is
+  not an exclusion by ablation, it is an exclusion *by construction*: `rockW` is
+  `wallM * (...)` and `wallM` is `smoothstep(0.06, 0.42, vWall)`, which is ~0 on this
+  bank, so the whole branch was already inert there. Worth stating plainly because the
+  render looked like a clean negative and was not one.
+- **The steep-ground reprojection normal** (`pN`, the two planar dirt projections
+  blended by `pw`). Ablated, **31.93%** of pixels differing at 2.59, so thoroughly
+  live. Lattice unchanged. This was the best structural candidate — two projections of
+  one texture blended near 50/50 is a textbook interference pattern — and it is wrong.
+- **The sand ripple normal** (`sandN`). Ablated, **22.09%** differing at 1.17, live.
+  Lattice unchanged. Chased because the sand map's relief is documented as "a ripple
+  train at a quarter of a metre" and the dots measure ~24 cm; the match was exact and
+  meant nothing.
+
+**Still open**, now narrowed to two things inside `gWN`:
+
+1. **`dirtN`** — the base ground normal, `mix` of a 2.6 m and a 4.3 m tile rotated 0.83
+   rad apart. Two tilings blended is the same interference argument that made the
+   reprojection attractive, and unlike its albedo sibling `dirtA` it is fetched with no
+   LOD bias.
+2. **The two `bumpFrom` calls** — `crackH` (desiccation, `panW`-gated) and the bank
+   lamination (`bankW`-gated, so live here). `bumpFrom` differentiates a procedural
+   scalar in screen space, which is the same class of instrument as the `fwidth` trap
+   below: once the scalar it is differentiating is itself aliasing, the derivative is
+   not small, it is *wrong*, and wrong in a spatially regular way.
+
+Not chased further; the budget for a far-field artefact at 270 m was three renders and
+they are spent.
 
 ## Three process notes from chasing it
 
@@ -295,14 +325,33 @@ in one render at **z between −280 and −256, where the rows are 0.48 m**. A w
 diagnosis, an arithmetic case and a fix were built on a guessed coordinate. If a
 conclusion depends on where something is, spend the one render that measures it.
 
-**fwidth of a phase under-reports exactly where it matters.** `1.0 - smoothstep(0.22,
-0.55, fwidth(bpN))` is a finite difference of a periodic function, and it wraps: a comb
-advancing nearly one cycle per pixel differences to nearly zero, so the gate reads wide
-open precisely where the component aliases worst. Any band limit of this shape is
-strongest where there is nothing to guard against and absent where there is. Compare a
-derivative of *position* — `footMin`, which is smooth and cannot wrap — against the
-wavelength instead. Not verified as a fix for anything yet, so it is recorded in the
-comment rather than landed.
+**Aliasing, moiré, shimmer: a screen-space derivative of a repeating signal is not a
+safe band limit, and fails silently.** Keywords for whoever hits this next: aliasing,
+moiré, moire, shimmer, sparkle, regular dot pattern, lattice, `fwidth`, `dFdx`,
+`dFdy`, `bumpFrom`, mip selection, Nyquist.
+
+The pattern to recognise is a band limit that gates a repeating term on the screen-space
+derivative *of that term's own phase or height*, e.g. `1.0 - smoothstep(0.22, 0.55,
+fwidth(bpN))`. A finite difference of a periodic function wraps. While the signal
+advances less than half a cycle per pixel the difference measures it correctly and the
+guard works; past that it folds, and a comb running at nearly one cycle per pixel
+differences to nearly **zero**. The gate then reads "slowly varying, keep it" at exactly
+the moment the term has become pure moiré. Such a guard is strongest where there is
+nothing to guard against and absent where there is, which is why it looks correct in
+every near-field test anyone runs against it.
+
+The same objection applies to any `bumpFrom`-style normal built from `dFdx`/`dFdy` of a
+procedural scalar: once the scalar aliases, its derivative is not small, it is wrong,
+and wrong with spatial regularity — which reads as structure rather than as noise.
+
+The safe form is to compare a derivative of **position** against the feature size:
+`footMin` = `min(length(dFdx(P)), length(dFdy(P)))` is smooth, monotone in range and
+cannot wrap, so `1.0 - smoothstep(0.28, 0.55, footMin / wavelength)` states Nyquist
+directly. That replacement was written, rendered and **deliberately reverted, not
+overlooked** — it fixed nothing about the artefact being chased and the bedform term it
+would have changed is measured good, so landing it would have been an unverified change
+to protected work. It is left written out in the comment beside the four gates. Anyone
+picking it up should verify it against the midground metrics first.
 
 **Never `sed -i` by line number in this tree.** A line-numbered revert landed a
 statement in the middle of the `footShadow` comment block because the file had shifted
