@@ -345,6 +345,34 @@ function betas() {
   };
 }
 
+/* One source of truth for the volumetric march in atmosphere.js.
+ *
+ * The marched in-scatter and this fog chunk are two integrations of the same
+ * medium — the march does it stepwise with a visibility term, the chunk does it
+ * closed-form assuming V = 1 — so they have to agree on the medium or the shafts
+ * will sit in air of a different density than the haze around them. Exported
+ * rather than duplicated because the gains moved twice this round and a copy
+ * would already be stale. Coefficients are multiples of fogDensity; the caller
+ * multiplies by scene.fog.density. */
+export function aerialCoeffs(sun, fogColor) {
+  const B = betas();
+  /* The source radiance matters as much as the coefficients, and getting it from
+     anywhere else is how the march ends up on a different scale from the haze.
+     The first version of the shaft pass used sun.intensity, which is the beam's
+     irradiance and two orders larger than the airlight source: it added a
+     quarter of the display range to the frame. jSun is what the chunk itself
+     puts into the forward lobe, so a marched term built on it lands in the same
+     units as the term it is correcting. */
+  const s = sun && fogColor ? sources(sun, fogColor) : null;
+  return {
+    betaR: B.R, betaM: B.M, betaS: B.S,
+    H: H_DUST, hSusp: H_SUSP, y0: Y0,
+    gBroad: G_BROAD, wBroad: W_BROAD, gNarrow: G_NARROW, wNarrow: W_NARROW,
+    jSun: s ? s.jSun : [1, 1, 1],
+    jSky: s ? s.jSky : [1, 1, 1],
+  };
+}
+
 function hg(g, c) {
   const g2 = g * g;
   return (1 - g2) / (4 * Math.PI * Math.pow(Math.max(1e-4, 1 + g2 - 2 * g * c), 1.5));

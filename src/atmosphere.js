@@ -49,6 +49,7 @@
  * — without reaching into System 6's internals.
  */
 import * as THREE from 'three';
+import { aerialCoeffs } from './aerial.js';
 
 /* Straight from audio.js, and it must stay in step with it: the heading the
    wind blows *toward*, 0 meaning +Z, which is down-wash and away from the sun.
@@ -845,6 +846,299 @@ function shimmerNoise(n = 128) {
   return t;
 }
 
+/* ── shadow-mapped in-scatter: the shafts ──────────────────────────────────
+ *
+ * The standing defect this answers, in the critic's words: "you are integrating
+ * as though V(x) = 1 everywhere along the ray." The fog chunk in aerial.js
+ * solves the in-scatter integral in closed form, which is only possible if the
+ * air is lit uniformly — so every cubic metre of it scatters as though it were
+ * in full sun, including the air inside a 240 m wall shadow. That single
+ * omission is why there are no beams, why the air never darkens where the sun
+ * cannot reach it, and why the aureole has no shape. The scene was paying the
+ * full price of a dust event and collecting one of its four dividends.
+ *
+ * So this restores V(x), the only way it can be restored: by marching. For each
+ * pixel, step along the view ray from the camera to whatever the depth buffer
+ * says it hit, and at each step ask the sun's own shadow map whether that point
+ * is lit. Where it is, add its scattering; where it is not, add nothing. Beams
+ * are then not painted, they are what is left when the shadowed air stops
+ * contributing — which is why this does not reintroduce the noise that the
+ * milky-blob regression was made of. There is no noise in it at all.
+ *
+ * Four decisions worth their reasons:
+ *
+ * Coarse cascade only. sky.js casts two, a 2048 fine map for pebble shadows and
+ * a coarse one sized to hold a whole 240 m wall shadow. A shaft is a large-scale
+ * phenomenon and the fine cascade would cost a second projection and a second
+ * fetch per step to resolve detail no beam has. The coarse map is the right
+ * instrument and it is the one whose frustum actually contains the casters that
+ * matter.
+ *
+ * Half resolution. In-scatter is a low-frequency field — it is an integral along
+ * a ray, so it varies smoothly except where the shadow boundary crosses it — and
+ * a quarter of the pixels is the standard economy for it. Bilinear upsample in
+ * the composite that already exists, so this adds one half-res pass and no new
+ * fullscreen pass.
+ *
+ * The dither is screen-space and has no time term. Determinism is a hard
+ * requirement here: walkTo/lookAt must give pixel-identical frames, and the
+ * usual trick of rotating the sample offsets per frame would break that for a
+ * temporal filter this pass does not have.
+ *
+ * The march is distance-capped rather than run to the far plane. On a sky pixel
+ * the depth buffer gives the far plane, and marching 6 km of mostly-empty air
+ * to accumulate the last 1% is most of the cost of the pass for none of the
+ * picture. Capping it also keeps this out of a fight with sky.js, which draws
+ * the dome with fog off: the sky keeps its own colour and gains only the
+ * in-scatter of the near dust column actually in front of it, which is what a
+ * shaft crossing the sky looks like.
+ */
+
+/* Steps at the top tier. In-scatter along a ray is smooth, so the step count
+   buys shadow-boundary sharpness rather than accuracy of the integral, and the
+   dither converts what is left into a fine dissolve instead of banding. */
+const SHAFT_STEPS = 28;
+/* Metres. Past this the density is low enough and the view transmittance small
+   enough that the remaining in-scatter is under a percent of the total, and the
+   closed-form fog chunk is already accounting for the far field. */
+const SHAFT_MAX_DIST = 1400;
+/* Scattering gain on the marched term.
+ *
+ * Not a free brightness knob, and it must not be used as one: the closed-form
+ * chunk in aerial.js is already delivering the V = 1 in-scatter for this medium,
+ * so adding a second full-strength in-scatter term would double-count the air.
+ * What this pass contributes is the *modulation* — the difference between lit
+ * and shadowed air — which is why it is added at a fraction and why the frame
+ * does not get uniformly brighter. Set by measurement on sun_gap. */
+const SHAFT_GAIN = 0.55;
+/* Reddening of the beam along its own slant path, as an optical depth in blue
+ * at the wash floor, falling with height as the dust does.
+ *
+ * A critic found the aureole chromatically neutral - B/G 0.956 two degrees off
+ * the sun - while rock in the same frame is lit at R/G 1.70, and named the
+ * missing mechanism as wavelength-dependent extinction of the illuminating beam
+ * before it in-scatters. This is that term.
+ *
+ * It uses the Rayleigh triple's *shape* rather than the dust triple's, and the
+ * reason is worth stating because the dust triple points the other way. BETA_M
+ * is [1.000, 0.962, 0.905] normalised to red, so red is the most extinguished
+ * channel and transmission through it is bluer - defensible for very coarse
+ * grains, and exactly wrong for the reddening of a low sun, which is a
+ * short-wavelength-weighted effect carried by the fine mode that accompanies
+ * blowing dust. Using BETA_M here would produce a blue low sun and destroy the
+ * warm limit that is the best-measured thing in this system.
+ *
+ * Kept small and capped, because sky.js already delivers the beam's full
+ * atmospheric slant path in sun.color - air mass 6.86 through 8 km of Rayleigh -
+ * and re-applying that would double-count it. What is legitimately mine is the
+ * extra reddening from *this scene's* dust, which sky.js assumed away at 0.032
+ * aerosol. */
+const SHAFT_RED = 0.35;
+
+class Shafts {
+  constructor(coeffs, density, sunDir, sunCol) {
+    this.rt = null;
+    this.enabled = true;
+    this.steps = SHAFT_STEPS;
+    /* Per-metre extinction at the floor, from aerial.js's own coefficients so
+       the marched medium and the fogged medium are the same medium. */
+    const bt = (i) => (coeffs.betaR[i] + coeffs.betaM[i]) * density;
+    const beta = new THREE.Vector3(bt(0), bt(1), bt(2));
+    const bs = (i) => coeffs.betaS[i] * density;
+
+    this.mat = new THREE.ShaderMaterial({
+      uniforms: {
+        tDepth: { value: null },
+        uShadowMap: { value: null },
+        uShadowMat: { value: new THREE.Matrix4() },
+        uInvVP: { value: new THREE.Matrix4() },
+        uCam: { value: new THREE.Vector3() },
+        uSun: { value: sunDir.clone() },
+        uSunCol: { value: sunCol.clone() },
+        uBeta: { value: beta },
+        uBetaS: { value: new THREE.Vector3(bs(0), bs(1), bs(2)) },
+        /* Normalised so blue is 1, which is what makes SHAFT_RED readable as an
+           optical depth in blue rather than as an arbitrary gain. */
+        uRedBeta: { value: new THREE.Vector3(...coeffs.betaR)
+          .divideScalar(coeffs.betaR[2] || 1) },
+        uRes: { value: new THREE.Vector2(1, 1) },
+        uH: { value: coeffs.H },
+        uHS: { value: coeffs.hSusp },
+        uY0: { value: coeffs.y0 },
+        uGB: { value: coeffs.gBroad },
+        uWB: { value: coeffs.wBroad },
+        uGN: { value: coeffs.gNarrow },
+        uWN: { value: coeffs.wNarrow },
+        uSteps: { value: SHAFT_STEPS },
+        uMaxDist: { value: SHAFT_MAX_DIST },
+        uGain: { value: SHAFT_GAIN },
+        uRed: { value: SHAFT_RED },
+        uHasShadow: { value: 0 },
+      },
+      vertexShader: /* glsl */`
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+}`,
+      fragmentShader: /* glsl */`
+uniform sampler2D tDepth;
+uniform sampler2D uShadowMap;
+uniform mat4 uShadowMat;
+uniform mat4 uInvVP;
+uniform vec3 uCam;
+uniform vec3 uSun;
+uniform vec3 uSunCol;
+uniform vec3 uBeta;
+uniform vec3 uBetaS;
+uniform vec3 uRedBeta;
+uniform vec2 uRes;
+uniform float uH;
+uniform float uHS;
+uniform float uY0;
+uniform float uGB;
+uniform float uWB;
+uniform float uGN;
+uniform float uWN;
+uniform float uMaxDist;
+uniform float uGain;
+uniform float uRed;
+uniform float uHasShadow;
+uniform int uSteps;
+varying vec2 vUv;
+
+/* unpackRGBAToDepth. three 0.180 packs directional shadow depth into RGBA
+   rather than using a depth texture, so the comparison has to unpack exactly
+   the way the shadow chunk does. Included rather than reimplemented so it
+   cannot drift from three's own packing. */
+#include <packing>
+
+vec3 worldAt(vec2 uv, float d) {
+  vec4 ndc = vec4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
+  vec4 w = uInvVP * ndc;
+  return w.xyz / w.w;
+}
+
+/* Is this point in the sun? Outside the cascade's frustum the answer has to be
+   "lit": the coarse box rides with the player and air beyond it is open desert,
+   so assuming shadow there would hang a dark curtain at the box edge. */
+float visible(vec3 p) {
+  if (uHasShadow < 0.5) return 1.0;
+  vec4 sc = uShadowMat * vec4(p, 1.0);
+  vec3 c = sc.xyz / sc.w;
+  if (any(lessThan(c, vec3(0.0))) || any(greaterThan(c, vec3(1.0)))) return 1.0;
+  /* A fixed depth bias is right here where it was wrong for surfaces. sky.js
+     needs a receiver-plane slope bias because a surface lies *in* the light's
+     path at a grazing angle; a point in mid-air has no receiver plane and no
+     self-shadowing to forgive, so all this has to clear is map quantisation. */
+  float d = unpackRGBAToDepth(texture2D(uShadowMap, c.xy));
+  return step(c.z - 0.0012, d);
+}
+
+float dustAt(float y) { return exp(-max(0.0, y - uY0) / uH); }
+float suspAt(float y) { return exp(-max(0.0, y - uY0) / uHS); }
+
+float hg(float g, float c) {
+  float g2 = g * g;
+  return (1.0 - g2) / pow(max(1e-4, 1.0 + g2 - 2.0 * g * c), 1.5);
+}
+
+void main() {
+  float dpt = texture2D(tDepth, vUv).r;
+  vec3 hit = worldAt(vUv, dpt);
+  vec3 ray = hit - uCam;
+  float far = length(ray);
+  vec3 dir = ray / max(far, 1e-4);
+  float march = min(far, uMaxDist);
+
+  /* Same two-lobe mixture as the fog chunk, normalised at forward so the pair
+     spans 0..1 and the gain means what it says. cos of the scattering angle is
+     dot(dir, uSun): looking into the sun is forward scatter. */
+  float c = dot(dir, uSun);
+  float ph = (uWB * hg(uGB, c) / hg(uGB, 1.0) + uWN * hg(uGN, c) / hg(uGN, 1.0))
+           / (uWB + uWN);
+
+  /* Screen-space dither only. No time term: two calls to walkTo with the same
+     argument have to produce identical frames, and this pass has no temporal
+     filter behind it to launder a rotating offset. */
+  float dth = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+
+  int n = uSteps;
+  float dt = march / float(n);
+  /* Two integrals of the same ray: one with the visibility term the physics
+     asks for, one with V = 1. The pass emits their *difference*.
+     
+     This is the only formulation that cannot double-count. aerial.js's fog chunk
+     already delivers the closed-form in-scatter for this medium under exactly
+     the assumption V = 1 everywhere, and it is applied to every fragment in the
+     scene. Adding a second, full-strength in-scatter term on top of it does not
+     restore the visibility term, it just adds a second atmosphere — measured, it
+     put a quarter of the display range into the frame and would have flattened
+     the depth ladder completely.
+     
+     What the shadow map actually licenses is a *correction*, and since V <= 1
+     the correction is everywhere negative: shadowed air has to give back
+     in-scatter the chunk already granted it. Beams are then not painted on, they
+     are the air that was not asked to give anything back — which is why this
+     cannot brighten the frame, cannot blow out the far field, and contains no
+     noise of any kind. */
+  vec3 accV = vec3(0.0);
+  vec3 accAll = vec3(0.0);
+  vec3 tr = vec3(1.0);
+  for (int i = 0; i < 64; i++) {
+    if (i >= n) break;
+    float s = (float(i) + dth) * dt;
+    vec3 p = uCam + dir * s;
+    float nd = dustAt(p.y), ns = suspAt(p.y);
+    vec3 be = uBeta * nd + uBetaS * ns;
+
+    /* Reddening of the illuminating beam along its own slant path, deepest at
+       the floor where the beam has crossed the most dust. uRed is quoted as the
+       blue optical depth at the floor, so the slant geometry is already inside
+       the constant and does not appear again here. */
+    vec3 beamT = exp(-uRedBeta * uRed * nd);
+
+    /* Not named step: that is a GLSL builtin and shadowing it is legal but
+       some drivers are less relaxed about it than the spec is. */
+    vec3 seg = tr * ph * be * beamT * dt;
+    accV += seg * visible(p);
+    accAll += seg;
+    tr *= exp(-be * dt);
+    if (tr.g < 0.004) break;
+  }
+
+  gl_FragColor = vec4((accV - accAll) * uSunCol * uGain, 1.0);
+}`,
+      depthTest: false,
+      depthWrite: false,
+    });
+
+    const quad = new THREE.BufferGeometry();
+    quad.setAttribute('position', new THREE.BufferAttribute(
+      new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3));
+    quad.setAttribute('uv', new THREE.BufferAttribute(
+      new Float32Array([0, 0, 2, 0, 0, 2]), 2));
+    this.quadMesh = new THREE.Mesh(quad, this.mat);
+    this.quadMesh.frustumCulled = false;
+    this.quadScene = new THREE.Scene();
+    this.quadScene.add(this.quadMesh);
+    this.quadCam = new THREE.Camera();
+  }
+
+  resize(w, h) {
+    const hw = Math.max(1, w >> 1), hh = Math.max(1, h >> 1);
+    if (this.rt && this.rt.width === hw && this.rt.height === hh) return;
+    if (this.rt) this.rt.dispose();
+    this.rt = new THREE.WebGLRenderTarget(hw, hh, {
+      type: THREE.HalfFloatType, depthBuffer: false,
+    });
+    this.rt.texture.minFilter = THREE.LinearFilter;
+    this.rt.texture.magFilter = THREE.LinearFilter;
+    this.rt.texture.generateMipmaps = false;
+    this.mat.uniforms.uRes.value.set(hw, hh);
+  }
+}
+
 class Shimmer {
   constructor(renderer, camera) {
     this.renderer = renderer;
@@ -858,6 +1152,8 @@ class Shimmer {
       uniforms: {
         tScene: { value: null },
         tDepth: { value: null },
+        tShaft: { value: null },
+        uShaft: { value: 1 },
         tNoise: { value: this.noise },
         uT: { value: 0 },
         uRes: { value: new THREE.Vector2(1, 1) },
@@ -877,6 +1173,8 @@ void main() {
       fragmentShader: /* glsl */`
 uniform sampler2D tScene;
 uniform sampler2D tDepth;
+uniform sampler2D tShaft;
+uniform float uShaft;
 uniform sampler2D tNoise;
 uniform float uT;
 uniform vec2 uRes;
@@ -962,7 +1260,16 @@ void main() {
     d *= uAmp * m * (uRes.y / 900.0) / uRes;
   }
 
-  gl_FragColor = vec4(texture2D(tScene, vUv + d).rgb, 1.0);
+  /* Deliberately not named col: this function already uses that name for the
+     hot-air optical column above, and redeclaring it as a vec3 in the same
+     scope is a compile error rather than a shadow. */
+  vec3 outRgb = texture2D(tScene, vUv + d).rgb;
+  /* Marched in-scatter, added after the warp so a shaft is displaced along with
+     the air it is in rather than sliding across it. Bilinear from the half-res
+     buffer; in-scatter is smooth enough that the upsample is invisible except
+     at a shadow boundary, and the dither in the march already softens those. */
+  outRgb += texture2D(tShaft, vUv + d).rgb * uShaft;
+  gl_FragColor = vec4(outRgb, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`,
@@ -1040,6 +1347,21 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
   scene.add(dust, ...salt);
 
   const shimmer = new Shimmer(renderer, camera);
+
+  /* The marched in-scatter takes its medium from aerial.js rather than
+     redeclaring it, and its beam colour and direction from the scene's own sun,
+     so it follows System 4 wherever the lighting lands. Radiance is the sun's
+     colour at unit luminance times its intensity: the gain is then a pure
+     scattering fraction and does not quietly depend on how red the sun is. */
+  const fogDensity = (scene.fog && scene.fog.density) || 0.0019;
+  const aerC = aerialCoeffs(sun, (scene.fog && scene.fog.color) || new THREE.Color(1, 1, 1));
+  const shafts = new Shafts(aerC, fogDensity, sunDir,
+    new THREE.Color(aerC.jSun[0], aerC.jSun[1], aerC.jSun[2]));
+  /* A one-texel black texture so the composite's sampler is always bound, even
+     on the tier where the pass is switched off entirely. */
+  const blackPx = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
+  blackPx.needsUpdate = true;
+  shimmer.mat.uniforms.tShaft.value = blackPx;
 
   /* Scene info has to be snapshotted after the scene pass and before the
      composite, or `info()` reports the fullscreen triangle instead of the
@@ -1155,12 +1477,68 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
         .multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)
         .invert();
 
+      /* Marched in-scatter, half-res, between the scene pass and the composite.
+         The shadow map is read every frame rather than cached: three allocates
+         it on the first shadow render, so at construction time it is null, and
+         it is reallocated whenever the quality governor changes the map size. */
+      if (shafts.enabled) {
+        shafts.resize(w, h);
+        const sm = sun.shadow && sun.shadow.map;
+        const su = shafts.mat.uniforms;
+        su.uHasShadow.value = sm ? 1 : 0;
+        if (sm) {
+          su.uShadowMap.value = sm.texture;
+          su.uShadowMat.value.copy(sun.shadow.matrix);
+        }
+        su.tDepth.value = shimmer.rt.depthTexture;
+        su.uCam.value.copy(cam.position);
+        su.uInvVP.value.copy(u.uInvVP.value);
+        renderer.setRenderTarget(shafts.rt);
+        renderer.render(shafts.quadScene, shafts.quadCam);
+        u.tShaft.value = shafts.rt.texture;
+        u.uShaft.value = 1;
+      } else {
+        u.uShaft.value = 0;
+      }
+
       renderer.setRenderTarget(null);
       renderer.render(shimmer.quadScene, shimmer.quadCam);
       return true;
     },
     /** Scene-pass draw call and triangle counts, excluding the composite. */
     lastInfo() { return shimmer.enabled ? lastInfo : null; },
+    /* The marched in-scatter, for the quality governor in perf.js.
+     *
+     * Three rungs rather than a switch, because the pass degrades gracefully in
+     * a way most effects do not: in-scatter is a smooth integral, so halving the
+     * step count costs shadow-boundary crispness and nothing else, and the
+     * dither turns the difference into a dissolve rather than banding. 0 drops
+     * the pass and its half-res target entirely.
+     *
+     *   n = 0   off
+     *   n = 1   14 steps
+     *   n = 2   28 steps  (top tier)
+     */
+    setShaftQuality(n) {
+      const q = Math.max(0, Math.min(2, n | 0));
+      shafts.enabled = q > 0;
+      shafts.mat.uniforms.uSteps.value = q === 2 ? SHAFT_STEPS : SHAFT_STEPS >> 1;
+      if (!shafts.enabled && shafts.rt) { shafts.rt.dispose(); shafts.rt = null; }
+    },
+    /** What the marched pass is actually doing, for measurement. */
+    shaftInfo() {
+      const u = shafts.mat.uniforms;
+      return {
+        enabled: shafts.enabled,
+        steps: u.uSteps.value,
+        maxDist: u.uMaxDist.value,
+        gain: u.uGain.value,
+        red: u.uRed.value,
+        hasShadow: !!u.uHasShadow.value,
+        halfRes: shafts.rt ? [shafts.rt.width, shafts.rt.height] : null,
+        beta: u.uBeta.value.toArray(),
+      };
+    },
     /* Multisampling on the offscreen buffer the whole scene is drawn into, for
        the quality governor in perf.js. It is by far the most expensive number
        in this system and it is not obvious from looking at it: the target is

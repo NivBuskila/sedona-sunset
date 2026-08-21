@@ -438,12 +438,6 @@ const CLASSES = [
        poured concrete. */
     tint: 0.80, orient: 'surface', scour: true, scourFrom: 0.0, scourTail: true,
     fillet: 1.0, aspect: [0.78, 1.36],
-    /* The one class large enough that its hollow can be cut into the height
-       field rather than painted around it — see Terrain.addScour. As a fraction
-       of the stone's radius, so a 0.46 m boulder digs 0.19 m, which is about
-       what a metre-wide obstacle takes out of a sand-and-gravel bed in one
-       flood. */
-    excavate: 0.42,
     /* flood-transported, so they sit in the channel and on bar heads */
     weight: (fc) => (fc.chan * 1.0 + fc.bar * 0.5) * fc.lag * (0.2 + 1.6 * fc.string)
                   * (1 - fc.pan),
@@ -511,7 +505,6 @@ export function buildScatter(terrain, tex) {
     uVpH: { value: 1440 },
     uFarCol: { value: new THREE.Color(FAR_COL[0], FAR_COL[1], FAR_COL[2]) },
     uSunDir: { value: SUN_DIR.clone() },
-    uGrit: { value: tex.grit },
   };
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, mat.userData.uniforms);
@@ -608,8 +601,7 @@ export function buildScatter(terrain, tex) {
       `);
 
     shader.fragmentShader = ('varying float vFar;\nvarying float vFarN;\n' +
-      'varying vec3 vSeat;\nuniform vec3 uSunDir;\nuniform sampler2D uGrit;\n' +
-      'float cTone = 1.0;\nfloat cCav = 1.0;\n' + shader.fragmentShader)
+      'varying vec3 vSeat;\nuniform vec3 uSunDir;\n' + shader.fragmentShader)
       /* ---- two different fades, and only one of them existed ----
        * vFarN handles the *instance* shrinking below a pixel, which is the
        * gravel-hash problem. It says nothing about the surface map's own feature
@@ -626,107 +618,11 @@ export function buildScatter(terrain, tex) {
        * the albedo mip carry an even stipple.
        * vViewPosition is a rigid transform of world position, so its screen
        * derivative is the world footprint without needing a second varying. */
-      /* ---- and the other half: a layer with no scale of its own ----
-       * Four rounds were spent on the pale boulders as a *colour* problem and it
-       * moved them from rgb(162,132,102) to (152,119,89) against a bed near
-       * (120,85,62), and they were still the loudest object in the frame. The
-       * reason is not pigment. A 40 cm solid presents facets the size of a table
-       * top; the clast maps are pinned to a six-centimetre tile, so at two and a
-       * half metres their finest authored feature — 3 mm of bedding lamination —
-       * is about a pixel and a half and everything else is far coarser. The bed
-       * beside it has the terrain's grain, its micro-shadow tone and its cavity
-       * occlusion. The clast had none of the three. It was not a pale rock, it
-       * was a *smoother* rock, and the eye reads smooth-and-large as a painted
-       * prop however carefully its hue is matched.
-       *
-       * Measured offline, sampling these maps through a real mip pyramid: the
-       * facet's mean one-pixel gradient falls from 0.0201 at 1.5 mm per pixel to
-       * 0.0028 at 35 mm per pixel, a sevenfold collapse, with hf/lf 0.55 at the
-       * near end and above 1.0 at the far end — which is the signature of a map
-       * that has been mipped down to noise around its own mean. That is exactly
-       * the failure System 2 diagnosed on the rock walls, so it takes the same
-       * cure: the grit layer, which has no content below a fourteenth of its own
-       * tile and therefore no scale of its own, sampled at whatever scale the
-       * pixel footprint asks for, octave-snapped with the bracketing pair
-       * crossfaded. Same probe after: gradient 0.040 to 0.053 and flat across
-       * distance, hf/lf 0.68 to 0.78.
-       *
-       * Three things come out of the one fetch, and all three were named in the
-       * critique. R is a tone stipple. A is crevice occlusion, applied to direct
-       * and indirect alike because a crevice occludes both, and biased to darken
-       * on the mean because a granular surface at a grazing sun shadows a real
-       * fraction of itself — the terrain has that term and the clast did not,
-       * which is a large part of why the boulder read brighter than its bed. G
-       * and B are a tangent-space normal, damped as the instance goes sub-pixel
-       * for the same reason the map normal is: a perturbed normal under a
-       * widening footprint scintillates.
-       *
-       * The projection is the dominant world axis of the geometric normal, one
-       * fetch rather than a triplanar three, and it therefore has a seam where
-       * the dominant axis swaps. That is affordable *here* specifically because
-       * the layer has no low frequencies: across the seam the grain pattern
-       * changes but its statistics do not, so there is no tonal step to see, only
-       * noise meeting different noise. The planar stretch near grazing is largely
-       * self-cancelling too — grazing incidence widens the footprint, which
-       * coarsens the lock in the same proportion the projection compresses.
-       *
-       * World position and world normal come out of vViewPosition and the
-       * geometric normal by inverse-rotating through viewMatrix, which is rigid,
-       * so this costs no extra varyings. The position is wrapped at 256 m before
-       * scaling: a highp float has about seven digits, and 200 m of world
-       * coordinate multiplied up to texel scale runs out of mantissa. The wrap is
-       * seamless because both 256 and the tile size are powers of two. */
       .replace('#include <normal_fragment_maps>', /* glsl */`
         vec3 nGeoC = normal;
         #include <normal_fragment_maps>
-        float cfX = length(dFdx(vViewPosition)), cfY = length(dFdy(vViewPosition));
-        float cFoot = max(cfX, cfY);
+        float cFoot = max(length(dFdx(vViewPosition)), length(dFdy(vViewPosition)));
         normal = normalize(mix(nGeoC, normal, 0.14 + 0.86 * (1.0 - smoothstep(0.0011, 0.006, cFoot))));
-
-        /* Locked to the *short* axis of the footprint, not to its geometric
-           mean. The terrain locks to the mean because its pixels are grazing
-           everywhere and it needed the layer to survive the long axis; a clast
-           takes the opposite trade, because the first attempt here used the mean
-           and put the grain two to four pixels across, which does not read as
-           grain — it reads as polka dots, and it was worse than the flat facet
-           it replaced. The short axis puts about one texel per pixel across the
-           view, which is the band the eye is judging. The floor is the map's own
-           anisotropic filtering: this never asks for a ratio steeper than six,
-           against the eight the texture is built with. */
-        float cFootG = max(min(cfX, cfY), max(cfX, cfY) / 6.0);
-        float gLodC = log2(max(cFootG, 2.5e-4) * 256.0);
-        float gFlC = floor(gLodC);
-        float gScC = exp2(-gFlC);
-        vec3 nWc = normalize((vec4(nGeoC, 0.0) * viewMatrix).xyz);
-        vec3 wpC = cameraPosition + (vec4(-vViewPosition, 0.0) * viewMatrix).xyz;
-        vec3 aWc = abs(nWc);
-        vec2 gUVc = aWc.y > max(aWc.x, aWc.z) ? wpC.xz
-                  : (aWc.x > aWc.z ? wpC.zy : wpC.xy);
-        gUVc = mod(gUVc + vec2(5.3, 21.7), 256.0);
-        vec4 grC = mix(texture2D(uGrit, gUVc * gScC),
-                       texture2D(uGrit, gUVc * gScC * 0.5), gLodC - gFlC);
-        cTone = 1.0 + (grC.r - 0.427) * 1.30;
-        cCav  = clamp(0.93 - (0.934 - grC.a) * 1.70, 0.34, 1.10);
-
-        /* The normal is deliberately the *smallest* of the three terms, which is
-           the opposite of how the first attempt was weighted and is the whole
-           lesson from it. At eight degrees of sun elevation a tangent slope of
-           0.8 — which is what the layer's full authored amplitude comes to — is
-           enough to swing a grain from fully lit to fully shadowed, so the grain
-           field came out binary: bright dots on black, a pebble-dash render
-           rather than stone. The offline probe rewarded that, because a binary
-           field has an excellent one-pixel gradient. Amplitude is not structure.
-           At 0.25 the grains modulate the shading instead of switching it, and
-           tone and cavity carry most of the signal, which is also the right
-           division: at this sun angle it is self-shadowing rather than facet
-           orientation that a granular surface mostly expresses. */
-        vec3 tAx = abs(nWc.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
-        vec3 tT = normalize(cross(tAx, nWc));
-        vec3 tB = cross(nWc, tT);
-        vec2 g2 = (grC.gb - 0.5) * (0.50 * (1.0 - vFarN));
-        vec3 gWc = normalize(nWc + tT * g2.x + tB * g2.y);
-        normal = normalize(normal + (viewMatrix * vec4(gWc - nWc, 0.0)).xyz);
-
         normal = normalize(mix(normal, vSeat, vFarN * 0.92));
       `)
       /* Same reasoning as the terrain: a dust-filmed dry stone does not go
@@ -738,23 +634,6 @@ export function buildScatter(terrain, tex) {
         #include <lights_physical_fragment>
         material.specularColor *= 0.55;
         material.specularF90 *= 0.16;
-        material.diffuseColor *= cTone;
-        /* A pit is rougher than the face around it: the cement has gone and what
-           is left is loose grain. Small, but it stops the crevices reading as
-           specular dimples. */
-        material.roughness = clamp(material.roughness * (1.0 + (0.934 - grC.a) * 0.45), 0.30, 1.0);
-      `)
-      /* Cavity occlusion, on direct and indirect alike. An aoMap-style indirect
-         multiply would have been the conventional place for this and it would be
-         wrong: at eight degrees of sun elevation the direct term is most of the
-         light on an up-facing facet, and a crevice that only darkens the sky
-         contribution leaves the sunlit grain as flat as it was. */
-      .replace('#include <aomap_fragment>', /* glsl */`
-        #include <aomap_fragment>
-        reflectedLight.directDiffuse *= cCav;
-        reflectedLight.indirectDiffuse *= cCav;
-        reflectedLight.directSpecular *= cCav;
-        reflectedLight.indirectSpecular *= cCav;
       `)
       /* ---- the blue chips were here ----
        * This was an additive Rayleigh-spectrum constant, vec3(0.012, 0.024,
@@ -887,15 +766,6 @@ export function buildScatter(terrain, tex) {
         /* Upstream is up-wash: the flood came down the wash, so it stalls against
            the face pointing back the way it came. */
         const ux = Math.sin(th), uz = -Math.cos(th);
-        /* Genuine excavation, for the classes coarse enough that the grid can
-           carry it. Registered *after* this stone is seated, so it sits on its
-           own undisturbed footing, and before the rest of the population, so
-           the fillet, the tail and the collar stones all follow the dug bed.
-           The direction handed over is downstream, which is where the horseshoe
-           opens and where the lifted sediment lands. */
-        if (cl.excavate && rad >= 0.24 && bankF < 0.35) {
-          terrain.addScour(x, z, rad, -ux, -uz, rad * cl.excavate);
-        }
         /* ---- the fillet, which is the piece that was missing ----
          * There was an upstream wedge and a downstream tail already, and three
          * critics running still called the burial the strongest tell. Looking at

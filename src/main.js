@@ -12,7 +12,7 @@
  */
 import * as THREE from 'three';
 import { WashPath } from './path.js';
-import { Terrain, buildTerrainMesh, makeTerrainMaterial, syncWind, applyScour } from './terrain.js';
+import { Terrain, buildTerrainMesh, makeTerrainMaterial, syncWind } from './terrain.js';
 import { buildScatter } from './scatter.js';
 import { buildWalls, buildDistantButtes, buildTalus, makeRockMaterial } from './rock.js';
 import { buildSky, buildLights, makeShadowRig, FOG, EXPOSURE } from './sky.js';
@@ -120,8 +120,6 @@ const rocks = [
 for (const m of rocks) scene.add(m);
 
 const clasts = buildScatter(terrain, tex);
-/* The boulders dig hollows the mesh was built too early to know about. */
-applyScour(terrainMesh, terrain);
 for (const m of clasts) scene.add(m);
 
 /* System 3: the hero juniper, and the sparse pinyon-juniper scatter that says
