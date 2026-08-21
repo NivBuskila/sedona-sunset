@@ -54,6 +54,23 @@ so it settles rather than hunts, and queues tier changes rather than applying th
 — a re-mesh stall lands on a machine already struggling, and a long enough stall trips the
 display driver's watchdog.
 
+## Shadow-to-sunlit ratio: flat face against flat face
+
+Two estimators disagree by 3× on the same frame, so the gate needs one named. **Use the
+flat-face comparison**: a flat shaded face measured against a flat sunlit face, both read
+off the sRGB-encoded PNG.
+
+The reason is provenance. The 15–25% figure came from critics measuring real photographs
+with image tools, and what they compared was a shaded rock face against a sunlit rock face
+— not a percentile split within one region. The alternative, darkest-40% against
+brightest-40% within a single view, matches how `sat.mjs` and `hue.mjs` pick their
+populations but does not match where the number came from, and it reads systematically
+lower because both tails include partially-lit pixels.
+
+On the flat-face estimator the build has moved 0.514 → 0.344 against a 0.15–0.25 target, so
+it is heading the right way and more occlusion is still wanted — **but see the constraint
+below before chasing it.**
+
 ## Shadow-to-sunlit ratio: defined in encoded sRGB
 
 The "shadowed rock sits at 15–25% of sunlit" target is **mean relative luminance of the
@@ -510,6 +527,18 @@ Amplitude is the cheap knob for landing back inside the band; contrast that was 
 The second is a real defect. That face is lit by fill alone, and at mean relative luminance 0.039
 its gradient of 0.0075 is only a few code values, so 8-bit quantisation and the grade's black
 floor start eating the structure. It is the binding constraint on how dim the fill may go.
+
+**Open, and it may be most of that second cost: the probe is built for the floor, and the walls
+are not on the floor.** The rays measured sky visibility climbing 0.215 → 0.262 → 0.321 → 0.456 →
+0.744 → 0.954 from the wash floor to 70 m up, but a `LightProbe` is one set of SH coefficients for
+the whole scene, so every surface is given the floor's aperture. The shaded wall face that is
+crushing spans roughly 5 to 40 m of height, where geometry gives it 0.3 to 0.7 of the sky against
+the 0.215 the probe assumes — so something like a factor of two of that crush is self-inflicted,
+and recoverable *without* touching the escarpment or the ratio. The fix is two probes rather than
+one, the measured skyline and the open sky, lerped per fragment by world height on the measured
+ramp; a scalar multiply on indirect is the cheap version and is wrong in structure, because it
+removes the sky without adding the rock that replaces it. Worth doing after System 7's grade work,
+since the crush metric moves when they change the black floor.
 
 **A penumbra widening was tried as the explanation for the first cost, and it is not.** The theory
 was that hard shadow edges convert shadow depth straight into local gradient, and the far
