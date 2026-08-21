@@ -368,7 +368,30 @@ export class Terrain {
     const pile = 0.02 + 1.15 * smoothstep(0.50, 0.86, 0.5 + 0.5 *
       fbm(x * 0.040, z * 0.040, 3, 271));
 
-    return { chan, bar, terr, tal, talPos, sheet, bare, lag, string, pan, pile, f };
+    /* ---- the head's colluvial slopes ----
+     * Named as "smooth surfaces with parallel diagonal streaks, pale specks
+     * smeared into elongated tails along the slope direction — stretched UV, not
+     * colluvium". Magnified, the streaks are individual platy clasts, each
+     * foreshortened into a sliver by a grazing view of a slope they all share and
+     * therefore all elongated the same way. That is geometrically correct; what
+     * makes it read as a smear is that the slope has nothing else on it. A real
+     * colluvial slope is graded — coarse angular blocks gathering toward the toe
+     * where gravity took them, fines held higher up — so the cure is a population
+     * that changes down the slope, not a projection fix.
+     *
+     * `headT` is the toe weighting: strongest on the lower half of the slope,
+     * because a block that came off the rim does not stop halfway. */
+    const hav = Math.abs(f.u);
+    const head = smoothstep(-290, -330, z) * smoothstep(5.0, 16.0, hav);
+    /* Held to the toe. Measured, the head's flanks run a gradient of 0.7 to 2.0
+       from about fourteen metres out, which is past every coarse class's own
+       maxSlope gate, so weighting blocks onto the mid-slope would simply have
+       them rejected and changed nothing. It is also the right answer physically:
+       a block comes to rest where the slope flattens. The steep part above stays
+       bare, and what breaks it up there is the rilling, not the clasts. */
+    const headT = head * (1 - smoothstep(10.0, 26.0, hav));
+    return { chan, bar, terr, tal, talPos, sheet, bare, lag, string, pan, pile,
+             head, headT, f };
   }
 
   heightAtQ(x, z, q) {
@@ -853,12 +876,30 @@ export class Terrain {
      * headwall should be low is where the drainage comes from, and the sun sitting
      * in that gap is the composition the brief asks for rather than one imposed on
      * it. Exposure and albedo are untouched. */
+    /* ---- rills, because a drained slope is not smooth ----
+     * The other half of "smooth surfaces with parallel diagonal streaks": the
+     * streaks are real clasts foreshortened by a grazing view, and they read as a
+     * smear because the surface under them has no form of its own at the scale
+     * the eye is checking. A colluvial slope this size is drained, and draining
+     * cuts rills — grooves running down the fall line, periodic across it. On
+     * these flanks the fall line is roughly across-wash, so the pattern is high
+     * frequency in z and slow in x, which is the opposite of the bedform on the
+     * floor and is why it cannot simply be borrowed from there. Kept off the
+     * channel itself, where the water is doing something else.
+     *
+     * Carried by the ramp as well as the wall, and that is the whole point: the
+     * slopes the streaks were reported on sit at z = -300 to -330, which is the
+     * ramp's zone and not the headwall's, so keying the rills to the wall alone
+     * put them entirely behind the part of the head anybody can see. */
+    const rill = (0.62 * ramp + 0.85 * wall)
+               * (ridged(z * 0.19, x * 0.022, 2, 443) - 0.5)
+               * smoothstep(4.0, 13.0, Math.abs(x));
     const perp = Math.abs(-0.988 * x + 0.156 * (z + 300.0));
     const col = wall * (1 - smoothstep(9.0, 30.0, perp)) * 17.0;
     return ramp * ramp * 10.0
          + wall * (26.0 + 11.0 * fbm(x * 0.021, z * 0.021, 3, 421)
                         + 6.0 * (ridged(x * 0.034, z * 0.034, 2, 423) - 0.5))
-         - notch - gully - col;
+         - notch - gully - col - rill;
   }
 
   /** Height at the far-field crossover, so the blend starts from something

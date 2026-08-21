@@ -325,8 +325,12 @@ const CLASSES = [
        flattest weight in the file — the sorting field will still gather it,
        since granule sits at the fine end of gRank and is pushed into the
        hollows the cobbles are pulled out of. */
+    /* Thinned on the head's slopes. A uniform sprinkle of pale specks over a
+       bare steep surface is most of what read as a smear; on a real colluvial
+       slope the fines wash down and out of the upper part. */
     weight: (fc) => (fc.chan * 0.85 + fc.bar * 0.95 + fc.terr * 0.45)
-                  * (1 - fc.bare * 0.55) * (1 - fc.pan) * (1 - fc.sheet * 0.6),
+                  * (1 - fc.bare * 0.55) * (1 - fc.pan) * (1 - fc.sheet * 0.6)
+                  * (1 - fc.head * 0.55),
   },
   {
     /* Angular, like everything above it. Every clast below cobble size used to be a
@@ -442,7 +446,13 @@ const CLASSES = [
        `pile` clumps them: rockfall arrives as an event, so an apron is a run of
        heaps below the gullies that fed them with swept ground between, and an
        even sprinkle of same-sized blocks reads as scattered litter. */
-    weight: (fc) => fc.tal * fc.pile,
+    /* Apron, plus the head's colluvial toe. A slope below a rimrock is a talus
+       in everything but name -- the same blocks off the same beds, arriving the
+       same way -- and the head slopes had none of them, which is why they read
+       as a bare surface with a smear of gravel on it rather than as colluvium.
+       Weighted to the toe because a block that came off the rim does not stop
+       halfway down. */
+    weight: (fc) => fc.tal * fc.pile + fc.headT * 0.85,
   },
   {
     /* Fewer, smaller, and with many more facets. At nearly a metre of radius and
@@ -460,7 +470,13 @@ const CLASSES = [
     /* bedding-plane slabs, which fall off a stratified wall as sheets. Apron only,
        and under half a metre: a two-metre plate with a flat top lying by itself on
        the floor of the wash was reading as a poured concrete pad. */
-    weight: (fc) => fc.tal * fc.pile,
+    /* Apron, plus the head's colluvial toe. A slope below a rimrock is a talus
+       in everything but name -- the same blocks off the same beds, arriving the
+       same way -- and the head slopes had none of them, which is why they read
+       as a bare surface with a smear of gravel on it rather than as colluvium.
+       Weighted to the toe because a block that came off the rim does not stop
+       halfway down. */
+    weight: (fc) => fc.tal * fc.pile + fc.headT * 0.85,
   },
   {
     /* Blockier than the cobbles. A metre-scale boulder that is as tabular as a
@@ -491,7 +507,8 @@ const CLASSES = [
     excavate: 0.42,
     /* flood-transported, so they sit in the channel and on bar heads */
     weight: (fc) => (fc.chan * 1.0 + fc.bar * 0.5) * fc.lag * (0.2 + 1.6 * fc.string)
-                  * (1 - fc.pan),
+                  * (1 - fc.pan)
+                  + fc.headT * fc.pile * 0.55,
   },
 ];
 
