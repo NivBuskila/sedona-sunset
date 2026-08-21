@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { run, capture } from './harness.mjs';
+import { VIEWS as SHARED_VIEWS } from './views.mjs';
 
 const DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -28,17 +29,9 @@ const hash = getf('hash', '');
 
 /* Chosen to cover what each system is judged on: the long view up the wash toward
    the sun, the ground underfoot, a lit butte face, a shadowed crevice, and the
-   framing where the juniper reads against the sky. */
-const VIEWS = [
-  { name: 'wash_low',   d: 8,   yaw: 0,    pitch: -4 },
-  { name: 'wash_mid',   d: 46,  yaw: 0,    pitch: 0 },
-  { name: 'ground',     d: 30,  yaw: 10,   pitch: -38 },
-  { name: 'wall_lit',   d: 46,  yaw: 72,   pitch: 12 },
-  { name: 'wall_shade', d: 46,  yaw: -104, pitch: 10 },
-  { name: 'bend',       d: 92,  yaw: -22,  pitch: 2 },
-  { name: 'juniper',    d: 62,  yaw: 34,   pitch: 3 },
-  { name: 'sun_gap',    d: 120, yaw: 0,    pitch: 6 },
-];
+   framing where the juniper reads against the sky. Now in tools/views.mjs, because
+   a second copy of it in tools/sundisc.mjs had drifted out of step with this one. */
+const VIEWS = SHARED_VIEWS;
 
 /* The wash runs 340 m and every one of the eight framings above sits inside its
    first third, so roughly two thirds of the walk has never appeared in a capture

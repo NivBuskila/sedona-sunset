@@ -15,13 +15,16 @@
  */
 import { run } from './harness.mjs';
 import { decode } from './png.mjs';
+import { byName } from './views.mjs';
 
-const VIEWS = [
-  { name: 'wash_low', d: 18, yaw: 0, pitch: 0 },
-  { name: 'wash_mid', d: 46, yaw: 0, pitch: 0 },
-  { name: 'sun_gap', d: 120, yaw: 0, pitch: 6 },
-  { name: 'bend', d: 78, yaw: -28, pitch: 2 },
-];
+/* These four were hand-copied from tools/shoot.mjs and had gone stale: wash_low
+   was d 18 pitch 0 against the capture's d 8 pitch -4, and bend was d 78 yaw -28
+   against d 92 yaw -22. The consequence was not cosmetic — the sun projected to
+   screen 0.365,0.25 from a camera nobody photographs, while the disc in the frame
+   under review sits at 0.325,0.171, four degrees away. Every occlusion verdict and
+   every azimuth sweep this tool produced before that was fixed was raycast along
+   the right bearing from the wrong eye. Taken from tools/views.mjs now. */
+const VIEWS = ['wash_low', 'wash_mid', 'sun_gap', 'bend'].map(byName);
 
 const a = process.argv.slice(2);
 const opt = (k, dflt) => { const i = a.indexOf(k); return i >= 0 ? a[i + 1] : dflt; };

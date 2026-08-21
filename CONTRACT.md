@@ -1,5 +1,21 @@
 # Sedona Sunset — Build Contract
 
+## The governing instruction
+
+> "just do whatever you find good and it should be a great experience for user that's it"
+
+Where a measurement and the experience disagree, **the experience wins.** This project has
+proved that repeatedly and expensively: a shimmer that measured too weak and looked like
+melting; a soundscape whose quiet scored 8.5 and read as horror; a metric that could not see
+the one change that fixed the thing a user pointed at. Nine instruments have now been caught
+measuring the wrong thing.
+
+Measurement is still how we work — it is the only way to tell a real change from a hopeful
+one — but it is the instrument, not the goal. If a frame looks wrong while every number is
+green, the numbers are wrong.
+
+Do not stop to ask which of two good options to take. Take the better one and record why.
+
 A first-person walk up a dirt wash between red rock buttes in Sedona, Arizona, at golden
 hour. Everything — every mesh, texture, and sound — is generated procedurally in code.
 There are no external asset files of any kind.
@@ -237,10 +253,19 @@ Mars or Wadi Rum. The B/G channel ratio is a quick proxy: real golden-hour rock 
 0.32–0.90, with blue well below green; a magenta-cast render runs 0.87–1.21, with blue equal
 to or above green. Check hue whenever you check saturation.
 
-Saturation on rock is **solved** as of `sys2e` — mean 0.62–0.67, p95 0.87–0.92, p99 0.90–0.96
-on lit rock, inside the real-photograph range and if anything conservative. Do not push it
-up and do not let a later round pull it down. The remaining colour work is a hue rotation,
-not a saturation change.
+**The gate is the real-photograph band, not a previous build's numbers.** Rock saturation
+was once recorded here as 0.615–0.626 with hue 18.9–19.4°, which was simply what one build
+measured on the day. Lighting has legitimately moved since — sun elevation 11° → 15°, a
+measured escarpment, a height-lerped probe, extinction from 1.76 km to ~19 km — and chasing
+a stale snapshot would mean undoing correct work to match an accident.
+
+Current measured state on the ungraded control: **saturation 0.591, hue 21.1°, value 0.720**.
+All three sit inside the real-photograph bands (0.42–0.65, +15.6–31°, 0.59–0.73), so this
+passes. Note value is at the very top of its band — the scene is about as bright as a Sedona
+reference gets, and further exposure should go down rather than up.
+
+Judge against the photographic bands. Re-measure and re-record the build's own figures when
+lighting changes, rather than treating an old snapshot as a target.
 
 **Measure the target's own population, and check the provenance of a target before
 declaring a regression against it.** The rock figures above were reported as a
@@ -1460,7 +1485,29 @@ the two that were not are both in the failure list above.
    mineral tongues; `wall_lit` midwall sits exactly on the gate at 0.55 rather than
    comfortably inside it. The last of these should improve on exposure alone.
 3. The juniper
-4. Lighting and sun — spectral sky, SH skylight probe and two-cascade shadows are in and
+4. Lighting and sun — **the sun disc is deliberately not visible, and this is a knowing
+   deviation from the brief.** The brief asks three times for the sun to sit low in the gap.
+   It cannot, and the reason is physical rather than a failure of effort.
+
+   At the shipped sun the disc is *already geometrically unoccluded* in `wash_low`, and it
+   measures **+0.1 code value, 0.0% contrast** against the sky immediately around it. The
+   near-sun sky sits at 3.40 scene-linear, and ACES puts 0.97 linear at 230 cv against 0.50
+   at 204 — so **that sky would have to come down 6.8×** before a 10% step could read.
+
+   Thinning the air cannot deliver that, because the brightness beside the sun is the
+   forward-scattered Mie aureole, which scales with the sun's own radiance rather than with
+   extinction. Thin air keeps the disc bright *alongside* it and both land in the tone
+   curve's shoulder together. **A defined disc requires heavy haze at roughly a 2 km visual
+   range** — which is exactly the air that flattens the receding ridgelines into one mass.
+   The disc and the depth ladder compete for one dial, and the far field won on merit.
+
+   Do not re-open this by carving a saddle in the skyline: geometry is not the binding
+   constraint, so a notch would faithfully reproduce an invisible disc in a second view.
+   What the frame delivers instead is the aureole, a raking beam and long shadows.
+
+   **Measured and declined:** azimuth −13 reaches a shadow gate of 0.243, inside band for
+   the first time in the project, at the cost of 62% of the wash floor's level (floor L
+   0.137 → 0.052) and floor `grad/L` out of band on the far side. Not worth it. — spectral sky, SH skylight probe and two-cascade shadows are in and
    the rock is in band (see the provenance note above). **The open defect is the wash
    floor, and it is System 4's.** Between `sys2f` and the first frame under the new light,
    every ground region lost a factor of 3.5–3.9 in `L`: `wash_mid` floor 0.395 → 0.122,
@@ -1529,6 +1576,84 @@ the two that were not are both in the failure list above.
    must drive its visible blowing sand from these**, so the sand you see and the wind you
    hear are one system.
 7. Post-processing and polish
+
+## Shaded rock is warmer than sunlit rock because the canyon is a red room
+
+The whole-scene critique ranks this third overall and calls it "the biggest single coherence
+error, and why the shaded walls look like black-maroon cardboard". It is real. Measured on
+`sys4l`, at sun elevation 15:
+
+| | saturation | hue | B/G | V |
+| --- | --- | --- | --- | --- |
+| lit wall | 0.590 | 21.1° | 0.662 | 0.723 |
+| shaded wall | 0.654 | 10.9° | 0.739 | 0.292 |
+
+Shade is 0.064 more saturated and **10.2° warmer** than light, where real skylit shade on red
+rock should be less saturated and cooler. Half of the critique's complaint is already gone —
+it measured shaded wall V at 0.086–0.111 on `sys7e` and V is now 0.292, because raising the
+sun from 11° to 15° tripled it — and the shaded wall's B/G of 0.739 is now *bluer* than the
+wash floor's 0.647–0.718, not starved relative to it. The saturation and hue inversion is
+what remains.
+
+`tools/shadechroma.mjs` evaluates the fill exactly as `installProbeHeightLerp` does and
+reproduces the rendered shaded wall to 0.012 of saturation and 3° of hue, so this is not a
+shader defect. It is what the geometry implies, and the numbers say so plainly:
+
+| fill on a shaded wall face | B/R | fill hue | rock sat |
+| --- | --- | --- | --- |
+| at 2 m | 0.500 | 9° | 0.791 |
+| at 20 m | 0.797 | 350° | 0.666 |
+| at 40 m | 1.242 | 235° | 0.480 |
+
+The fill arriving on shaded rock is **orange** below about 15 m and only turns blue above 30.
+Attribution at 20 m: taking the opposite wall's bounce out moves B/R from 0.797 to 1.270 and
+rock saturation from 0.666 to 0.468, and 65% of that bounce is direct sun on the opposite
+crest, 31% the wash floor it stands over, 4% the sky it can see. The bounce is not a knob —
+`eDirect = facing * lit * cos(SUN_EL)` is a cosine on a vertical face and the albedo is the
+area-weighted mean of System 2's own stratigraphic column. A sunlit red wall opposite a
+shaded red wall really does make the shaded one redder.
+
+**The aperture lever is exhausted, and this is the part worth not re-litigating.** Against the
+raycast ground truth in `tools/probefit.mjs`, the shipped lateral ramp delivers 0.45 of the
+allowed sky visibility at 6 m and 0.77–0.91 through 14–44 m, so it *is* low and fixing it is
+worth doing. But the ceiling is set by geometry, not by the fit: the 5–40 m band the shaded
+walls occupy is 51–68% blocked by rock. Correcting the fit perfectly moves the aperture at
+20 m from 0.229 to 0.27, which is:
+
+| open fraction | rock sat | rock hue |
+| --- | --- | --- |
+| 0.229, as shipped | 0.666 | 8.0° |
+| 0.27, a perfect fit to the raycast | 0.645 | 7.9° |
+| 0.75, what saturation 0.45 would need | ~0.45 | 5.9° |
+
+**0.021 of the 0.20 of saturation needed, and none of the hue.** The hue half is not a
+question of magnitude at all: rock hue turns cool only once the incident light's B/G clears
+the albedo's own G/B of 1.335, and a **fully open sky delivers 1.285**. No aperture, however
+large, flips the sign, because the fill is multiplied by rock albedo and the albedo throws the
+blue away. This is the same argument that killed violet-on-rock-from-fill, now with a number
+on it.
+
+So the term that can fix this is one that is **added in front of the rock rather than
+multiplied by its albedo**, which means airlight. That is System 5's in-scatter, and the same
+critique independently measures aerial perspective at a **0% median saturation edge in all
+eight views** — the term that would do this is currently not landing. **Routed to System 5.**
+System 4's contribution is the ramp re-fit, worth 0.02, and it is not worth capturing on its
+own.
+
+## `tools/sundisc.mjs` was raycasting from a camera nobody photographs
+
+Its `VIEWS` table was hand-copied from `tools/shoot.mjs` and had drifted: `wash_low` was
+d 18 pitch 0 against the capture's d 8 pitch −4, and `bend` was d 78 yaw −28 against d 92
+yaw −22. So it projected the sun to screen 0.365,0.25 while the disc in the frame under
+review sits at **0.325,0.171** — four degrees away, against a disc half a degree wide. Every
+occlusion verdict and the whole azimuth sweep that tool produced was fired along the right
+bearing from the wrong eye, including "the disc is unoccluded" and the azimuth −13 trade.
+The table now lives in `tools/views.mjs` and both import it.
+
+At its true position the disc is not invisible, just weak: 2.6% contrast graded and 5.7%
+ungraded against the sky immediately around it, 0.4–0.5 sigma of that sky's own variation.
+`_diag.sunDir`, the `DirectionalLight` and the sky shader's `uSun` all agree to the second
+decimal, so the scene was never inconsistent — only the tool was.
 
 ## The `window.__game` capture API
 
