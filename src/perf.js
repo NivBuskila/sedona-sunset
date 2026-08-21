@@ -271,6 +271,16 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
   let floorI = 0;             // never climb back above a rung that already failed
   let hold = 0;
   let cpuMs = 0, fps = 0, clock = 0;
+  /* When the render loop last ran. The GPU timer is opened in beginFrame and
+     closed in endFrame, so it only ever measures the *loop's* frames — and
+     tools/bench.mjs pauses the loop and drives renderOnce by hand, which means
+     stats() was handing it a reading left over from before the pause. It read
+     11.5 ms against a measured frame of 4.5, identically across all four tiers,
+     which is exactly what a stale number looks like once you know to ask. A
+     measurement that cannot be taken has to say so rather than return the last
+     one that could. */
+  let lastLive = -1e9;
+  const LIVE_MS = 500;
 
   /* ── applying a tier ──────────────────────────────────────────────────── */
 
@@ -469,6 +479,7 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
 
     endFrame(cpu, dt) {
       timer.end();
+      lastLive = performance.now();
       cpuMs = cpuMs ? cpuMs + (cpu - cpuMs) * 0.12 : cpu;
       const inst = 1 / Math.max(1e-4, dt);
       fps = fps ? fps * 0.9 + inst * 0.1 : inst;
@@ -504,8 +515,10 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
         buffer: [d.x, d.y],
         fps: +fps.toFixed(1),
         cpuMs: +cpuMs.toFixed(3),
-        gpuMs: timer.available ? +timer.ms.toFixed(3) : null,
+        gpuMs: timer.available && performance.now() - lastLive < LIVE_MS
+          ? +timer.ms.toFixed(3) : null,
         gpuTimerAvailable: timer.available,
+        gpuTimerLive: performance.now() - lastLive < LIVE_MS,
         calls: s.calls,
         triangles: s.triangles,
         programs: i.programs ? i.programs.length : 0,

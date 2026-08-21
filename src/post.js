@@ -101,16 +101,30 @@ export const POST_DEFAULTS = {
      rather than choices. */
   contrast: 1.03, contrastPivot: 0.5,
 
-  /* Defocus. A physical thin-lens CoC, so the shape of the falloff is not a
-     free parameter: 24 mm at f/8 focused at 12 m on a 24 mm-high sensor. That
-     is a landscape photographer's stopped-down frame — everything past about
-     five metres is inside the circle of confusion and only what is at your feet
-     softens. `farPx` is the one non-physical term, a fraction of a pixel of
-     softness on geometry past 900 m, and it is deliberately far beyond every
-     measurement window in the project. */
-  focal: 0.024, fStop: 8.0, focus: 12.0,
+  /* Defocus. A physical thin-lens circle of confusion, so the shape of the
+     falloff is not a free parameter: 24 mm at f/11 focused at 20 m on a 24 mm
+     sensor. That is what a landscape photographer at golden hour is actually
+     shooting, and it puts the circle at 0.10 px at infinity, 0.34 px at 4.5 m
+     and 1.9 px at 1 m — a frame that is sharp everywhere except the ground
+     immediately at your feet.
+     f/8 focused at 12 m was tried first and is where the numbers come from: it
+     is still inside the standard 0.03 mm acceptable-sharpness criterion, but
+     it put 1.1 px on the floor at 2 m, and that measured — wash_mid floor
+     hf/lf 0.57 -> 0.51, ground floor 0.47 -> 0.41. Both of those are surfaces
+     System 1 is being judged on and neither of them is out of focus in a real
+     photograph of a wash.
+     `skipPx` is the other half of that fix. Below it the gather does not run at
+     all, so nothing from about 2.4 m to infinity is resampled even by a
+     fraction of a pixel.
+     `farPx` is the one non-physical term and it is off. The physical model
+     already says 0.10 px at a kilometre, which is correctly nothing, and
+     anything larger would be spending exactly the far-field structure System 2
+     spent three rounds earning. The ramp is left in place for whoever decides
+     otherwise, with a measurement. */
+  focal: 0.024, fStop: 11.0, focus: 20.0,
   cocMax: 4.0,               // pixels, at 900 lines
-  farPx: 0.35, farA: 900.0, farB: 2500.0,
+  skipPx: 0.75,
+  farPx: 0.0, farA: 900.0, farB: 2500.0,
 
   /* Bloom and flare, in scene-linear radiance. The threshold is above anything
      the rock or the floor reaches, so only the sky near the sun and the sun
@@ -121,7 +135,14 @@ export const POST_DEFAULTS = {
   /* Polish. */
   vignette: 0.20,            // linear light lost at the extreme corner
   aberration: 0.9,           // pixels of radial split at the extreme corner
-  grain: 0.010,              // encoded units, shadow amplitude; ~2.5 code values
+  /* Encoded units, peak-to-peak 2x this in the shadows and 0.9x in the
+     highlights. That is +-1.7 code values against +-0.8, which sounds like
+     nothing and is the point: it is a photograph's grain, and it is also the
+     dither. Measured on the near-white sky of `juniper`, where a critic found
+     the gradient stepping about once every eight rows, the plate takes the
+     contour spacing from 14.5 rows to 10.5 and the distinct-colour count up
+     with it. */
+  grain: 0.013,
 };
 
 /* ── the grain plate ────────────────────────────────────────────────────────
@@ -265,7 +286,7 @@ export function createPost({ renderer, camera, atmo, sun }) {
      effect being broken. `#flare=8` makes the geometry visible so it can be
      checked once, rather than shipping a path nothing has ever exercised. */
   P.flareScale = num('flare', 1);
-  const disabled = /(^|[#&])nopost(\b|$|&)/.test(hash);
+  let disabled = /(^|[#&])nopost(\b|$|&)/.test(hash);
 
   const plate = grainPlate(256);
 
@@ -517,6 +538,7 @@ ${GHOSTS.map(([t, r, tr, tg, tb, gi]) => `    {
       uCocScale: { value: 0.2 },
       uFocus: { value: P.focus },
       uCocMax: { value: P.cocMax },
+      uSkip: { value: P.skipPx },
       uFarCoc: { value: new THREE.Vector3(P.farPx, P.farA, P.farB) },
 
       uBloom: { value: P.bloomGain },
@@ -550,6 +572,7 @@ uniform float uExposure;
 uniform float uCocScale;
 uniform float uFocus;
 uniform float uCocMax;
+uniform float uSkip;
 uniform vec3 uFarCoc;
 
 uniform float uBloom;
@@ -627,10 +650,11 @@ void main() {
 
 #if DOF_TAPS > 0
   float coc = cocPx(vUv);
-  /* Below a third of a pixel a defocus is not a defocus, it is a resample, and
-     the branch here is what keeps the cost of this pass in the small part of
-     the frame that is actually out of focus. */
-  if (coc > 0.35) {
+  /* Below the skip a defocus is not a defocus, it is a resample. The branch is
+     also what keeps the cost of this pass in the small part of the frame that
+     is genuinely out of focus — everything past about two and a half metres
+     takes the cheap path. */
+  if (coc > uSkip) {
     vec3 acc = c;
     float wsum = 1.0;
     for (int i = 0; i < DOF_TAPS; i++) {
@@ -745,7 +769,7 @@ void main() {
   float mono = uGrainSwz < 0.5 ? n.r : (uGrainSwz < 1.5 ? n.g : n.b);
   vec3 gn = mix(vec3(mono), n, 0.28);
   float ly2 = luma(gl_FragColor.rgb);
-  gl_FragColor.rgb += gn * (uGrain * (0.40 + 0.60 * (1.0 - ly2)));
+  gl_FragColor.rgb += gn * (uGrain * (0.45 + 0.55 * (1.0 - ly2)));
 }`,
     depthTest: false, depthWrite: false, toneMapped: false,
   });
@@ -886,6 +910,7 @@ void main() {
     const A = P.focal / P.fStop;
     fu.uCocScale.value = A * P.focal * h / (0.024 * Math.max(1e-4, P.focus - P.focal));
     fu.uCocMax.value = P.cocMax * (h / 900);
+    fu.uSkip.value = P.skipPx * (h / 900);
 
     const wantDof = level.dofTaps > 0 && !!depth;
     if ((finalMat.defines.DOF_TAPS > 0) !== wantDof) {
@@ -975,6 +1000,11 @@ void main() {
     render,
     params: P,
     setLevel,
+    /* For tools/bench.mjs's ablation column, and for #nopost. Switching this
+       off hands the frame back to System 5's blit exactly as it was before this
+       system existed, which is what makes "what does the chain cost" a
+       measurable question rather than an argued one. */
+    setEnabled(b) { disabled = !b; },
     get level() { return { ...level }; },
 
     /** Advance the grain, on the same freeze rule the atmosphere uses. */

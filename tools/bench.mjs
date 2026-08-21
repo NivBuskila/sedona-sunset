@@ -187,6 +187,14 @@ try {
       if (/^(veg-|juniper-)/.test(n) && o.visible) veg.push(o);
     });
     const shimmerOn = () => { atmo.setShimmer(true); };
+    const post = g._post;
+    /* System 7's chain, in two ablations rather than one, because they answer
+       different questions. -post hands the frame back to System 5's blit
+       entirely, which is what the whole chain costs. -postopt keeps the grade,
+       vignette and grain — one pass that has to exist, since something has to
+       tone map — and drops the low-resolution bloom/flare chain and the
+       defocus gather, which is what the quality ladder can actually spend. */
+    const postLevel = post ? post.level : null;
 
     const variants = {
       full: { run: frame, on: () => {}, off: () => {} },
@@ -208,6 +216,16 @@ try {
       noVeg: {
         on: () => { for (const o of veg) o.visible = false; },
         off: () => { for (const o of veg) o.visible = true; },
+        run: frame,
+      },
+      noPost: {
+        on: () => { if (post) post.setEnabled(false); },
+        off: () => { if (post) post.setEnabled(true); },
+        run: frame,
+      },
+      noPostOpt: {
+        on: () => { if (post) post.setLevel({ bloom: 0, dofTaps: 0, flare: 0 }); },
+        off: () => { if (post) post.setLevel(postLevel); },
         run: frame,
       },
       halfRes: {
@@ -241,7 +259,12 @@ try {
     const res = { view: v.name, info, stats, vegMeshes: veg.length };
     for (const n of names) res[n] = med(acc[n]);
     return res;
-  }, [view, reps, blocks]);
+    /* REPS and BLOCKS, not `reps` and `blocks`: the destructured names only
+       exist inside the page callback, and referring to them out here threw a
+       bare `reps is not defined` after the ablation header had already been
+       printed — which reads like a page failure rather than a typo in the
+       argument list. */
+  }, [view, REPS, BLOCKS]);
 
   const tiers = await page.evaluate(() =>
     (window.__game.perf ? window.__game.perf.QTIERS.map(q => q.name) : ['(none)']));
@@ -251,7 +274,7 @@ try {
   if (!JSON_OUT) {
     console.log('\n  ── where the frame goes, at the top tier ──');
     console.log('  all figures are milliseconds per frame, median of ' + BLOCKS + ' blocks of ' + REPS);
-    console.log('\n  view        full   -shimmer  -particles  -shadow    -veg   @0.7res    calls     tris');
+    console.log('\n  view        full   -shimmer  -particles  -shadow    -veg   -post -postopt @0.7res    calls     tris');
   }
   for (const v of VIEWS) {
     const r = await measure(v);
@@ -259,7 +282,7 @@ try {
     if (!JSON_OUT) {
       const f = (x) => String(x.toFixed(2)).padStart(7);
       console.log(`  ${v.name.padEnd(10)}${f(r.full)}${f(r.noShimmer)}${f(r.noParticles)}` +
-                  `${f(r.noShadow)}${f(r.noVeg)}${f(r.halfRes)}   ` +
+                  `${f(r.noShadow)}${f(r.noVeg)}${f(r.noPost)}${f(r.noPostOpt)}${f(r.halfRes)}   ` +
                   `${String(r.info.calls).padStart(6)}  ${(r.info.triangles / 1e6).toFixed(2)}M`);
     }
   }
