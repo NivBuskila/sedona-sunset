@@ -60,6 +60,27 @@ import * as THREE from 'three';
  *   shadowFar/shadowNear  the two cascade maps. Both are redrawn only when the
  *                         rig moves, so this is a fill cost on the frames where
  *                         the player is walking, not on every frame.
+ *                         The near map is the one that matters and the ladder
+ *                         used to leave it alone. It is the second cascade, so
+ *                         it is pure addition on top of a scene that already
+ *                         renders its shadows: at 2048 it is 4.2 M depth
+ *                         samples, and the terrain and rock it redraws are the
+ *                         two heaviest meshes in the scene at roughly 2.1 M
+ *                         triangles between them. `medium` held it at 2048
+ *                         while stepping the far map 4096 to 3072, which spent
+ *                         a quarter of the far map's fill and none of the near
+ *                         map's -- so the tier that exists to buy back a
+ *                         struggling frame left the addition untouched. It
+ *                         steps 2048/1536/1024/512 now, and the bottom rung is
+ *                         a sixteenth of the top one's fill.
+ *                         The two draw calls this costs are not the cost and
+ *                         should not be optimised for; tools/bench.mjs counts
+ *                         53 calls for the whole frame.
+ *                         Resolution is safe to step here because the receiver
+ *                         plane bias in src/sky.js derives its bias from
+ *                         shadowMapSize, so a smaller map widens its own bias
+ *                         and does not start acneing -- it goes soft, which is
+ *                         the failure a lower tier is allowed to have.
  *   shimmer               the heat-haze composite. Turning it off does not just
  *                         remove a full-screen pass, it removes the half-float
  *                         multisampled render target the whole scene is drawn
@@ -78,9 +99,9 @@ import * as THREE from 'three';
  */
 export const QTIERS = [
   { name: 'high',   shadowFar: 4096, shadowNear: 2048, shimmer: true,  samples: 4, dust: 1.00, salt: 1.00, softShadow: true  },
-  { name: 'medium', shadowFar: 3072, shadowNear: 2048, shimmer: true,  samples: 2, dust: 0.70, salt: 0.70, softShadow: true  },
+  { name: 'medium', shadowFar: 3072, shadowNear: 1536, shimmer: true,  samples: 2, dust: 0.70, salt: 0.70, softShadow: true  },
   { name: 'low',    shadowFar: 2048, shadowNear: 1024, shimmer: true,  samples: 0, dust: 0.45, salt: 0.40, softShadow: false },
-  { name: 'potato', shadowFar: 1024, shadowNear: 1024, shimmer: false, samples: 0, dust: 0.25, salt: 0.20, softShadow: false },
+  { name: 'potato', shadowFar: 1024, shadowNear:  512, shimmer: false, samples: 0, dust: 0.25, salt: 0.20, softShadow: false },
 ];
 
 const RSCALE = [1.0, 0.88, 0.78, 0.68, 0.58];

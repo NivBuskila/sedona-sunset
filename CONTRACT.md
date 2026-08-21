@@ -271,6 +271,68 @@ scale. And **the aerial term must be measured on near geometry, not only on the 
 ridge** — it was calibrated on a butte a kilometre out, where it is right, and nobody
 looked at what the same constants did to a wall at forty metres.
 
+### The sun was inside the skyline, and only the wall was ever being measured
+
+Recorded because the failure was invisible to every metric the system was watching, and
+because the shape of it is likely to recur.
+
+The sun sat at azimuth −13°, elevation 8° for several rounds, chosen on a four-row table of
+wall measurements that is still in `src/atmos.js` and is still correct. Every row of it
+measures the `wall_lit` crop. None of them looks at the floor, and the floor was at **1.5%
+sunlit** in all of them — `tools/horizon.mjs` marches the heightfield along the sun's
+bearing and finds a butte skyline of 4° to 14°, so an 8° sun was *inside the silhouette*
+and the wash was in full cast shadow. A capture with the shadow map switched off came back
+at 51%, which is what ruled out grazing cosine and shadow bias as explanations.
+
+That is what took the ground's `hf/lf` down and made System 1's granular structure
+unreadable. It was first read as microshadow flattening, then as a correct response to a
+hemispherical light, and it was neither: the light was simply absent.
+
+Elevation 11° and azimuth −9° clear the skyline. Measured across the settings tried:
+
+| azimuth | elev | floor sunlit | wall sat | wall V | grad/L |
+|---|---|---|---|---|---|
+| −13 | 8 | 0.015 | 0.633 | 0.639 | 0.118 |
+| −13 | 11 | 0.057 | 0.605 | 0.753 | 0.156 |
+| −5 | 8 | 0.261 | 0.627 | 0.259 | 0.126 |
+| **−9** | **11** | **0.705** | **0.617** | **0.565** | **0.152** |
+
+**The floor spans a factor of forty-seven across settings that move the wall by a fifth.**
+It was always the sensitive axis and it was never measured. The lesson is not about the
+sun: a table of measurements is evidence only about the thing in the crop, and a system
+that reports eight viewpoints can still be steered by one of them for four rounds.
+
+### Violet shadows on red rock cannot come from the fill, and here is the arithmetic
+
+The brief asks for violet shadows and the fill was fairly criticised as numerically grey.
+Both halves of that are true and the conclusion does not follow.
+
+Rock albedo is [0.335, 0.152, 0.082], so its **B/G is 0.54**. Reflected light cannot be
+bluer than incident × albedo, so a fill would have to arrive at B/G ≈ 1.85 — bluer than the
+zenith at this sun elevation — for shadowed rock to reflect B/G ≥ 1 and read violet. No
+physically-obtainable fill does that. The proof is in the frame: the *same* fill lands on
+sand at B/G **0.923**, hue 6.7, and on rock at B/G **0.780**, hue 12.0. The fill is cool;
+the rock throws three quarters of the blue away.
+
+The fill's own chroma, from `tools/fillprobe.mjs`, is not grey once it is read per normal —
+B/R **1.93** up-facing (hue 218), **1.29** on a vertical, **0.62** on an underside (hue 21).
+That is a 3.1× warm-to-cool swing across normals, which is both halves of what the brief
+asks for. The [0.0294, 0.0300, 0.0330] reading that looked grey was taken on the one normal
+that averages the blue dome against the warm ground, and it was also inflated by
+`FLOOR_SUNLIT`, on which see below.
+
+**So the violet on shadowed rock is airlight, not reflectance**, and it is System 5's
+in-scatter term — the same term whose neutral source function is recorded above. Anything
+System 4 does to force it would be compensating in the light for a defect in the column.
+
+`FLOOR_SUNLIT` in `src/atmos.js` was the one real defect here. It was reasoned at 0.32,
+applied to the entire lower hemisphere, and it conflated two quantities: the open wash is
+0.70 sunlit at the new sun position, but what a rock face sees below its own horizon is the
+few metres of floor at its base, in that face's own shadow. Solid angle decides it and the
+near floor has nearly all of it. At 0.70 a shaded vertical goes **pink, hue 331**. At 0.05
+it reads B/R 1.29 at a 23% channel spread against 1.12 at 11%, and the underside keeps its
+warm bounce — the bounce's *hue* is 21 at every value in the sweep, only its weight moves.
+
 ### Deferred terrain defects, carried forward from System 1
 
 Not forgiven, only deferred. Revisit these after System 4 and System 7.

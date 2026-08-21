@@ -61,9 +61,10 @@ const REGIONS = {
 };
 
 const argv = process.argv.slice(2);
-let region = null, litOnly = false;
+let region = null, litOnly = false, shadeOnly = false;
 for (let i = 0; i < argv.length;) {
   if (argv[i] === '--lit') { litOnly = true; argv.splice(i, 1); }
+  else if (argv[i] === '--shade') { shadeOnly = true; argv.splice(i, 1); }
   else if (argv[i] === '--region') { region = argv.slice(i + 1, i + 5).map(Number); argv.splice(i, 5); }
   else i++;
 }
@@ -95,8 +96,10 @@ function measure(img, [fx, fy, fw, fh]) {
   if (!px.length) return null;
 
   let use = px;
-  if (litOnly) {
-    use = px.slice().sort((a, c) => c[3] - a[3]).slice(0, Math.max(8, Math.round(px.length * LIT_FRACTION)));
+  if (litOnly || shadeOnly) {
+    const n = Math.max(8, Math.round(px.length * LIT_FRACTION));
+    const by = px.slice().sort((a, c) => c[3] - a[3]);
+    use = litOnly ? by.slice(0, n) : by.slice(-n);
   }
 
   const hues = [], bg = [];
@@ -149,7 +152,7 @@ for (const file of argv) {
   for (const [label, r] of list) {
     const m = measure(img, r);
     if (!m) continue;
-    console.log(`${name}  ${(label + (litOnly ? ' lit' : '')).padEnd(10)}  ` +
+    console.log(`${name}  ${(label + (litOnly ? ' lit' : shadeOnly ? ' shade' : '')).padEnd(12)}  ` +
       `${f(m.hMedian).padStart(7)} ${f(m.h25).padStart(6)} ${f(m.h75).padStart(6)} ` +
       `${f(m.hMean).padStart(7)} | ` +
       `${f(m.bg, 3).padStart(8)} ${f(m.bgMean, 3).padStart(5)} | ` +

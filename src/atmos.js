@@ -27,14 +27,32 @@ import * as THREE from 'three';
 
 /* ── the site and the hour ─────────────────────────────────────────────── */
 
-/* Eight degrees. Two and a half was tried in the provisional rig and is much
-   worse: the width of the band where N·L crosses zero scales with the sun's
-   height, and below about five degrees that band is thinner than a pixel, so
-   every gentle swell resolves into a razor-thin bright crest and a slope covered
-   in them reads as scratched metal. Eight still throws a shadow seven times the
-   height of what casts it, which is what the low sun was for. Kept from the
-   provisional rig on that evidence. */
-export const SUN_EL_DEG = 8.0;
+/* Eleven degrees, and the floor is why.
+   Two and a half was tried in the provisional rig and is much worse: the width
+   of the band where N·L crosses zero scales with the sun's height, and below
+   about five degrees that band is thinner than a pixel, so every gentle swell
+   resolves into a razor-thin bright crest and a slope covered in them reads as
+   scratched metal. That put a floor under this number and eight sat on it for
+   several rounds.
+   What nobody checked was whether the beam reached the ground. It did not.
+   Thresholded against this model's own predicted floor levels, the wash floor
+   was **1.5% sunlit** at eight degrees, and a capture with the shadow map
+   switched off came back at 51% — so the beam was not being lost to a grazing
+   cosine or eaten by shadow bias, it was being blocked outright by the buttes.
+   tools/horizon.mjs marches the terrain along the sun's bearing and finds a
+   skyline of four to fourteen degrees, so eight degrees was *inside* the
+   silhouette: the whole wash was in shade, which is what took the ground's
+   hf/lf down and left System 1's four rounds of granular structure unlit and
+   unreadable.
+   Eleven clears it. With the azimuth below, the floor measures 0.70 sunlit and
+   L 0.346 — the provisional rig's floor read 0.333, so this is the first frame
+   since that rig where the ground is lit at all. It costs nothing on the wall:
+   grad/L on the mid wall goes 0.118 to 0.152, further *into* the 0.12-0.16 the
+   reference photographs sit at, because a sun that clears the skyline rakes the
+   face instead of grazing it below the terminator. Eleven degrees is still
+   forty minutes of golden hour, and the shadow is five times the height of what
+   casts it rather than seven. */
+export const SUN_EL_DEG = 11.0;
 /* Off the corridor axis, and further than it looks like it should be.
    The provisional rig had this at +3.15 degrees. Two things are wrong with that
    and both were measured rather than reasoned about, because reasoning about it
@@ -74,6 +92,26 @@ export const SUN_EL_DEG = 8.0;
    shadow. The lit half sits at value 0.70 and hue +21.5, which is the population
    the reference band actually describes.
 
+   ---- -9, once the floor was measured instead of the wall ----
+   Every row of that table is a measurement of the *wall*, and the wall was the
+   only thing being looked at. The floor was at 1.5% sunlit throughout, in all
+   three columns, and none of them shows it. Re-run with the wash floor in the
+   frame, at the elevation that clears the skyline:
+
+       azimuth  elev   floor sunlit   wall sat   wall V   grad/L    hue
+        -13       8        0.015        0.633     0.639    0.118   20.0
+        -13      11        0.057        0.605     0.753    0.156   21.8
+         -5       8        0.261        0.627     0.259    0.126     --
+         -9      11        0.705        0.617     0.565    0.152   19.0
+
+   The floor spans a factor of *forty-seven* across settings that move the wall
+   by a fifth. It was always the sensitive axis and it was never measured. -9 and
+   11 take the floor from unlit to lit while holding the wall inside every band
+   it was already inside, and the structure metric goes up rather than down.
+   -5 shows why azimuth alone will not do it: it lights the floor and takes the
+   wall to value 0.259, which puts the project's own rock-colour gate in shade
+   and unmeasurable. The elevation is what makes -9 affordable.
+
    ---- and what that costs, which is worth stating plainly ----
    The brief asks for the sun to sit in the gap straight up the wash. It cannot
    also light this wall. The gap's bearing in the sun_gap framing is +9
@@ -90,7 +128,7 @@ export const SUN_EL_DEG = 8.0;
    is a real thing the composition is missing, and it needs the left wall's crest
    to drop or the wash's heading near d = 120 to change, neither of which is
    System 4's to touch. */
-export const SUN_AZ_DEG = -13.0;
+export const SUN_AZ_DEG = -9.0;
 
 const DEG = Math.PI / 180;
 export const SUN_EL = SUN_EL_DEG * DEG;
@@ -498,7 +536,14 @@ function texelSolidAngle(j) {
   return Math.abs(y1 - y0) * (Math.PI / SKY_W);
 }
 
-export function computeAtmosphere() {
+/**
+ * @param {object} [over] Overrides for the terms that are properties of *this
+ *   canyon* rather than of the atmosphere — the sunlit fraction of the local
+ *   floor and the escarpment coverage. They exist so tools/fillprobe.mjs can
+ *   sweep them without editing this file, which is how an in-flight edit to the
+ *   sun azimuth once ended up committed by another agent's emergency `add -A`.
+ */
+export function computeAtmosphere(over = {}) {
   const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
   /* Pass A, coarse and single-scattered, to find the multiple-scattering
@@ -592,8 +637,31 @@ export function computeAtmosphere() {
      shadow-to-sunlit ratio, which is the measurement this system is judged on.
      Roughly a third of what a surface down here sees is still catching sun —
      bank crests, the mid-channel bars, the reach up-canyon past the shadow
-     line — so that is the fraction the beam is admitted at. */
-  const FLOOR_SUNLIT = 0.32;
+     line — so that is the fraction the beam is admitted at.
+
+     Measuring it turned up something better than a number: the quantity was
+     conflated. The open wash floor is 0.70 sunlit at the sun position above —
+     measured with tools/fillprobe.mjs --floor, against 0.015 before the sun
+     cleared the skyline — but 0.70 is not what belongs here, and putting it
+     here turns a shaded vertical face pink at hue 331. The reason is that this
+     value is applied to the *entire* lower hemisphere, and what a rock face
+     actually sees below its own horizon is dominated by the few metres of floor
+     at its base, which is in that face's own shadow whatever the open wash is
+     doing two hundred metres up-canyon. Solid angle is what decides it and the
+     near floor has almost all of it.
+     So this term is the *near, self-shadowed* floor and is small; the open
+     wash's 0.70 is a distant bounce that arrives through the near-horizon
+     directions and is already carried by the escarpment term below. 0.05 is the
+     reach that peeks past the face's own shadow line.
+     What that buys, from tools/fillprobe.mjs: a face turned away from the sun
+     goes from B/R 1.12 at an 11% channel spread — the reading that was fairly
+     called numerically grey — to B/R 1.29 at 23%, hue 224. Undersides keep the
+     warm bounce the brief asks for at hue 21 and B/R 0.62; that hue does not
+     move across the whole sweep, only its weight does, so this trades no warmth
+     for the chroma. And it barely touches intensity: the fill's luminance on a
+     vertical moves 0.0366 to 0.0335, so the shadow-to-sunlit ratio is the sky
+     and escarpment terms' business, not this one's. */
+  const FLOOR_SUNLIT = over.floorSunlit ?? 0.05;
   const localGround = groundSpec.length ? [0, 0, 0] : [0, 0, 0];
   {
     const shaded = new Float64Array(NLAM);
@@ -613,8 +681,8 @@ export function computeAtmosphere() {
      the sky is not a free lunch either way: it takes blue out and puts red
      back, which is most of why shade here reads as warm-dark rather than as a
      blue hole. */
-  const COVER_MAX = 0.46;          // fraction of the horizon that is rock
-  const COVER_TOP = 0.52;          // sin of the elevation it thins out at (~31 deg)
+  const COVER_MAX = over.coverMax ?? 0.46;          // fraction of the horizon that is rock
+  const COVER_TOP = over.coverTop ?? 0.52;          // sin of the elevation it thins out at (~31 deg)
   const sunH = [SUN_DIR.x, 0, SUN_DIR.z];
   { const l = Math.hypot(sunH[0], sunH[2]); sunH[0] /= l; sunH[2] /= l; }
   /* Sky irradiance on a vertical, needed before the wall term can be evaluated;
