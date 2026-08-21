@@ -146,6 +146,90 @@ for (let k = 0; k < 9; k++) {
 }
 /* Irradiance the probe will actually deliver on the six axes, so an unphysical
    negative lobe shows up here rather than as a black patch in the render. */
+/* ── what the renderer will actually show ─────────────────────────────────
+ *
+ * The model above is in physical units and every target in CONTRACT.md is in
+ * HSV read off an 8-bit PNG. Converting by eye between the two is a two-stop
+ * error waiting to happen — the first pass at this system used a gamma-2.2
+ * approximation and mis-stated the shadow ratio by a factor of two, because
+ * ACES has a toe and a shoulder and is nothing like a gamma curve at either
+ * end. So the tone chain is reproduced here exactly as three implements it,
+ * and the surfaces below are put through it with the same albedos their
+ * shaders use. A render is then only needed to check geometry and shadowing,
+ * not to find out what a number will be.
+ */
+const { EXPOSURE, DIAG } = await import('../src/sky.js');
+const SCALE = DIAG.scale;
+
+function rrt(v) {
+  const a = v * (v + 0.0245786) - 0.000090537;
+  const b = v * (0.983729 * v + 0.4329510) + 0.238081;
+  return a / b;
+}
+const ACES_IN = [[0.59719, 0.35458, 0.04823], [0.07600, 0.90834, 0.01566], [0.02840, 0.13383, 0.83777]];
+const ACES_OUT = [[1.60475, -0.53108, -0.07367], [-0.10208, 1.10813, -0.00605], [-0.00327, -0.07276, 1.07602]];
+const mul = (m, c) => m.map(r => r[0] * c[0] + r[1] * c[1] + r[2] * c[2]);
+/** Scene linear radiance → sRGB 0..1, exactly as three's ACESFilmic path does. */
+function tone(c) {
+  let v = c.map(x => Math.max(0, x) * EXPOSURE / 0.6);
+  v = mul(ACES_IN, v).map(rrt);
+  v = mul(ACES_OUT, v).map(x => Math.min(1, Math.max(0, x)));
+  return v.map(enc);
+}
+const show = (label, L) => {
+  const p = tone(L);
+  const q = hsv(...p);
+  console.log(`  ${label.padEnd(26)} rgb(${p.map(x => String(Math.round(x * 255)).padStart(3)).join(',')})` +
+    `  V ${q.v.toFixed(3)}  sat ${q.s.toFixed(3)}  hue ${q.h.toFixed(0).padStart(4)}`);
+  return q;
+};
+
+/* Albedos as the shaders use them: rock.js's hematite-cemented sandstone and
+   the wash floor's mixed sand and oxide dirt. */
+const ROCK = [0.335, 0.152, 0.082];
+const SAND = [0.335, 0.212, 0.140];
+const cosAz = Math.abs(Math.sin(atmos.SUN_AZ)) * Math.cos(atmos.SUN_EL);
+const refl = (alb, E) => alb.map((a, k) => a * E[k] * SCALE / Math.PI);
+const beam = (k, c) => s[k] * c;
+
+console.log('predicted pixels (ACES at exposure ' + EXPOSURE + ', scale ' + SCALE + ')');
+const wallLit = show('wall, cos ' + cosAz.toFixed(2) + ' on beam',
+  refl(ROCK, probeAt(atmos.SUN_DIR.x, 0, atmos.SUN_DIR.z).map((v, k) => v + beam(k, cosAz))));
+const wallShade = show('wall, no beam',
+  refl(ROCK, probeAt(-atmos.SUN_DIR.x, 0, -atmos.SUN_DIR.z)));
+show('wall, square to beam',
+  refl(ROCK, probeAt(atmos.SUN_DIR.x, 0, atmos.SUN_DIR.z).map((v, k) => v + beam(k, Math.cos(atmos.SUN_EL)))));
+const floorLit = show('floor, sunlit',
+  refl(SAND, probeAt(0, 1, 0).map((v, k) => v + beam(k, Math.sin(atmos.SUN_EL)))));
+/* The airlight terrain.js and rock.js add to shadow, in absolute scene units,
+   at the mid-distance where their distance ramps are about half open. Kept in
+   step with those two files by hand; if they diverge the shadow hue printed
+   here is a fiction, which is the only thing about this tool that can rot. */
+const AIRLIGHT = [0.004, 0.009, 0.028].map(v => v * 0.65);
+show('floor, shadowed', refl(SAND, probeAt(0, 1, 0)).map((v, k) => v + AIRLIGHT[k]));
+show('  same, no airlight', refl(SAND, probeAt(0, 1, 0)));
+show('rock, shadowed + air', refl(ROCK, probeAt(-atmos.SUN_DIR.x, 0, -atmos.SUN_DIR.z))
+  .map((v, k) => v + AIRLIGHT[k]));
+show('overhang underside', refl(SAND, probeAt(0, -1, 0)));
+console.log(`  shadow : sunlit on rock    ${(wallShade.v / wallLit.v).toFixed(3)}` +
+  `   (target 0.15 - 0.25)`);
+console.log(`  wall lit V ${wallLit.v.toFixed(3)} (target 0.59-0.73)   ` +
+  `floor lit V ${floorLit.v.toFixed(3)} sat ${floorLit.s.toFixed(3)} (sat target 0.47-0.56)`);
+console.log('');
+console.log('predicted sky');
+for (const [name, phi, el] of [
+  ['3 deg from sun', 3, 8], ['gap, 15 deg up', 8, 15], ['gap, 30 deg up', 14, 30],
+  ['zenith', 90, 85], ['anti-sun horizon', 178, 2], ['anti-sun, 25 deg', 178, 25],
+]) {
+  const c = at(phi, el);
+  const g = Math.cos((phi * Math.PI) / 180) * Math.cos(atmos.SUN_EL) * Math.cos(el * Math.PI / 180)
+    + Math.sin(atmos.SUN_EL) * Math.sin(el * Math.PI / 180);
+  const gg = 0.76 * 0.76;
+  const ph = (1 - gg) / (4 * Math.PI * Math.pow(Math.max(1e-4, 1 + gg - 2 * 0.76 * g), 1.5));
+  show(name, [0, 1, 2].map(k => (c[k] + c[3] * ph * A.mieTintRGB[k]) * SCALE));
+}
+console.log('');
+
 const N = [['+Y up', 0, 1, 0], ['-Y down', 0, -1, 0],
 ['toward sun', atmos.SUN_DIR.x, 0, atmos.SUN_DIR.z],
 ['away from sun', -atmos.SUN_DIR.x, 0, -atmos.SUN_DIR.z],

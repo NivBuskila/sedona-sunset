@@ -63,10 +63,18 @@ export const EXPOSURE = 1.0;
 
 /* ── the fog colour ────────────────────────────────────────────────────────
  * Aerial perspective is System 5's, but scene.fog needs a colour now and the
- * honest one is the radiance of the air itself. Taken as the azimuth-weighted
- * mean of the sky map through the first six degrees of elevation, weighted
- * toward the up-wash half because that is where the camera spends its time and
- * a single constant has to be a compromise somewhere.
+ * honest one is the radiance of the air itself: the mean of the sky map through
+ * the first six degrees of elevation, which is the band a distant butte sits
+ * against.
+ *
+ * The first version weighted this toward the up-wash half on the grounds that
+ * the camera looks that way most of the time. That is the direction the sky is
+ * four times brighter than anywhere else, so the weighting produced a fog at
+ * value 0.86 — brighter than any rock in the scene — and every distant butte
+ * dissolved into it. A single constant cannot express a term that varies by two
+ * stops with azimuth; weighting it toward the extreme is the worst way to pick
+ * the constant, not the best. Flat mean, and the directionality is System 5's
+ * to add properly.
  */
 export const FOG = (() => {
   const { lut, SKY_W, SKY_H } = A;
@@ -76,10 +84,7 @@ export const FOG = (() => {
     if (y < 0 || y > 0.105) continue;                    // 0 … 6 degrees
     for (let i = 0; i < SKY_W; i++) {
       const phi = ((i + 0.5) / SKY_W) * Math.PI;
-      /* Toward the sun the air is a bright orange glow and away from it a dusty
-         rose; the camera looks up-wash most of the time, so the mean is biased
-         that way rather than being flat. */
-      const wt = 0.35 + 0.65 * (0.5 + 0.5 * Math.cos(phi));
+      const wt = 1;
       const o = (j * SKY_W + i) * 4;
       const ph = phaseHG(Math.cos(phi) * Math.cos(SUN_EL));
       r += (lut[o] + lut[o + 3] * ph * A.mieTintRGB[0]) * wt;

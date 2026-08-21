@@ -70,11 +70,15 @@ export const SUN_DIR = new THREE.Vector3(
    cleaner and less muddy than a sea-level sunset. */
 const SITE_ALT = 1350;
 /* Vertical aerosol optical depth at 550 nm, measured upward from the site.
-   0.055 is a clear continental day with a little dust in the boundary layer —
-   the Colorado Plateau in spring. Below about 0.03 the horizon glow disappears
-   and the sky goes to a hard cyan; above 0.12 the distant buttes vanish into
-   milk. */
-const AOD550 = 0.055;
+   0.055 was the first estimate and is too dirty for here. Rendered, it put the
+   whole sky within thirty degrees of the sun at saturation 0.03 — flat white —
+   because the Mie forward lobe is broad at g = 0.76 and its magnitude on a
+   grazing path is enormous. The Colorado Plateau in clear spring air runs
+   0.025 to 0.04 at this altitude, and 0.032 keeps a tight bright aureole
+   around the disc while letting the blue back in above about fifteen degrees.
+   Below about 0.02 the horizon glow disappears and the sky goes to a hard
+   cyan; above 0.1 the distant buttes vanish into milk. */
+const AOD550 = 0.032;
 /* Coarse desert dust is a shallow spectral slope. Fine urban haze would be 1.3. */
 const ANGSTROM = 0.8;
 /* Single-scattering albedo of the aerosol. Mineral dust absorbs a little. */
@@ -534,8 +538,19 @@ export function computeAtmosphere() {
      out violet, and burying the horizon in red rock is how a previous rig ended
      up with warm grey shade and no warm/cool split at all. */
   const ROCK_ALBEDO = [0.335, 0.152, 0.082];
-  const COVER_MAX = 0.30;          // fraction of the horizon that is rock
-  const COVER_TOP = 0.26;          // sin of the elevation it thins out at (~15 deg)
+  /* How much of the sky a surface down in the wash cannot see. The first
+     estimate was 0.30 up to fifteen degrees, on the reasoning that this is a
+     broad wash and not a slot canyon, and it was far too generous: from the
+     floor, a 40 m wall standing 30 m away subtends fifty degrees on its own,
+     and there is one on each side. Measured against that geometry the aperture
+     is a little over half the dome, and the consequence is the one the target
+     asks for — a shaded face falls from 37 percent of a sunlit one to inside
+     the 15-25 percent that real Sedona shade sits at. The rock that replaces
+     the sky is not a free lunch either way: it takes blue out and puts red
+     back, which is most of why shade here reads as warm-dark rather than as a
+     blue hole. */
+  const COVER_MAX = 0.58;          // fraction of the horizon that is rock
+  const COVER_TOP = 0.62;          // sin of the elevation it thins out at (~38 deg)
   const sunH = [SUN_DIR.x, 0, SUN_DIR.z];
   { const l = Math.hypot(sunH[0], sunH[2]); sunH[0] /= l; sunH[2] /= l; }
   /* Sky irradiance on a vertical, needed before the wall term can be evaluated;
@@ -544,8 +559,11 @@ export function computeAtmosphere() {
 
   const wallRadiance = (d, out) => {
     const hl = Math.hypot(d[0], d[2]) || 1e-6;
-    /* A wall seen in direction d faces back along -d, so it is sunlit exactly
-       when it sits on the far side of the corridor from the sun. */
+    /* A wall seen in direction d faces back along -d, so its cosine to the sun
+       is the component of -d along the sun's azimuth. Crucially that cosine is
+       small for both of this corridor's walls, because the sun is only thirteen
+       degrees off the axis they run along — which is why replacing sky with rock
+       darkens the environment here rather than brightening it. */
     const facing = Math.max(0, -(d[0] * sunH[0] + d[2] * sunH[2]) / hl);
     const eDirect = facing * Math.cos(SUN_EL);
     for (let k = 0; k < 3; k++) {
@@ -553,7 +571,22 @@ export function computeAtmosphere() {
     }
     return out;
   };
-  const coverAt = (y) => (y < 0 ? 1 : (y >= COVER_TOP ? 0 : COVER_MAX * (1 - y / COVER_TOP)));
+  /* The escarpment is not all the way round: the corridor is open along its own
+     axis and walled across it, so coverage follows the lateral component of the
+     view direction. Without this the model credits a wall in the down-wash
+     direction, where there is only more wash, and that phantom wall is square to
+     the sun and therefore the brightest thing in the environment — it was
+     raising the fill instead of lowering it. */
+  const AXIS = [-SUN_DIR.z, SUN_DIR.x];        // horizontal, across the corridor
+  { const l = Math.hypot(AXIS[0], AXIS[1]); AXIS[0] /= l; AXIS[1] /= l; }
+  const coverAt = (d) => {
+    const y = d[1];
+    if (y < 0) return 1;
+    if (y >= COVER_TOP) return 0;
+    const hl = Math.hypot(d[0], d[2]) || 1e-6;
+    const lat = Math.abs((d[0] * AXIS[0] + d[2] * AXIS[1]) / hl);
+    return COVER_MAX * (1 - y / COVER_TOP) * lat;
+  };
 
   /* SH9 of that environment. Three's LightProbe takes exactly this and returns
      the cosine-convolved irradiance for any normal, which means the fill is
@@ -590,7 +623,7 @@ export function computeAtmosphere() {
         const cH = Math.max(0, d3[1]);
         for (let k = 0; k < 3; k++) eSkyH[k] += (k === 0 ? sky0 : k === 1 ? sky1 : sky2) * cH * dw;
 
-        const cov = coverAt(d3[1]);
+        const cov = coverAt(d3);
         if (d3[1] < 0) { env[0] = groundRGB[0]; env[1] = groundRGB[1]; env[2] = groundRGB[2]; }
         else if (cov > 0) {
           wallRadiance(d3, wall);

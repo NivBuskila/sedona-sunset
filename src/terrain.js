@@ -1398,16 +1398,20 @@ export function makeTerrainMaterial(tex) {
          against the 15-25% a shaded face should read, so there is no room to add
          energy, only to redistribute it. Roughly the same total, most of it in
          blue, which is what takes the shadow past neutral into violet. */
-      /* Rescaled by System 4. This is a radiance in absolute scene units added
-         outside the albedo product, so unlike everything else in the shader it
-         does not follow the lights: when the rig went from five hand-tinted
-         lights to a physically scaled one the frame's radiance moved by 2.0 and
-         this constant had to move with it or the wash floor went lavender —
-         which is exactly what the first capture of the new rig showed, an
-         additive blue ten times the surface's own. The number is otherwise
-         unchanged from the value System 1 measured. */
+      /* Rescaled hard by System 4, and downward. This is a radiance in absolute
+         scene units added outside the albedo product, so unlike everything else
+         in the shader it does not follow the lights — and it was carrying far
+         more than its share. It exists because the provisional fill was a warm
+         grey that left shadows red-dominant with no route to blue; the probe
+         that replaced it delivers genuinely cool skylight on upward faces, so
+         the shadowed floor is already a neutral mauve before this term is added
+         at all. Left at its old weight against the new radiance it put an
+         additive blue three times the surface's own reflectance on the floor and
+         turned the whole wash lavender, which is what the first two captures of
+         this rig showed. At a third of the original figure it does what it was
+         for: a distance-dependent violet lift on shade, and nothing else. */
       reflectedLight.indirectDiffuse +=
-        vec3(0.024, 0.048, 0.180) * airM * (0.30 + 0.70 * airD) * tAO;`);
+        vec3(0.004, 0.009, 0.028) * airM * (0.30 + 0.70 * airD) * tAO;`);
   };
   mat.customProgramCacheKey = () => 'sedona-terrain-v3';
   return mat;
