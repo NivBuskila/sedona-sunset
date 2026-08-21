@@ -2211,7 +2211,39 @@ export function makeTerrainMaterial(tex) {
              has to be caught on the way past — and this wrapper is already the
              single point every shadow lookup in the lighting chunk goes through. */
           gShadow = min(gShadow, s);
-          return gRake * mix(s, mix(s, 0.55, 0.80), 1.0 - gFoot);
+          /* ---- converge on the footprint's own mean, not on a constant ----
+             This used to read mix(s, mix(s, 0.55, 0.80), 1.0 - gFoot), which in
+             the far field returns 0.2*s + 0.44. The intent was right — once a
+             screen pixel covers many shadow texels the mean coverage is the
+             correct answer and a single binary test is not — but a constant
+             cannot tell the two cases apart. A footprint over a gravel bed
+             really is about half lit, and 0.55 is a fair guess at it. A footprint
+             inside the cast shadow of a butte is lit not at all, and there the
+             constant hands the surface forty-four per cent of full sunlight that
+             nothing in the scene is emitting.
+             That leak is then multiplied by gRake, which carries every
+             high-frequency term the direct light is supposed to modulate — the
+             rake march, the ripple and lineation shadows, the grit's sockets. So
+             a distant shaded bank got a phantom sun at nearly half strength with
+             the full micro-shadow signal written across it, which is exactly the
+             "every shaded bank turns into noise instead of ground" complaint.
+             Measured on the far_270 bank, the leak was supplying 39% of the
+             luminance and 60% of the standard deviation.
+             So take the mean rather than guess it: four extra taps at the
+             footprint's own spread, averaged with the centre. Deep inside a
+             shadow all five agree on zero and the surface goes properly dark;
+             over a hash they disagree and the average is the coverage the
+             footprint actually has. Offsets are pre-divide, hence the * sc.w,
+             and they collapse to zero in the near field so this is a no-op
+             there — which also keeps it out of non-uniform control flow, since
+             these are implicit-LOD fetches. */
+          float wide = 1.0 - gFoot;
+          vec2 t = (2.6 * wide / sz) * sc.w;
+          float m = getShadow(sm, sz, si, sb, sr, sc + vec4( t.x,  t.y, 0.0, 0.0))
+                  + getShadow(sm, sz, si, sb, sr, sc + vec4(-t.x,  t.y, 0.0, 0.0))
+                  + getShadow(sm, sz, si, sb, sr, sc + vec4( t.x, -t.y, 0.0, 0.0))
+                  + getShadow(sm, sz, si, sb, sr, sc + vec4(-t.x, -t.y, 0.0, 0.0));
+          return gRake * mix(s, (s + m) * 0.2, wide * 0.85);
         }
         #define getShadow(a, b, c, d, e, f) footShadow(a, b, c, d, e, f)
       #endif`);
