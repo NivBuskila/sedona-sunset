@@ -27,7 +27,11 @@ await run({ width: 1600, height: 900, hash: 'high&noadapt' }, async ({ page }) =
   await page.evaluate(() => window.__game.begin());
   await page.waitForTimeout(3000);
 
-  const v = VIEWS.find((q) => q.name === view);
+  /* The four far framings are deliberately not in VIEWS — widening that table
+     would orphan every figure quoted against it — so accept a camera written out
+     as `d,yaw,pitch` for anything outside the standard eight. */
+  const v = VIEWS.find((q) => q.name === view)
+    || (() => { const [d, yaw, pitch] = view.split(',').map(Number); return { d, yaw, pitch }; })();
   const res = await page.evaluate(([vv, ps]) => {
     const g = window.__game;
     g.walkTo(vv.d); g.lookAt(vv.yaw, vv.pitch);

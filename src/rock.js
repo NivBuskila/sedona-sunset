@@ -354,6 +354,23 @@ const S0 = -34, S1 = 356;
 const DS = 0.62;
 const NBACK = 7;
 
+/* The corridor cannot outrun the path it is hung on, and it was doing exactly
+   that. `WashPath.length` is 332.3 m and `posAt` clamps past its end, so every
+   one of the thirty-nine columns from s = 332 to S1 = 356 was placed at the same
+   point — x 0.0, z -319.9, on the corridor axis — and the wall's lateral offsets
+   fanned that stack of coincident columns into a solid slab standing across the
+   channel at the head of the walk, with the apron leaning on it reaching to
+   |x| 0.0 at fourteen to sixteen metres of height.
+   That is the ledge in `far_320`: `tools/_pixowner.mjs` attributes it to `apronL`
+   and `apronR`, and `tools/_headprofile.mjs` puts its crown five metres above the
+   11.3 m the amphitheatre behind it stands at on the axis. It also explains why
+   moving twenty-four metres of relief behind it changed no pixel by more than
+   13/255 — the occluder is rock geometry and does not depend on the height field
+   at all.
+   Six metres of margin so the end fade below finishes on real path rather than
+   on the clamp. */
+const sEndOf = (path) => Math.min(S1, path.length - 6.0);
+
 /** Wash floor datum, used to find the foot of the wall. This has to track the
  *  ground, because the toe search asks where the apron has climbed three metres
  *  above the floor and the floor is what the terrain says it is. */
@@ -396,7 +413,8 @@ function toeAt(terrain, px, pz, nx, nz, dat) {
 }
 
 function wallGrid(path, terrain, side) {
-  const nu = Math.round((S1 - S0) / DS) + 1;
+  const sEnd = sEndOf(path);
+  const nu = Math.round((sEnd - S0) / DS) + 1;
   const nv = COL.n + NBACK;
 
   const pos = new Float32Array(nu * nv * 3);
@@ -494,7 +512,10 @@ function wallGrid(path, terrain, side) {
        the corridor — right in the middle of the view every critic praised. It is
        walked down into the apron instead, which also widens the gap the sun sits
        in and hands the far distance over to the buttes. */
-    const endFade = (1 - smoothstep(S1 - 46, S1 - 3, s)) * (1 - smoothstep(S0 + 40, S0 + 3, s));
+    /* Keyed to where the curtain actually ends rather than to the authored S1,
+       which is past the end of the path — see `sEndOf`. Same 46 m walk-down; it
+       now lands on the last real column instead of on the clamp. */
+    const endFade = (1 - smoothstep(sEnd - 46, sEnd - 3, s)) * (1 - smoothstep(S0 + 40, S0 + 3, s));
     cCrest[i] = Math.max(1.5, crest * endFade);
   }
 
@@ -924,7 +945,21 @@ function apronProfile(foot, terrain, side) {
     /* Between the chutes the whole column is put three metres under the ground,
        which hides it without a special case anywhere else. */
     yTop[i] = live[i] ? g + H : g - 3.0;
-    const Lmax = H / AP_TAN * 2.4 + 6;
+    /* And it cannot reach the middle of the wash, which at the head it was
+       doing: `tools/_headprofile.mjs` had `apronL`'s toe at |x| 0.0 to 1.4 over
+       s = 310 to 334, so the two aprons met on the corridor axis and buried the
+       channel under a continuous ramp. The seating walk below cannot catch that,
+       because at the head the ground the apron lands on is genuinely low — the
+       apron is not floating, it is simply too long for the room it has.
+       A wash keeps its bed swept: debris delivered to the toe is carried off by
+       the flow, so a talus toe stops where the channel starts rather than where
+       gravity would let it stop. The channel's width is not a quantity this file
+       has, but the wall's own set-back tracks it — both narrow together toward the
+       head — so the reach is capped at seven tenths of it, leaving the inner
+       third of the channel clear. It binds only at the head:
+       everywhere in the eight standard framings the seating walk stops the apron
+       first. */
+    const Lmax = Math.min(H / AP_TAN * 2.4 + 6, Math.max(2.0, u * 0.70));
     let L = Lmax;
     for (let d = 1.0; d <= Lmax; d += 0.5) {
       const yy = yTop[i] - d * AP_TAN + 0.11 * AP_TAN * d * d / Lmax;
@@ -1419,7 +1454,10 @@ export function buildTalus(path, terrain, material) {
   const sc = new THREE.Vector3(), tr = new THREE.Vector3();
 
   for (let n = 0; n < N; n++) {
-    const s = S0 + 6 + rand() * (S1 - S0 - 12);
+    /* Same clamp as the curtain: past the path's end every station is the same
+       point, so blocks drawn from beyond it were all landing in one heap on the
+       axis at the head. */
+    const s = S0 + 6 + rand() * (sEndOf(path) - S0 - 12);
     const side = rand() < 0.5 ? 1 : -1;
     path.posAt(s, p);
     const th = path.headingAt(s);
