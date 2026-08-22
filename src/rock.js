@@ -482,6 +482,38 @@ function wallGrid(path, terrain, side) {
        Sedona skyline recognisable. */
     let raw = 28 + 60 * (0.5 + 0.5 * fbm(s * 0.0072, side > 0 ? 71 : 97, 3, 367));
     raw -= 8 * canyon;
+    /* ---- which bed the rim stands on has to change along the wall ----
+       The snap below picks the nearest of ten bed tops, and that is right: a rim
+       is the top of whatever bed survived and it steps between them. But `raw`
+       above turns over once in a hundred and thirty-nine metres, so the nearest
+       level is the *same* level for fifty to a hundred metres at a stretch, and
+       the rim is therefore exactly constant over that whole run.
+       Across the wall that is invisible, which is why it has survived this long.
+       Along it, it is the finding the final critique ranked second overall and
+       called the most conspicuous single object in the set: from the shade_far
+       station, looking back down-canyon, the left "mesa" with the "perfectly
+       straight, un-notched, un-eroded" rimline is not a mesa at all. It is this
+       wall seen end-on — tools/_pixowner.mjs attributes those pixels to wallL and
+       hiding it puts sky at the rim — and the straight line is one CREST_LEVELS
+       entry held across the whole run the frame contains. tools/_aniso.mjs puts
+       that crop at 0.67 vertical-to-horizontal line energy, the most
+       horizontal-dominated surface in the set against 0.79 for the walls, which
+       is the "wood veneer" reading measured.
+       It also explains the "cream-white band of constant thickness running
+       perfectly parallel to the rim" in the same frame without needing a second
+       cause: bedding is level, so a layer band is level, and a rim that is also
+       level sits a constant distance above it. Step the rim between beds and the
+       parallelism goes with it.
+       Strictly subtractive, and that is not a stylistic choice — it is the rule
+       this file already applies to the butte rims twelve hundred lines down, for
+       the reason given there: the corridor skyline is what System 4 clears the
+       sun disc through, and a perturbation that can only *lower* a crest cannot
+       cost them anything, whereas a symmetric one would need re-verifying every
+       time an amplitude moved. On delivery morning that is the whole argument.
+       Six and a half metres at a twenty-six metre wavelength, against level
+       spacings of three metres within a pair and ten between pairs, so the snap
+       lands on a different bed several times in the length of a framing. */
+    raw -= 6.5 * (0.5 + 0.5 * fbm(s * 0.0385, side > 0 ? 131 : 137, 2, 383));
     raw *= 1 - open;
     let best = CREST_LEVELS[0], bd = 1e9;
     for (const lv of CREST_LEVELS) { const d = Math.abs(lv - raw); if (d < bd) { bd = d; best = lv; } }
