@@ -57,11 +57,11 @@ function sampleGpu(ms) {
   const tick = () => {
     if (stop) return;
     execFile('nvidia-smi',
-      ['--query-gpu=utilization.gpu,clocks.sm', '--format=csv,noheader,nounits'],
+      ['--query-gpu=utilization.gpu,clocks.sm,utilization.memory', '--format=csv,noheader,nounits'],
       (e, so) => {
         if (!e && so) {
-          const [u, c] = so.trim().split('\n')[0].split(',').map(s => +s);
-          if (Number.isFinite(u)) out.push([u, c]);
+          const [u, c, m] = so.trim().split('\n')[0].split(',').map(s => +s);
+          if (Number.isFinite(u)) out.push([u, c, m]);
         }
         if (!stop) setTimeout(tick, ms);
       });
@@ -70,12 +70,22 @@ function sampleGpu(ms) {
   return () => {
     stop = true;
     if (!out.length) return null;
-    const u = out.map(a => a[0]);
+    const u = out.map(a => a[0]), m = out.map(a => a[2]).filter(Number.isFinite);
     return {
       n: u.length,
       mean: Math.round(u.reduce((a, b) => a + b, 0) / u.length),
       min: Math.min(...u), max: Math.max(...u),
       clock: Math.round(out.reduce((a, b) => a + b[1], 0) / out.length),
+      /* Memory-controller utilisation, which is the metric that actually
+         separates the two things that look identical in utilization.gpu. That
+         field is the fraction of sampled time during which *any* kernel was
+         resident, so an animated desktop wallpaper drawing at 60 fps reads 65%
+         while consuming very little of the card. This machine's resting floor is
+         gpu 63-66% at mem 12%; another agent's capture is gpu 88-100% at mem
+         16-19%. Only the second one is contention worth refusing to measure
+         through, and only the second one is distinguishable here. */
+      mem: m.length ? Math.round(m.reduce((a, b) => a + b, 0) / m.length) : null,
+      memMax: m.length ? Math.max(...m) : null,
     };
   };
 }
@@ -84,6 +94,7 @@ const args = process.argv.slice(2);
 const getf = (k, d) => { const i = args.indexOf('--' + k); return i < 0 ? d : args[i + 1]; };
 const has = (k) => args.includes('--' + k);
 
+let out_idleQuiet = false;
 const MAIN = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const ROOT = path.resolve(getf('root', MAIN));
 const TAG = getf('tag', 'worktree');
@@ -166,16 +177,49 @@ const ABLATIONS = [
  * the 39% "regression" that cost this project three hours. A run that does not
  * report this figure cannot be compared with a run taken at another time. */
 const IDLE_SECS = Number(getf('idlesecs', 10));
-process.stderr.write(`  [${TAG}] sampling foreign GPU load for ${IDLE_SECS}s before boot\n`);
-const stopIdle = sampleGpu(500);
-await new Promise(r => setTimeout(r, IDLE_SECS * 1000));
-const idle = stopIdle();
-if (idle) process.stderr.write(`  [${TAG}] foreign load: mean ${idle.mean}%, ` +
-  `${idle.min}-${idle.max}% over ${idle.n} samples — ` +
-  `${idle.mean <= 12 ? 'MACHINE IS QUIET' : 'NOT QUIET, this run is contended'}\n`);
+/* Thresholds on the memory controller, not on utilization.gpu — see the note in
+   sampleGpu. This box cannot be made truly idle by a tool: the animated wallpaper,
+   the vendor overlay and the editor are permanent residents and hold gpu-util near
+   65% while barely touching the card. QUIET therefore means "at the resting floor,
+   with no other render work on the GPU", which is both the strongest claim
+   available and, since the user has a desktop too, the more representative one. */
+const QUIET_MEM = Number(getf('quietmem', 13));
+const QUIET_GPU = Number(getf('quietgpu', 78));
+const WAIT_MIN = Number(getf('waitquiet', 0));
+const isQuiet = (s) => !!s && (s.mem == null
+  ? s.mean <= QUIET_GPU
+  : s.memMax <= QUIET_MEM + 1 && s.mean <= QUIET_GPU);
+
+/* `--waitquiet N` refuses to boot until the card is actually free, re-checking
+   for up to N minutes. The gate has to sit here, immediately before the launch,
+   rather than in a shell wrapper around the whole command: the boot is forty
+   seconds and a capture starting inside it would be measured by a run that had
+   already printed QUIET. Sampling and launching back to back is the tightest the
+   race gets from outside the driver. */
+const sampleIdle = async () => {
+  const stop = sampleGpu(500);
+  await new Promise(r => setTimeout(r, IDLE_SECS * 1000));
+  return stop();
+};
+let idle = null;
+const deadline = Date.now() + WAIT_MIN * 60_000;
+for (;;) {
+  process.stderr.write(`  [${TAG}] sampling foreign GPU load for ${IDLE_SECS}s before boot\n`);
+  idle = await sampleIdle();
+  if (!idle) break;                      /* no nvidia-smi: nothing to gate on */
+  const quiet = isQuiet(idle);
+  process.stderr.write(`  [${TAG}] foreign load: gpu ${idle.mean}% (${idle.min}-${idle.max}), ` +
+    `mem ${idle.mem}% (max ${idle.memMax}) over ${idle.n} samples — ` +
+    `${quiet ? 'MACHINE IS QUIET' : 'NOT QUIET, this run would be contended'}\n`);
+  if (quiet || Date.now() >= deadline) break;
+  process.stderr.write(`  [${TAG}] waiting, ` +
+    `${Math.round((deadline - Date.now()) / 60000)} min left before giving up\n`);
+  await new Promise(r => setTimeout(r, 20_000));
+}
+out_idleQuiet = isQuiet(idle);
 
 const browser = await chromium.launch({ headless: true, args: LAUNCH_ARGS });
-const out = { tag: TAG, root: ROOT, w: W, h: H, rows: [], idle };
+const out = { tag: TAG, root: ROOT, w: W, h: H, rows: [], idle, quiet: out_idleQuiet };
 let stopGpu = () => null;
 
 try {
@@ -463,9 +507,9 @@ else {
     `   frame L ${out.frame ? out.frame.L : '?'} clipped ${out.frame ? out.frame.hot : '?'}%` +
     `   ${out.real ? 'looks like the scene' : '✗ DOES NOT LOOK LIKE THE SCENE'}`);
   if (out.error) console.log(`  ✗ ${out.error}`);
-  if (out.idle) console.log(`  foreign GPU load before boot: mean ${out.idle.mean}%, ` +
-    `${out.idle.min}-${out.idle.max}% over ${out.idle.n} samples — ` +
-    `${out.idle.mean <= 12 ? 'the machine was quiet, these numbers are the honest ones'
+  if (out.idle) console.log(`  foreign load before boot: gpu ${out.idle.mean}% (${out.idle.min}-${out.idle.max}), ` +
+    `mem ${out.idle.mem}% (max ${out.idle.memMax}) over ${out.idle.n} samples — ` +
+    `${out.quiet ? 'MACHINE WAS QUIET, these numbers are the honest ones'
       : 'NOT QUIET — every figure below is a floor, not an estimate'}`);
   if (has('ladder')) {
     console.log(`  best of ${out.passes} passes per rung; the spread is how much the machine moved under it`);
