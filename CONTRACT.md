@@ -3510,3 +3510,40 @@ errors were in one number and the number looked clean. A cross-session compariso
 ablation, and **a frame should be looked at before it is measured**. The structural answer is that
 `#noastern` and `#hardshadow` make both terms ablatable inside a single build, so the comparison
 cannot span anything.
+
+### What the ninth view measures, and the paired window that makes it a measurement
+
+`shade_far` carries the only **paired** window in the region tables: `floor shade` and `floor lit`,
+both on wash floor, one in fill and one in sun. That pairing is the whole value of the station.
+Identical albedo either side means every difference between the two rows is light transport and
+none of it is pigment — which is the control that no single-window shade figure in this project has
+ever had. Added to `sat.mjs`, `hue.mjs` and `grad.mjs` with the same crops in all three.
+
+Measured on `s4v_shade_far`, shipped pipeline, 1600×900:
+
+| figure | `floor shade` | `floor lit` | reads as |
+| --- | --- | --- | --- |
+| hue median | **4.1°** | 21.3° | 17.2° of separation on one albedo |
+| hue q25 | **−3.0°** | 18.4° | a quarter of the shaded floor past red into magenta |
+| B/G | **0.888** | 0.631 | the fill is far bluer than the sun |
+| saturation | 0.641 | 0.627 | shade holds its pigment |
+| V | 0.131 | 0.642 | |
+| grad/L | **0.124** | 0.120 | structure survives the fill |
+| hf/lf | 0.51 | 0.55 | |
+
+Two things worth reading off this. The brief's **"purple shadows in the crevices" is now a number
+rather than an impression**: hue median 4.1° with the lower quartile at −3.0° means a quarter of the
+shaded floor has wrapped past red into the magenta quadrant, at B/G 0.888 against the sunlit
+0.631. And `grad/L` holds at **0.124 in shade against 0.120 in sun**, both inside the 0.12–0.16
+band, so the fill is adding light without flattening micro-relief into wax — the failure mode a
+brighter ambient usually buys. `hf/lf` sits at 0.51 against the 0.55 gate on the shaded half, which
+is the one figure here under its gate; shade legitimately carries less high-frequency content than
+a grazing-lit surface, so this is noted rather than chased.
+
+**No wall window on this view, deliberately.** At 160 m looking astern the near wall's lower face
+is in its own shadow and only its top band catches sun, so every crop across it straddled the
+terminator and read V 0.35 at a 19-degree hue spread; the one brightly lit rock in frame is the
+distant escarpment, which aerial perspective has already desaturated to B/G 0.839 and which is
+therefore not a lit-pigment window either. A window holding both sun and shade is precisely the
+population error retired above, and the sunlit floor is the better control anyway because it shares
+its albedo with the shaded half.

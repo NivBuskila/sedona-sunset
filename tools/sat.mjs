@@ -102,6 +102,15 @@ const REGIONS = {
   sun_gap:   [['floor mid', [0.40, 0.72, 0.24, 0.18]]],
   wall_lit:  [['rock lit', [0.30, 0.24, 0.34, 0.34]]],
   wall_shade:[['rock', [0.30, 0.24, 0.34, 0.34]]],
+  /* Two windows on the same dirt, one in sun and one in fill. This is the only
+     paired window in the table and it is the point of the view: identical albedo
+     either side, so every difference between the two is light transport and none
+     of it is pigment. No wall window here on purpose — at 160 m looking astern
+     the near wall's lower face is in its own shadow and only its top band catches
+     sun, so every crop I tried straddled the terminator and read V 0.35 with a
+     19-degree hue spread. A window holding both sun and shade is the population
+     error this project retired tonight; the honest reading is the floor pair. */
+  shade_far: [['floor shade', [0.58, 0.66, 0.34, 0.28]], ['floor lit', [0.04, 0.74, 0.22, 0.20]]],
 };
 
 const f = (x) => x == null ? '  —  ' : x.toFixed(3);

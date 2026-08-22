@@ -47,6 +47,12 @@ const REGIONS = {
   ground:     [['floor', [0.24, 0.32, 0.30, 0.26]]],
   juniper:    [['wall', [0.06, 0.44, 0.18, 0.20]]],
   wash_low:   [['wall', [0.06, 0.26, 0.18, 0.22]]],
+  /* Structure in fill against structure in sun, on the same dirt. Worth having as
+     a pair here rather than only in the colour tools: shade is where micro-relief
+     stops being lit from one direction, so if a fill term is going to flatten
+     something into wax this is the window that shows it, and the sunlit half is
+     the control that says whether the surface or the lighting did it. */
+  shade_far:  [['floor shade', [0.58, 0.66, 0.34, 0.28]], ['floor lit', [0.04, 0.74, 0.22, 0.20]]],
 };
 
 function measure(img, [fx, fy, fw, fh]) {

@@ -58,6 +58,11 @@ const REGIONS = {
   sun_gap: [['floor mid', [0.40, 0.72, 0.24, 0.18]], ['wall', [0.10, 0.30, 0.16, 0.24]]],
   wall_lit: [['rock lit', [0.30, 0.24, 0.34, 0.34]], ['midwall', [0.16, 0.30, 0.20, 0.20]]],
   wall_shade: [['rock', [0.30, 0.24, 0.34, 0.34]]],
+  /* The paired window, and the one this tool exists for. Same dirt in sun and in
+     fill, so the hue difference between the two rows is the fill's colour and not
+     the ground's. No wall window: the near wall is in its own shadow at this hour
+     bar its top band, and every crop across it straddled the terminator. */
+  shade_far: [['floor shade', [0.58, 0.66, 0.34, 0.28]], ['floor lit', [0.04, 0.74, 0.22, 0.20]]],
 };
 
 const argv = process.argv.slice(2);
