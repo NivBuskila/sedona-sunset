@@ -8268,3 +8268,169 @@ what a scene-graph-wide count of rock triangles refuses, and it is why the count
 is taken over the whole graph rather than over what the frustum happened to keep.
 It was added to catch `rock missing`, which frustum culling had let past a
 per-frame triangle count; the afternoon gave it a second and more likely job.
+
+---
+
+# The black clast side faces are the ACES toe, not the clast material
+
+**The critic's number-one finding is not in `src/scatter.js` and cannot be fixed
+there.** Attributed by ablation and by inverting the transfer curve on the
+shipped frame. This is the positive result; the four eliminated hypotheses below
+matter less than it does.
+
+## What was measured
+
+`_pixowner` on `shots/sys7ship_juniper.png`, at the centroids of the largest
+dark blobs rather than at points chosen by eye (`tools/_darkspots.mjs` finds
+them, because a patch chosen by eye is not a population - System 7 nearly
+produced a false negative on the dust fix that way):
+
+| point | renders | owner | ground revealed behind it |
+|---|---|---|---|
+| 0.2269, 0.7500 | rgb(6,3,3) | `boulder0` | rgb(155,106,75) |
+| 0.1589, 0.7599 | rgb(18,7,9) | `cobble1` | rgb(156,126,98) |
+| 0.2153, 0.8098 | rgb(33,10,5) | `terrain` | rgb(176,130,90) |
+
+So the objects are mine, and the pairing of a shaded facet with the sunlit
+ground beside it is established by ablation rather than by looking.
+
+**They are not black.** Nothing in any of the four reported crops is literal
+0,0,0. The darkest pixel in the juniper crop is rgb(7,0,2).
+
+## The arithmetic that settles it
+
+Inverting three.js's ACES fit on both members of each pair recovers the
+scene-linear ratio the renderer was actually given (`tools/_toneratio.mjs`):
+
+| | display ratio | recovered scene ratio |
+|---|---|---|
+| `boulder0` | 0.62% | **3.91%** |
+| `cobble1` | 1.31% | **5.84%** |
+
+And independently, without touching the frame at all
+(`tools/_faceratio.mjs`), from the real atmosphere plus the material's own
+occlusion chain:
+
+- unoccluded anti-sun vertical facet: **8.73%** of a sunlit horizontal
+- after `occ = max(mesoAO * contact, 0.34)`: **2.97% to 6.58%**, and **3.95%**
+  at a boulder's typical `aoI` of 0.54
+
+**3.91% recovered against 3.95% predicted. The shading is correct.** Not
+approximately, not within-tolerance-if-you-squint - the frame contains exactly
+the value the material intends, and the material's value is a defensible
+fraction of what the atmosphere delivers.
+
+ACES compresses that scene ratio by a factor of **6.3** on its way to the
+display. A physically-correct 4% facet arrives as 0.6%, which is sRGB code 4.
+
+## Why no fix is available in my file
+
+This is the number that closes the question. Pushing fractions of the ground's
+scene value through the same curve:
+
+| scene fraction | arrives as sRGB code |
+|---|---|
+| 8.73% (all occlusion deleted) | **13.2** |
+| 6.00% | 7.5 |
+| 3.95% (shipped) | 3.8 |
+
+**Deleting the entire clast occlusion chain - every AO term, the burial factor,
+the contact darkening, the floor - moves rgb(6,3,3) to about rgb(13,9,7).** Still
+black, and it would undo the shaded-bank fix and the bedding cue to get there.
+There is no setting of anything in `scatter.js` that takes these faces out of
+black, because the whole available range lies inside the toe.
+
+## What this explains that a material fix never could
+
+- **Why the defect keeps returning in changed form.** It has been reported on
+  pebbles, then on gravel voids, now on slab side faces. It is not a population
+  at all - it is a luminance band, and every population that enters that band
+  acquires it.
+- **Why the chroma is right while the value is wrong.** Measured dark-facet hue
+  4-8 deg at saturation 0.62-0.77; the analytic anti-sun facet is hue 8.0 at
+  0.783. A toe crushes value and roughly preserves channel ratio, so a correctly
+  coloured facet arrives correctly coloured and invisible.
+- **Why "zero bounce from a surrounding surface that is blazing orange" is a
+  fair description of a frame in which the bounce is entirely present.** It is
+  there at 4% in scene-linear. The curve takes it to 0.6%.
+- **Why my own `0.34` floor helped and did not solve it.** It lifted the worst
+  cases off literal 0,0,0, which is what the holes were. It could not lift
+  anything out of the toe, because the toe covers the whole band.
+
+## The two complaints are in tension, and whoever takes this should know
+
+The critic asks for two things: side faces that are not black, and a contact
+shadow so the clasts stop sitting proud. The `contact` term that darkens a
+clast's own base is *the* bedding cue - its comment says so - and it is one of
+the terms holding the side faces down. Lifting the undersides to answer the
+first complaint removes the cue that answers the second. A transfer-curve fix
+gives both; a material fix trades them.
+
+## Where it goes
+
+The grade, not the material. Two observations for whoever owns it:
+
+- **The grade is already fighting this and winning slightly.** At the attributed
+  boulder pixel, `nopost` medians L=2.8 and `post` medians L=4.8 - post lifts the
+  shadow end by about 1.7x. My first hypothesis was that the grade was crushing
+  the blacks; it is doing the opposite.
+- **The size of the ask.** To bring a 4% scene facet to an sRGB code near 35,
+  where it would read as dark rock rather than as a hole, the transfer has to
+  deliver about 7% of the ground's display value where it now delivers 0.62% - an
+  eleven-fold lift at that level. That is a tone-mapping decision (ACES has an
+  unusually hard toe; AgX and Neutral are far gentler there), not a grade tweak,
+  and it is above my file and above my authority.
+
+## Four hypotheses eliminated on the way, each with a number
+
+1. **Detail crushed by quantisation.** Falsified and inverted. The dark
+   population carries **2.1 to 4.7 times** the *relative* local contrast of the
+   lit surface. Detail is present; it is 1-2 codes in absolute terms because the
+   level is low, but the surface is not flat-filled.
+2. **The grade crushing the shadow end.** Falsified and inverted - see above,
+   post lifts by 1.7x over nopost.
+3. **Card geometry.** Falsified. "Quasi-rectangular or hexagonal with a bright
+   flat top and a hard horizontal cut" is a precise description of a low-facet
+   hull, so it deserved a check. `tools/_hullface.mjs` builds the actual hulls:
+   the largest single planar facet is **6.5-9.3%** of surface area and the
+   largest near-up facet **5.9-8.1%**, across 23-53 distinct planes. The two
+   earlier rounds of bevel work succeeded. **Do not redo them.**
+4. **A sky-visibility occlusion applied to light that is mostly not sky.** This
+   was my own best idea and it is wrong; see the correction below.
+
+## My own two errors, both caught, one by luck
+
+**Naming coincidence again, and I had written up someone else's instance of it
+this morning.** I read `_probesplit.mjs`'s row "wall facing away from sun" -
+sky share 19.1%, escarpment 53.5% - and concluded that a clast's side facet is
+lit overwhelmingly by non-sky, so scaling it by a sky-visibility term
+over-darkens it by a large factor. That row is a **wall**: a surface high
+against the escarpment, with a different aperture and a different horizon. A
+clast side facet on the wash floor measures **71.5% sky** (`tools/_skyshare.mjs`),
+against 73.3% on an up-facing one. The sky share is nearly flat across the whole
+upper hemisphere, so there is no orientation-dependent error to correct and the
+existing comment - *"uniform over the facet rather than keyed to its normal,
+deliberately"* - is right, for a reason its author did not state. I took a row
+because its label matched the sentence I wanted to write.
+
+**And a borrowed constant.** I used `EXPOSURE = 1.15`, quoted from `scatter.js`'s
+blue-chip note, where it is that *capture's* exposure. The shipped value in
+`sky.js` is **0.95**. The conclusion survived unchanged - the recovered ratios
+are identical to three significant figures, because ACES is close to a power law
+in that region and a ratio is therefore scale-invariant - but **it survived by
+luck rather than by design**, and had the value landed nearer the shoulder it
+would not have. A constant read from a comment is a constant from whenever that
+comment was written. Read it from source.
+
+## On the quilt, since the record is being corrected
+
+The critic's finding that the quilted cross-hatch is on **every flat slab**
+rather than one boulder does not weaken the `uvK` result - it strengthens it.
+The tiling count is per-instance and applies to every clast, and its clamp means
+every large clast carries the *same* repeat count regardless of size. A defect
+that is coherent across all large flat clasts is what that mechanism predicts,
+and "one boulder" was always the weakest part of the attribution. What remains
+unexplained is only why halving the count destroyed the pattern without doubling
+its period. The per-instance UV rotation or offset already proposed is still the
+right first thing to try, and it is now aimed at a population rather than at an
+object.
