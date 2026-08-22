@@ -6529,3 +6529,21 @@ backtick inside a shader template literal passes it and fails only in the page.
 That cost one seven-minute render tonight and it is the fifth instance of this
 exact failure. `_p7pre` catches it. Run `_p7pre`, not `glslcheck`, before any
 capture that follows an edit inside a template literal.
+
+### Correction: my `--only` guard broke the no-flag path
+
+Commit 133365e taught `shoot.mjs` to refuse a partial `--only` match. It also
+broke omitting the flag entirely: the default was `''` while the guard tested
+`only !== null`, so no flag read as an explicitly empty list, and every caller
+that does not pass `--only` — including `tools/postpair.mjs`, i.e. the full-pool
+path — died instead of shooting the pool. Another agent found and fixed it; the
+fix is theirs and I have not touched it.
+
+Worth recording against the tool-hardening thread rather than quietly fixing,
+because the failure is instructive in the same way the others were. **I tested
+every path I was thinking about and not the one I was not** — three invocations,
+all of them passing `--only`, because `--only` was what I had just changed. A
+guard added to a flag is a change to the behaviour of *omitting* that flag, and
+that is the case least likely to appear in the tests written alongside it.
+Tonight's count of tools taught to refuse rather than quietly answer a different
+question is five; this is the first where the refusal itself became the defect.
