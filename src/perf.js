@@ -48,6 +48,7 @@
  *   #target=200                  adapt toward a rate without capping the loop
  *   #perf                        live overlay: tier, scale, cpu/gpu ms, calls
  *   #noadapt                     leave the tier alone but keep the readout
+ *   #adapt                       adapt even under automation — see `automated`
  *
  * F3 toggles the overlay at any time, which is the only way to read a number
  * off this scene without running a tool.
@@ -156,7 +157,18 @@ export const QTIERS = [
   { name: 'potato', shadowFar: 1024, shadowNear:  512, shimmer: false, samples: 0, shafts: 1, dust: 0.25, salt: 0.20, far: 2, softShadow: false, post: { bloom: 0, dofTaps:  0, flare: 0, edge: 1 } },
 ];
 
-const RSCALE = [1.0, 0.88, 0.78, 0.68, 0.58];
+/* 0.50 is new, and it is the honest kind of addition: it buys about a
+   millisecond, which is said here rather than implied. When the ladder was
+   tuned, halving the pixel count took a third off the frame and resolution was
+   by far the strongest lever available. It is not any more — measured on the
+   tree as it stands, tools/bench.mjs's `@0.7res` column takes wash_mid from
+   24.48 to 17.95, so 49% of the pixels save 27% of the frame, and the remaining
+   17.95 is vertex work, the two shadow cascades, the resolve and the post chain
+   in an order nobody has yet attributed. Stepping 0.58 to 0.50 is 74% of the
+   pixels for 91% of the frame. The rung exists because a governor whose bottom
+   step is still over budget has nowhere to put a struggling machine, not because
+   it closes the gap. */
+const RSCALE = [1.0, 0.88, 0.78, 0.68, 0.58, 0.50];
 
 /* Degradation order, as pairs of (scale index, tier index). Interleaved, and it
    opens with a pure resolution step: the frame is overwhelmingly fragment-bound
@@ -191,7 +203,7 @@ const RSCALE = [1.0, 0.88, 0.78, 0.68, 0.58];
    the 18.03 ms that was recorded as the ladder's floor. That figure was potato
    at *native* resolution, which is a setting the governor never selects: see
    the note on `rungs` below. */
-const LADDER = [[0, 0], [1, 0], [1, 1], [2, 1], [2, 2], [3, 2], [3, 3], [4, 3]];
+const LADDER = [[0, 0], [1, 0], [1, 1], [2, 1], [2, 2], [3, 2], [3, 3], [4, 3], [5, 3]];
 
 const SOFTWARE = /swiftshader|llvmpipe|software|basic render|microsoft basic/i;
 
@@ -210,7 +222,26 @@ const SOFTWARE = /swiftshader|llvmpipe|software|basic render|microsoft basic/i;
  * `navigator.webdriver` is exactly the question being asked: it is set by
  * Chromium when the page is under automation, so it is true for every probe in
  * tools/ and false for the person whose GPU this is. It also covers the case
- * the SOFTWARE test never could, which is a real GPU under the harness. */
+ * the SOFTWARE test never could, which is a real GPU under the harness.
+ *
+ * ── and why there has to be a way out of it ─────────────────────────────────
+ *
+ * The clause is right and it had one consequence nobody wanted: **the governor
+ * was the only system in this project that no tool could observe.** Every probe
+ * in tools/ sets `navigator.webdriver`, so every probe pinned the top tier and
+ * switched adaptation off — which means the ladder had only ever been measured
+ * by driving it by hand through setTier and setRung, one rung at a time, with
+ * the loop paused. That prices a rung. It cannot say which rung the governor
+ * chooses, how long it takes to get there, or whether it can get back, and
+ * those are the three things a player experiences. The first real-browser
+ * playthrough found it settling two rungs below where the rung table said it
+ * would and unable to climb out again, and none of that was visible to any
+ * instrument here.
+ *
+ * `#adapt` opts back in, explicitly and per URL. Nothing in tools/ sets it
+ * except tools/govern.mjs, whose whole subject is the governor, so captures and
+ * benches are unaffected — and a flag that has to be asked for cannot pin a
+ * capture by accident, which is the failure the clause exists to prevent. */
 function automated() {
   try { return !!(typeof navigator !== 'undefined' && navigator.webdriver); } catch (_) { return false; }
 }
@@ -267,6 +298,18 @@ class GpuTimer {
     this.pending.push(this.open);
     this.open = null;
     this._collect();
+  }
+
+  /* Called whenever the rung changes. The reported figure is a median over up
+     to 31 samples, so for the first thirty-one frames after a rung change it is
+     a median of two different settings — and the governor's next decision is
+     taken off exactly that number. Worse than merely lagging: a climb that
+     should be reverted in one second cannot be seen to have failed until the
+     window has rolled over. Flushing costs the governor one hold of blindness,
+     which `hold` was already imposing anyway. */
+  reset() {
+    this.samples.length = 0;
+    this.ms = 0;
   }
 
   _collect() {
@@ -326,7 +369,11 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
      tools/bench.mjs still walks the ladder, because setTier() is an explicit
      call and does not go through `adapting`. */
   const harness = automated();
-  if ((software || harness) && pinned < 0) pinned = 0;
+  /* Anchored on `#` or `&`, because `#noadapt` contains the string `adapt` and
+     a loose test would have every existing probe opting into the thing the
+     clause below exists to switch off. */
+  const askedToAdapt = flag(/(^|[#&])adapt(&|$)/);
+  if ((software || harness) && pinned < 0 && !askedToAdapt) pinned = 0;
 
   const scalePin = num('scale', 0);
   const frameCap = num('fps', 0);
@@ -354,9 +401,13 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
   let li = 0;                 // index into LADDER
   let qi = pinned < 0 ? 0 : pinned;
   let ri = 0;
-  let floorI = 0;             // never climb back above a rung that already failed
-  let hold = 0;
-  let cpuMs = 0, fps = 0, clock = 0;
+  /* `floorI` used to live here — "never climb back above a rung that already
+     failed". It was a single index, so it could record *that* a rung had failed
+     but not why or by how much, and it was decremented one notch per twelve
+     seconds of headroom that the climb gate made unreachable. The per-rung price
+     table and cooldowns below say the same thing with a number instead of a
+     flag, and forget it on a timer instead of never. */
+  let cpuMs = 0, fps = 0;
   /* When the render loop last ran. The GPU timer is opened in beginFrame and
      closed in endFrame, so it only ever measures the *loop's* frames — and
      tools/bench.mjs pauses the loop and drives renderOnce by hand, which means
@@ -439,6 +490,7 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
     ri = r; qi = q;
     if (rChanged) applyScale();
     if (qChanged) applyTier();
+    if (rChanged || qChanged) timer.reset();
     return rChanged || qChanged;
   }
 
@@ -465,26 +517,161 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
   const targetFps = num('target', 0) || frameCap || 120;
   const target = () => 1000 / targetFps;
 
-  function adapt(dt) {
+  /* ── the timebase, which was the wrong one ──────────────────────────────────
+   *
+   * `clock` and `hold` were accumulated from the loop's `dt`, and main.js's dt
+   * is `Math.min(0.05, ...)`. That clamp is right for `step()` — a physics
+   * integrator handed a one-second frame must not teleport the player — and it
+   * is exactly wrong here, because the governor's entire subject is wall-clock
+   * slowness. During the compile-heavy first frames the clamp means a 170 ms
+   * frame advances the governor's clock by 50 ms, so `clock < 2.5` gates on
+   * fifty frames rather than on two and a half seconds, and every `hold` after
+   * it stretches the same way.
+   *
+   * Measured on tools/govern.mjs before this change: from a cold load the ladder
+   * held rung 0 for **8.5 s** and did not settle until **17 s**, against the
+   * 2.5 + 2.5 + 2.5 the holds are written to produce. The first real-browser
+   * playthrough saw forty seconds of it, which is the same bug on a machine that
+   * was also under contention. The governor now keeps its own clock, in wall
+   * milliseconds, and the loop's dt is only used for what dt is for. */
+  let t0Adapt = 0;
+  let holdUntil = 0;
+  let goodSince = 0;
+
+  /* ── what each rung has actually cost, and why an absolute climb gate cannot
+   *    work ─────────────────────────────────────────────────────────────────
+   *
+   * The old rule was: descend above `t * 1.15`, climb below `t * 0.62`. On this
+   * scene those are 9.58 ms and 5.17 ms, and the measured cost of every rung
+   * below 4 sits *between* them — so the governor could descend and then never
+   * satisfy the condition to come back. A transient stall was permanent until
+   * the page was reloaded. The playthrough found it sitting at the floor for 99
+   * of 108 samples across nine minutes.
+   *
+   * Widening the gate is not the fix, because the gate is asking the wrong
+   * question. `cost < t * 0.62` asks "is the current rung very cheap"; what
+   * decides a climb is "would the *next rung up* fit". Those differ by the size
+   * of a rung step, which is 6% to 20% here — so a fixed 38% headroom
+   * requirement is between two and six times the size of the step it is
+   * gating, and at the bottom of the ladder it is unsatisfiable by construction.
+   *
+   * So remember the price instead of guessing it. `seen[i]` is what rung i has
+   * cost on this machine, blended, and a climb needs the rung above to be known
+   * cheap enough or not known at all. A rung that then fails to hold the budget
+   * is put on a cooldown that doubles each time, and when the cooldown expires
+   * its remembered price is *cleared* — so it becomes probeable again. That is
+   * the part that makes this not a ratchet: nothing is ever closed off
+   * permanently, but a rung that keeps failing is retried at 15 s, then 30, then
+   * 60, which is rare enough to be invisible and often enough to recover.
+   */
+  const seen = new Array(LADDER.length).fill(0);
+  const seenAt = new Array(LADDER.length).fill(0);
+  const cool = new Array(LADDER.length).fill(0);
+  let probeFrom = -1;         // the rung a climb-probe left, while it is on trial
+  let probeUntil = 0;
+  let settled = false;        // has the ladder been inside the band even once
+
+  const CLIMB = 0.92;         // headroom needed to consider climbing at all
+  const CLIMB_HOLD = 3000;    // and for how long, in ms of continuous headroom
+  const PROBE_MS = 5000;      // a climb is on trial for this long
+  const COOL0 = 15000;        // first cooldown on a rung that failed a probe
+  const COOL_MAX = 60000;
+  /* A price goes stale, and this is the difference between the two memories.
+     `cool` is a penalty: this rung was tried and could not hold the budget, so
+     back off, doubling. `seen` is only an estimate, and it expires — because
+     what a rung costs depends on where the player is standing, and the player is
+     walking. The first version of this had no TTL and measured the consequence:
+     descending through rung 5 recorded its price at the mouth of the wash, the
+     walk reached the cheap far end where the frame ran at a third of that, and
+     the governor still would not climb past 6 because a fifty-second-old
+     estimate said 5 would not fit. That is the same ratchet in a new place, and
+     a stale number is the reason both times. */
+  const SEEN_TTL = 8000;
+
+  function adapt() {
     if (!adapting) return;
-    hold -= dt;
-    if (hold > 0 || clock < 2.5) return;   // nothing measured in the first seconds is worth acting on
+    const now = performance.now();
+    if (!t0Adapt) { t0Adapt = now; holdUntil = now + 1200; }
+
+    /* Cooldowns run on wall time too, and expiring one forgets that rung's
+       price — the cooldown *is* the "worth another look" timer. Prices expire on
+       their own shorter clock, except for the rung being stood on, which is
+       being re-measured every frame anyway. */
+    for (let i = 0; i < cool.length; i++) {
+      if (cool[i] && now >= cool[i]) { cool[i] = 0; seen[i] = 0; }
+      else if (i !== li && seen[i] && !cool[i] && now - seenAt[i] > SEEN_TTL) seen[i] = 0;
+    }
+
     const t = target();
     /* GPU time where it is available, because that is the quantity every lever
        here moves. Falling back to CPU frame time is the old, blunter signal and
-       is still better than nothing on a driver with the extension disabled. */
-    const cost = timer.available && timer.ms ? timer.ms : cpuMs;
+       is still better than nothing on a driver with the extension disabled.
+       Nothing at all is the third case and it has to be handled rather than
+       coerced: after a rung change the timer is flushed, and treating an empty
+       median as `cpuMs` would hand the governor the *submit* time — a couple of
+       milliseconds on a scene of sixty draws — read as enormous headroom, one
+       frame after a rung change. That is a climb loop with no brakes. */
+    const cost = timer.available ? timer.ms : cpuMs;
+    if (!(cost > 0)) return;
+
+    seen[li] = seen[li] ? seen[li] + (cost - seen[li]) * 0.25 : cost;
+    seenAt[li] = now;
+    if (probeFrom >= 0 && now >= probeUntil) probeFrom = -1;
+    if (now < holdUntil) return;
+
+    /* ---- down ---- */
     if (cost > t * 1.15 && li < LADDER.length - 1) {
+      /* A failed probe: the rung we are standing on is the one that cannot hold
+         the budget, so price it, back off, and go back exactly where we came
+         from. Deliberately not the multi-step drop below — a probe fails on one
+         reading, that reading is sometimes a viewpoint rather than a rung, and
+         letting a spike compute a three-rung descent turns a failed look into a
+         visible collapse. Measured: a probe from 8 to 7 failed on a spike as the
+         walk entered the wash mouth, and the ratio would have sent it three
+         rungs past the floor it had just left. */
+      if (probeFrom > li) {
+        cool[li] = now + Math.min(COOL_MAX, (cool[li] ? COOL0 * 2 : COOL0));
+        const back = probeFrom;
+        probeFrom = -1;
+        gotoRung(back);
+        goodSince = 0;
+        holdUntil = now + (settled ? 2500 : 700);
+        return;
+      }
       /* A machine at a fifth of the target does not want one notch a second for
          half a minute; it wants to be somewhere playable now. */
       const r = t / cost;
       const steps = r > 0.72 ? 1 : r > 0.45 ? 2 : 3;
       gotoRung(li + steps);
-      floorI = li;
-      hold = 2.5;
-    } else if (cost < t * 0.62) {
-      if (li > floorI) { gotoRung(li - 1); hold = 4; }
-      else if (floorI > 0) { floorI--; hold = 12; }
+      goodSince = 0;
+      /* Short while the ladder is still finding its level, so a cold load
+         reaches a playable rung in a couple of seconds rather than in
+         seventeen; normal once it has been inside the band once. */
+      holdUntil = now + (settled ? 2500 : 700);
+      return;
+    }
+
+    if (cost <= t * 1.15) settled = true;
+
+    /* ---- up ---- */
+    if (cost < t * CLIMB) {
+      if (!goodSince) goodSince = now;
+    } else {
+      goodSince = 0;
+    }
+    if (li > 0 && goodSince && now - goodSince >= CLIMB_HOLD && !cool[li - 1]) {
+      const up = seen[li - 1];
+      if (!up || up < t * 1.02) {
+        probeFrom = li;
+        probeUntil = now + PROBE_MS;
+        gotoRung(li - 1);
+        goodSince = 0;
+        /* Deliberately short. A probe that does not fit has to be caught and
+           undone in about a second, or the cost of looking is a visible
+           excursion rather than a blink. The timer was flushed by gotoRung, so
+           by the time this expires the median is entirely about the new rung. */
+        holdUntil = now + 900;
+      }
     }
   }
 
@@ -578,7 +765,6 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
 
     /** Bracket the frame. Returns false when a frame cap says to skip it. */
     beginFrame(dt) {
-      clock += dt;
       if (frameCap) {
         acc += dt;
         const budget = 1 / frameCap;
@@ -595,7 +781,7 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
       cpuMs = cpuMs ? cpuMs + (cpu - cpuMs) * 0.12 : cpu;
       const inst = 1 / Math.max(1e-4, dt);
       fps = fps ? fps * 0.9 + inst * 0.1 : inst;
-      adapt(dt);
+      adapt();
       if (showOverlay) overlay();
     },
 
@@ -641,11 +827,25 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
       const s = sceneCounts();
       return {
         tier: QTIERS[qi].name,
+        /* The rung, not just the tier. A tier plus a scale is two numbers that
+           happen to agree; the rung is the thing the governor actually holds,
+           and a trace of it over time is the only way to see a ratchet. */
+        rung: li,
+        /* Enough of the governor's own state to tell a settled ladder from a
+           jammed one. `probing` is true while a climb is on trial; `coolNext` is
+           how many milliseconds until the rung above may be tried again, which is
+           the number that used to be invisible and permanent. */
+        probing: probeFrom >= 0,
+        coolNext: li > 0 && cool[li - 1] ? Math.round(cool[li - 1] - performance.now()) : 0,
         scale: curScale(),
         buffer: [d.x, d.y],
         fps: +fps.toFixed(1),
         cpuMs: +cpuMs.toFixed(3),
-        gpuMs: timer.available && performance.now() - lastLive < LIVE_MS
+        /* Null rather than 0 when the median is empty. It is empty for a fraction
+           of a second after every rung change, because gotoRung flushes it, and
+           a printed 0.00 in a trace reads as a measurement of a free frame
+           rather than as the absence of one. */
+        gpuMs: timer.available && timer.ms > 0 && performance.now() - lastLive < LIVE_MS
           ? +timer.ms.toFixed(3) : null,
         gpuTimerAvailable: timer.available,
         gpuTimerLive: performance.now() - lastLive < LIVE_MS,
