@@ -64,7 +64,7 @@ const DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const REF = path.join(DIR, 'tools', 'gate.ref.json');
 
 const args = process.argv.slice(2);
-const FLAGS = ['--allow-dirty', '--bless', '--injure', '--w', '--h'];
+const FLAGS = ['--allow-dirty', '--bless', '--injure', '--preflight', '--w', '--h'];
 for (let i = 0; i < args.length; i++) {
   if (!FLAGS.includes(args[i])) {
     console.error(`gate: unknown argument "${args[i]}"\n  known: ${FLAGS.join(' ')}`);
@@ -561,6 +561,26 @@ if (fails.length) {
   for (const f of fails) console.error(`    · ${f}`);
   console.error('\nGATE: FAILED — do not deliver this build.\n');
   process.exit(1);
+}
+
+/* `--preflight` stops here, having run everything that does not need a GPU.
+ *
+ * This exists because the machine is sometimes not ours to use: when the user is
+ * playing a game, a browser rendering this scene comes straight out of their
+ * frame rate, and the fallback to software rasterisation makes every colour
+ * bound below meaningless — it would measure a frame nobody will ever see and
+ * either refuse a good build or bless a bad one.
+ *
+ * Every preflight check is pure Node — parse, module evaluation, shader source,
+ * the scene build, the walker simulation and the sun-elevation guard — so this
+ * half is always safe to run. It is emphatically **not** a substitute for the
+ * gate. It cannot see a black frame, a white desert or an unlinked program, and
+ * a build that has only passed this has not passed the gate. Say so when
+ * reporting it. */
+if (args.includes('--preflight')) {
+  console.log('\nPREFLIGHT ONLY: PASSED — no page was loaded, so nothing about how the\n'
+    + '  build *looks* has been checked. Run the full gate before delivering.\n');
+  process.exit(0);
 }
 
 const ref = fs.existsSync(REF) ? JSON.parse(fs.readFileSync(REF, 'utf8')) : null;

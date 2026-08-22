@@ -3766,7 +3766,7 @@ document moved between the two sets), on the **frame-convergence settle** — `t
 400 ms wall-clock settle it replaced was covering at this resolution.
 
 - **`sys7final`** — 2560×1440, 13 views × 2 arms, 26 frames, manifests log **0** entries.
-- **`sys7rung4`** — 1997×1123, the buffer the governor settles on at 120 fps, same 13 views × 2
+- **`sys7rung4`** — 1997×1123, the buffer the governor settles on, same 13 views × 2
   arms, 26 frames, **0** logged entries.
 
 Both tags were deleted before shooting rather than overwritten, so no frame from an earlier build
@@ -4354,19 +4354,37 @@ spending the first forty seconds at half the target. All three reproduced on an 
 one of them is much larger than reported. `tools/govern.mjs` is the instrument; `PERF.md` §11 is
 the account. **The four things to know before quoting a number from this file:**
 
-**1. The frame did not move 39%. The machine did, and this entry said otherwise for three hours.**
-`bench.mjs` read `wash_mid` at **16.80 ms** on `fa8b9ec` around 05:00 and **24.48** on `2548d04`
-around 07:45, and a second instrument in a different page agreed with the second figure. Both
-instruments were right; the inference — that the only thing which had changed between two
-measurements two hours apart was the code — was wrong. `tools/_regress.mjs` measures bench's own
-top-left cell from a detached worktree, and **every source commit in the window reads 22.4–23.2 ms,
-a spread of 0.83 across fourteen commits**, with the endpoints alternated three times each and
-differing by 0.18. What had changed is that the GPU now sits at a **65–100% utilisation floor**
-from an animated desktop wallpaper, the vendor overlay, the editor and fourteen `chrome`/`node`
-processes belonging to other agents. 22.8/16.8 is 1.36, which is the shape of a scene being given
-two thirds of a GPU. **The lesson for this file: a millisecond recorded without the machine's state
-beside it cannot be compared with one taken two hours later.** `_regress.mjs` now prints GPU
-utilisation next to every number it reports, and `bench.mjs` should.
+**1. The frame did not move 39%. Why two tools disagree about it is unexplained, and this entry has
+now been wrong twice.** `bench.mjs` read `wash_mid` at **16.80 ms** on `fa8b9ec` around 05:00 and
+**24.48** on `2548d04` around 07:45, and a second instrument in a different page agreed with the
+second figure. Both instruments were right; the inference — that the only thing which had changed
+between two measurements two hours apart was the code — was wrong. `tools/_regress.mjs` measures
+bench's own top-left cell from a detached worktree, and **every source commit in the window reads
+22.4–23.2 ms, a spread of 0.83 across fourteen commits**, with the endpoints alternated three times
+each and differing by 0.18. **The bisect is the answer to the question and it stands.**
+
+This entry then said the difference was contention, and that has been tested and is also wrong. The
+same cell on a machine gated quiet — pre-launch sample required to show the card at its resting
+floor before the run was allowed to start — reads **23.06 held and 26.81 moving**, against 23.30 and
+25.21 under 90–100% foreign load. Identical. **So the gap between 16.80 and 23.06 on the same commit
+is unexplained, and it is recorded as unexplained rather than re-attributed.** Confounds already
+eliminated, so nobody redoes them: same station (`bench.mjs`'s `wash_mid` is `d: 46, yaw: 0,
+pitch: 0`, to the degree), same timing method (`performance.now()` around n `renderOnce`, one-pixel
+`readPixels` fence, neither using the GPU timer), same commit, same machine state. One untested
+hypothesis, labelled as such: a fixed-count warm-up can read *low* as well as high if a rung's timed
+blocks catch the tail of a cheaper configuration mid-transition, and `bench.mjs` walks the ladder
+through `setTier()` with exactly that shape of warm-up — the defect that produced it was found and
+fixed in `_regress.mjs` (see `PERF.md` §13). The test is to give `bench.mjs` the adaptive warm-up and
+re-run.
+
+**The lesson for this file, which survived both wrong versions: a millisecond recorded without the
+machine's state beside it cannot be compared with one taken two hours later** — and an unexplained
+six milliseconds recorded as unexplained is worth more than a plausible attribution, because the next
+person will actually look. Two confident causal stories died here in one morning. `_regress.mjs` now
+prints load beside every number, and `bench.mjs` should. Note `utilization.gpu` alone is the wrong
+field: it is the fraction of sampled time in which *any* kernel was resident, so an animated wallpaper
+at 60 fps reads 65% while consuming almost nothing. Gate on the memory controller — this box rests at
+gpu 63–66%/mem 12%, an agent capture is gpu 88–100%/mem 16–19%, and a game is gpu 100%/mem 34%.
 
 **1b. The indirect-light fix costs 0.6 ms of a 23 ms frame** — priced by paired ablation in one
 page load, three runs, with the site count checked so a stale pattern cannot read as a free
@@ -4408,47 +4426,44 @@ not needed — nothing remains to attribute.
 ladder: at rung 0, `ground` is 13.9 ms and `wash_mid` is 23.3. Anything tuned on those three
 framings cannot say what the walk costs.
 
-### The corrected table — 2560×1440, RTX 4060, on a machine that was 65–100% busy
+### The delivery table — 2560×1440, RTX 4060, machine gated quiet
 
-> **Read the condition before quoting the numbers.** Every figure below was measured with the GPU
-> already 65–100% occupied by work that has nothing to do with the project: an animated desktop
-> wallpaper, the vendor overlay, the editor, and up to fourteen `chrome`/`node` processes belonging
-> to the other agents in this repo. The same cell measured **16.8 ms** at 05:00 when fewer of those
-> existed, and the bisect in §11.1 of `PERF.md` proves the scene itself did not change between the
-> two. **These are a floor on what the user gets, not an estimate of it**, and nothing in this
-> project can currently take the measurement that would replace them — the render lock serialises
-> captures against each other but nothing serialises them against a desktop wallpaper.
+> **This is the one to quote.** Frozen tree at `2038823`, served from a committed detached worktree
+> so nothing could land inside the run, `src/` verified clean. The run refused to start until a
+> pre-launch sample showed the card at its resting floor: **GPU 63% (58–67), memory controller 12%
+> (max 13), 46 samples** — no other captures, no agent browsers, no game. Frame confirmed real at
+> mean luminance 80.8 and 0.32% clipped, so it is not the white desert. Two passes over the ladder
+> keeping the lower reading per rung, which is not cherry-picking: contention is strictly additive,
+> so of two readings of one rung the smaller is the better estimate of *the scene* and the larger
+> contains something that is not. Monotone in both columns, per-rung spread printed.
 
-`held` is the bench's own method and is directly comparable with the table above. `moving` is what
-a walk pays. Both are at `wash_low`, near the mouth, which is where a player boots and is within
-0.5 ms of `mouth`, `wash_mid` and `sun_gap` at every rung. The last two columns take the measured
-1.00 ms cascade-scheduling saving off the moving figure — measured once at rung 0 and flat across
-the ladder for the same reason the penalty itself was flat, and marked as arithmetic rather than
-presented as a fresh sweep.
+`held` is `bench.mjs`'s own method at `wash_mid` — `d: 46, yaw: 0, pitch: 0` — and is directly
+comparable with the table above. `moving` is what a walk pays, and it is the column that matters,
+because walking is what the player does. Both include the cascade-scheduling fix.
 
-| rung | tier | scale | buffer | held ms | held fps | moving ms | moving fps | **moving, cascades scheduled** | **fps** |
-|---|---|---|---|---|---|---|---|---|---|
-| 0 | high | 1.00 | 2560×1440 | 23.3 | 43 | 26.9 | 37 | **25.9** | **39** |
-| 1 | high | 0.88 | 2253×1267 | 20.7 | 48 | 24.6 | 41 | **23.6** | **42** |
-| 2 | medium | 0.88 | 2253×1267 | 18.2 | 55 | 21.5 | 47 | **20.5** | **49** |
-| 3 | medium | 0.78 | 1997×1123 | 16.6 | 60 | 19.8 | 51 | **18.8** | **53** |
-| 4 | low | 0.78 | 1997×1123 | 13.8 | 73 | 16.7 | 60 | **15.7** | **64** |
-| 5 | low | 0.68 | 1741×979 | 12.4 | 81 | 15.2 | 66 | **14.2** | **70** |
-| 6 | potato | 0.68 | 1741×979 | 10.9 | 91 | 14.6 | 69 | **13.6** | **74** |
-| 7 | potato | 0.58 | 1485×835 | 9.9 | 101 | 13.5 | 74 | **12.5** | **80** |
-| 8 | potato | 0.50 | 1280×720 | 9.2 | 109 | 12.7 | 79 | **11.7** | **85** |
+| rung | tier | scale | buffer | held ms | held fps | **moving ms** | **moving fps** | spread |
+|---|---|---|---|---|---|---|---|---|
+| 0 | high | 1.00 | 2560×1440 | 23.06 | 43 | **26.81** | **37** | 11.92 |
+| 1 | high | 0.88 | 2253×1267 | 20.25 | 49 | **24.02** | **42** | 0.41 |
+| 2 | medium | 0.88 | 2253×1267 | 17.93 | 56 | **20.81** | **48** | 0.15 |
+| 3 | medium | 0.78 | 1997×1123 | 16.23 | 62 | **19.13** | **52** | 0.03 |
+| 4 | low | 0.78 | 1997×1123 | 13.09 | 76 | **15.85** | **63** | 0.08 |
+| 5 | low | 0.68 | 1741×979 | 11.74 | 85 | **13.88** | **72** | 0.62 |
+| 6 | potato | 0.68 | 1741×979 | 10.10 | 99 | **13.58** | **74** | 0.57 |
+| 7 | potato | 0.58 | 1485×835 | 8.90 | 112 | **11.96** | **84** | 6.59 |
+| 8 | potato | 0.50 | 1280×720 | 7.95 | 126 | **11.27** | **89** | 0.07 |
 
-**What to tell the user, plainly.** On a contended machine the walk runs **39 fps at native 1440p
-on the top tier** and the governor will settle near the bottom of the ladder at **80–85 fps**. On a
-machine doing nothing but running the scene the same cell measured 16.8 ms rather than 23.3, which
-is **60 fps at the top tier** and puts most of the ladder past 100; that figure is two hours old and
-was itself taken with several agents live, so it is a better estimate of the user's experience than
-the table and still not a measurement of it. **The honest statement is 40–60 fps at 1440p on the
-top tier, and the governor finding a rung in the 80s–100s.** 120 fps at native 1440p is not
-reachable on this scene on this GPU and no rung reaches it at any station with the camera moving.
+**What the user gets, and it is what the README now says.** **37 fps walking at native 2560×1440 on
+the top tier**, and the governor lowers the buffer to hold **a steady 60** — rung 4, 1997×1123, at
+63 fps moving. The floor of the ladder is 89 fps moving. **120 fps is not reachable at any rung with
+the camera moving**, and the brief's target is met only at a reduced buffer, which is said plainly
+rather than implied. The one-sentence version is in `README.md` under "How it will run", with the
+whole ladder beside it.
 
-None of that is a regression. §10's table was accurate when it was taken; the frame has not grown;
-3.2 ms of the walk was always invisible to the instrument and 1.0 of that has now been recovered.
+None of that is a regression. §10's table was accurate when it was taken and the frame has not
+grown — see item 1 above, and note that the 16.80 that table rests on is not reproduced by a second
+tool and is not currently explained. 3.2 ms of the walk was always invisible to every bench in the
+project, and 1.0 ms of that has now been recovered at no cost to the picture.
 
 Rung 8 is new: `RSCALE` gains a 0.50 step. It is worth 0.6–0.8 ms and that is said plainly rather
 than implied, because resolution has stopped being the strong lever it was — `@0.7res` takes
@@ -6935,3 +6950,49 @@ coincidence of tone mapping.
 Measured ramp, jogging in: 0.00° at 280 m, 0.19° at 290, 2.86° at 302, 7.19° at
 313, 11.54° at 327, 11.92° at the head. The smoothstep is doing the work it was
 chosen for — no perceptible onset and no snap at the top.
+
+## The lift, derived offline, and a number of mine that was wrong
+
+The GPU stopped being ours mid-task — the user started a game, `.gpu` came out
+and `.unattended` went in — so the rest of the lift's justification was done in
+Node against the real height field, which is where it should have been done
+first. `tools/_lookup.mjs` marches the field forward from the eye along the
+centreline and measures two angles per station: the elevation of the highest
+ground within six metres (the hummock underfoot, below which every ray lands on
+something you could touch) and the elevation of the skyline ahead. With a 58°
+vertical field of view the fraction of frame height eaten by near ground is then
+closed form.
+
+**It corrected me.** I reported that at eye level in the last metres "the bottom
+60% of the frame is the hummock you are standing on". The geometry says **41%**.
+The impression was right and the number was invented, and the number is the part
+that would have been quoted. The lift takes the worst case from 41% to 28%.
+
+It also says the implemented ramp is more than the geometry strictly needs — 11.9°
+at the head against 9.3° wanted — and that this costs nothing, because the
+skyline sits at 13.7° and the frame is ±29°, so there is no ceiling anywhere near
+where the ramp operates. The onset is later than the ramp assumes: near ground
+runs 22–28% of frame for the whole approach and only becomes distinctive past
+s=306, about twenty-five metres out, not forty-five. The gentler forty-five metre
+ramp covers it anyway and starting later would need a steeper curve, which is the
+thing that would be felt.
+
+**The tool reports at half a degree and refuses at three, and that gap is the
+design.** A quarter of the frame is taste — I chose it — so a check that failed on
+half a degree under it would be policing my own preference and would be tuned
+away rather than believed. Three degrees inside the ramp's own window is a claim
+about the geometry instead. Losing the skyline is not taste at any size, so that
+refuses on the first degree.
+
+## Running the gate when the machine is not ours
+
+`gate.mjs --preflight` runs everything that does not need a GPU and stops: parse,
+module evaluation, shader source, the scene build, the walker simulation, the
+sun-elevation guard. It exists because a browser rendering this scene comes
+straight out of a game's frame rate, and because under software rasterisation
+every colour bound in the file is measuring a frame nobody will ever see — it
+would refuse a good build or bless a bad one with equal confidence.
+
+**It is not a substitute for the gate and it says so on the way out.** It cannot
+see a black frame, a white desert or an unlinked program. A build that has only
+passed the preflight has not passed the gate.
