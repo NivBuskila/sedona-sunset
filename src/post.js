@@ -312,7 +312,13 @@ export const POST_DEFAULTS = {
    * the flare stops responding to the disc's brightness above the clamp — a fair
    * trade for an effect whose source is a nine-tap average of a quarter-scale
    * blur, which is not a flux measurement in the first place. */
-  ghostGain: 0.0014, veilGain: 0.0026, streakGain: 0.0014,
+  /* `ghostGain` was 0.0014, which put the discs' peak near 0.004 scene-linear
+     where lit rock sits at 0.36 — three orders down, and inaudible rather than
+     absent. 0.03 lands the two kept discs at 1-5% of the sky they overlay, which
+     is where a real ghost sits; the arithmetic is in the ghost table's comment
+     along with why no single gain can also be safe over shaded rock, and
+     `ghostGate` is the term that resolves that. */
+  ghostGain: 0.03, ghostGate: [0.05, 0.25], veilGain: 0.0026, streakGain: 0.0014,
   /* Ceiling on the flare *source*, not on the flare, and it is the reason the
      gains above are a calibration rather than a guess. The soft knee is an
      identity below `flareKnee` and asymptotes at knee+range, so the sky's own
@@ -642,6 +648,11 @@ export function createPost({ renderer, camera, atmo, sun }) {
      praised as they stand, so tuning the discs against them requires moving one
      without the others. `#ghost=0` is the control arm for attributing anything. */
   P.ghostGain = num('ghost', P.ghostGain);
+  /* The gate's crossover, sweepable, because it is a taste term and the only
+     honest way to set one is to look at several. `#gatelo=99` disables the gate
+     by making it a constant zero, `#gatelo=0 #gatehi=0` by making it constant
+     one — the second is the arm that shows what the discs do unattenuated. */
+  P.ghostGate = [num('gatelo', P.ghostGate[0]), num('gatehi', P.ghostGate[1])];
   /* The shadow toe is a trade between the shadow-to-sunlit gate and structure on
      the lit side, and it has to be re-tuned whenever the fill moves, so both
      ends of it are sweepable from the URL without a rebuild. `#toe=0` restores
@@ -865,44 +876,70 @@ void main() {
      reflections, so they land on the line through the sun and the optical
      centre — that is not a stylistic choice, it is where they have to be. `t`
      parameterises that line with 0 at the sun and 1 at frame centre, so t > 1
-     is the far side. Radii and tints are a plausible six-element coated lens:
-     the small tight ones are the front-group reflections, the large faint ones
-     the rear.
+     is the far side. Radii and tints are those of a plausible coated lens: the
+     small tight one is a front-group reflection, the broader fainter one comes
+     from further back.
      Everything is scaled by the radiance actually measured around the sun in
      this frame, which is what makes occlusion work without an occlusion query:
      a sun behind a butte contributes nothing to the bright buffer, so there is
-     nothing to reflect and the flare goes away by itself. */
+     nothing to reflect and the flare goes away by itself.
+
+     Two discs, down from six, and the three dropped at `t >= 1` were dropped on
+     measurement rather than taste. tools/_p7ghost.mjs recovers the sun's screen
+     position by inverting this very placement — a blob centroid and its known `t`
+     give `uSun = (gp - t*CTR) / (1 - t)`, and the discs agree to ±0.001 — so what
+     each one lands on is computable. The three past frame centre sit at frame-y
+     0.57 to 0.77 in every framing that sees sky, which is below the horizon in all
+     of them: terrain in twelve of twelve cases, and they are the largest of the set,
+     so they were big soft blobs on rock.
+     `t = 1.00` went for a separate and worse reason. At `t = 1` the interpolation
+     reaches frame centre regardless of where the sun is, so that disc landed at
+     exactly (0.500, 0.499) in all four views and could not move when the camera
+     did. It read as dirt on the sensor rather than as a ghost, and it was the
+     loudest disc in the set at 9.19% of local background in `bend`.
+     `t = 0.30` was dropped for register: three evenly spaced discs on one line read
+     as a deliberate graphic, two read as an accident of the glass. One either side
+     of the sun keeps the axis legible without spelling it out.
+     Tints are dispersion rather than decoration. Coating reflectance is
+     wavelength-dependent, so near-sun reflections carry the source's own colour and
+     deeper groups drift complementary: `t = -0.34` stays close to this scene's
+     sunlight, because a ghost warmer than the sun reads as a coloured light instead
+     of a reflection, and `t = 0.63` is the faint green-gold that magnesium fluoride
+     actually throws. It was near-white, which was the one thing certain to look like
+     a UI element on a warm sky; green-gold also lands in the gap between the scene's
+     oranges and the shadows' teal, so it reads as not belonging to the scene, which
+     is what a lens artefact should do. */
   const GHOSTS = [
     [-0.34, 0.045, 1.00, 0.62, 0.34, 0.55],
-    [0.30, 0.026, 0.55, 0.76, 1.00, 0.30],
-    [0.63, 0.078, 1.00, 0.86, 0.56, 0.20],
-    [1.00, 0.019, 0.68, 1.00, 0.84, 0.42],
-    [1.44, 0.118, 0.38, 0.56, 1.00, 0.12],
-    [1.87, 0.056, 1.00, 0.72, 0.46, 0.16],
+    [0.63, 0.078, 0.70, 0.95, 0.52, 0.20],
   ];
 
   const flareMat = new THREE.ShaderMaterial({
     defines: { FLARE_LEVEL: 2 },
     uniforms: {
       tBloom: { value: null },
+      tScene: { value: null },
       uTexel: { value: new THREE.Vector2() },
       uAspect: { value: 1.777 },
       uSun: { value: new THREE.Vector2(0.5, 0.5) },
       uSunOn: { value: 0 },
       uBase: { value: P.bloomGain },
       uGhost: { value: P.ghostGain },
+      uGhostGate: { value: new THREE.Vector2(P.ghostGate[0], P.ghostGate[1]) },
       uVeil: { value: P.veilGain },
       uStreak: { value: P.streakGain },
     },
     vertexShader: VERT,
     fragmentShader: /* glsl */`
 uniform sampler2D tBloom;
+uniform sampler2D tScene;
 uniform vec2 uTexel;
 uniform float uAspect;
 uniform vec2 uSun;
 uniform float uSunOn;
 uniform float uBase;
 uniform float uGhost;
+uniform vec2 uGhostGate;
 uniform float uVeil;
 uniform float uStreak;
 varying vec2 vUv;
@@ -944,16 +981,46 @@ void main() {
     acc += sunCol * uVeil * exp(-dSun * 3.2);
 
     /* Ghosts. Unrolled from the table above rather than looped over a uniform
-       array: six elements, and an if-chain inside a loop compiles to the same
+       array: two elements, and an if-chain inside a loop compiles to the same
        thing with a branch on top. Each one is brighter at the rim, because a
        ghost is an image of the iris seen through a lens that is not corrected
-       at that conjugate. */
+       at that conjugate.
+
+       ── THE GATE BELOW IS A REGISTER CHOICE, NOT A PHYSICAL MODEL ───────────
+       Do not "fix" it back to physics. A real ghost over a dark subject IS
+       visible — that is the classic flare look — so attenuating the disc where
+       the background is dark is knowingly wrong as optics. It is here anyway,
+       and the reason is measured.
+       The local background under these discs spans 0.018 to 1.798 scene-linear
+       across the four framings that see sky: a hundredfold range. Making a disc
+       reach 3% of bright sky needs gain 0.075, at which the same disc over the
+       shaded wall in bend sits at 183% of its background, nearly tripling the
+       rock. Turn it down until the wall is safe and the sky gets nothing. No
+       single additive gain serves both ends, which is the real reason this
+       feature never looked right — it was never a gain problem.
+       So the disc is attenuated where what it lands on is dark. Two reasons for
+       taking a non-physical term. The bar for this scene is a restrained frame
+       rather than a dramatic or cheap-lens look, and ghosts riding over
+       shadowed foreground belong to the second. And decisively: a flat
+       untextured disc over textured rock reads as a decal in a render even
+       where it would be plausible in a photograph — the failure mode here is
+       looking synthetic, not being implausible.
+       The alternative was gain 0.0075 with no gate, which keeps everything
+       under about 5% everywhere and makes the effect a whisper in every
+       framing. Rejected because it fails the request: it was asked to be seen.
+       Sampling the scene at this pass's low resolution is deliberate. The gate
+       wants the local background, not this pixel's detail, and a bilinear read
+       of the full-res buffer at low res averages it for free. It also softens
+       and breaks up the disc edge where it crosses onto rock, which works
+       against the decal reading rather than for it. */
+    float bgLum = max(luma(sane(texture2D(tScene, vUv).rgb)), 0.0);
+    float gate = smoothstep(uGhostGate.x, uGhostGate.y, bgLum);
 ${GHOSTS.map(([t, r, tr, tg, tb, gi]) => `    {
       vec2 gp = mix(uSun, CTR, ${t.toFixed(3)});
       float d = length((vUv - gp) * vec2(uAspect, 1.0));
       const float r = ${r.toFixed(4)};
       float a = smoothstep(r, r * 0.70, d) * (0.72 + 0.60 * smoothstep(r * 0.50, r * 0.94, d));
-      acc += sunCol * vec3(${tr.toFixed(3)}, ${tg.toFixed(3)}, ${tb.toFixed(3)}) * (a * ${gi.toFixed(3)} * uGhost);
+      acc += sunCol * vec3(${tr.toFixed(3)}, ${tg.toFixed(3)}, ${tb.toFixed(3)}) * (a * ${gi.toFixed(3)} * uGhost * gate);
     }`).join('\n')}
   }
 #endif
@@ -1794,6 +1861,8 @@ void main() {
       lastSun.x = sx; lastSun.y = sy; lastSun.on = on; lastSun.facing = facing;
       const flu = flareMat.uniforms;
       flu.tBloom.value = loA.texture;
+      flu.tScene.value = sceneRT.texture;
+      flu.uGhostGate.value.set(P.ghostGate[0], P.ghostGate[1]);
       flu.uTexel.value.set(1 / lw, 1 / lh);
       flu.uAspect.value = w / h;
       flu.uSun.value.set(sx, sy);
