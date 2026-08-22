@@ -5700,3 +5700,42 @@ depends on where the channel happens to bend, so treat it as corroboration and
 not as the measurement. **A band wide enough to be robust is wide enough to
 average away the thing you are asking about**, which is the same failure as the
 rectangle with no sandstone in it, arrived at from a third direction.
+
+### A fourth white desert, by accident, and what it says about the thresholds
+
+At 09:15 this morning the working copy — mid-edit, four agents live — rendered
+the wash floor snow-white and untextured with the cliff walls, clasts and juniper
+all correct. It was a transient of somebody's unsaved work and it was gone within
+the hour, so it is nobody's committed defect. But it is the best possible test
+case, because it is an *accidental* failure of exactly the class the gate exists
+for rather than one I designed the gate around. The two frames are left in
+`shots/_gateproof_whitefloor_40m.png` and `..._head.png`, but `shots/` is
+gitignored, so the numbers below are the durable record and not the pictures.
+The other thirty frames of that walk were deleted rather than kept: four agents
+in this tree judge by the PNGs in `shots/`, and a set captured off a broken
+working copy sitting among them is a contaminated measurement waiting to happen.
+
+Run the gate's own floor thresholds against them:
+
+```
+shake_f040       floorRG 1.069   floorL 131.2   REFUSED (chroma and luminance)
+final_f040       floorRG 1.555   floorL  98.2   passes
+shake_head_up    floorRG 1.005   floorL 104.7   REFUSED (chroma only)
+final_head_up    floorRG 1.651   floorL  48.2   passes
+```
+
+**Look at the third line.** A completely white, completely untextured desert, and
+its luminance is 104.7 — comfortably inside the [6, 122] band, well below the
+124.5 that the earlier white-desert state read, and closer to the healthy `floor`
+framing's 90 than to anything a luminance bound could refuse without also
+refusing legitimate builds. Every brightness-based check in the gate passes this
+frame. `floorRG` reads 1.005 and refuses it outright.
+
+The reason is geometric, not lucky. A white surface is white in a frame that got
+brighter *and* in one that did not: which way the exposure moved depends on how
+much sky was in shot and where the sun was, so brightness is a coincidence of
+framing, while achromaticity is the failure itself. **The check that survives is
+the one measuring the property that broke, not a property correlated with it.**
+Tonight's three known failures were all found by luminance because all three
+happened to be bright; the fourth was not, and it is the one that shows why
+`floorRG` is the number to keep if only one could be kept.

@@ -492,6 +492,18 @@ const INJURIES = [
 
 preflight();
 
+/* If the preflight already refused, stop here. Everything below measures a page,
+   and there is no sense spending ninety seconds photographing a build that has
+   already been established as not the one that ships — which is exactly the
+   ninety seconds somebody will not spend at five to twelve. */
+if (fails.length) {
+  console.error(`\n  ${fails.length} REFUSAL${fails.length > 1 ? 'S' : ''} in preflight, ` +
+    `so the page was never loaded:`);
+  for (const f of fails) console.error(`    · ${f}`);
+  console.error('\nGATE: FAILED — do not deliver this build.\n');
+  process.exit(1);
+}
+
 const ref = fs.existsSync(REF) ? JSON.parse(fs.readFileSync(REF, 'utf8')) : null;
 if (!ref && !BLESS) {
   warns.push(`no reference at tools/gate.ref.json — drift checks skipped. ` +
