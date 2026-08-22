@@ -119,9 +119,22 @@ const MEASURE = () => {
  * function of that field. This is the same import the game uses, against the
  * same terrain, so the numbers are the ones the player is held by. */
 {
-  const { WashPath } = await import('../src/path.js');
-  const { Terrain } = await import('../src/terrain.js');
-  const { buildCorridor, corridorAt } = await import('../src/corridor.js');
+  /* Named imports, one at a time, because a bare dynamic import of a file
+     another agent is halfway through saving reports `SyntaxError: Invalid or
+     unexpected token` with no filename in the stack — which is a walkthrough
+     that refuses for a reason you cannot act on. Ask each module separately and
+     the message names the one to go and look at. */
+  const load = async (mod) => {
+    try { return await import(mod); }
+    catch (e) {
+      console.error(`_walk2: ${mod} will not load — ${e.message}\n` +
+        `  Somebody is probably mid-save. Nothing measured, nothing reported.`);
+      process.exit(2);
+    }
+  };
+  const { WashPath } = await load('../src/path.js');
+  const { Terrain } = await load('../src/terrain.js');
+  const { buildCorridor, corridorAt } = await load('../src/corridor.js');
   const p = new WashPath(), t = new Terrain(p), c = buildCorridor(p, t);
   let minL = Infinity, minR = Infinity, atL = 0, atR = 0, sum = 0, n = 0;
   for (let s = 0; s <= c.sMax; s += 1) {
