@@ -9078,29 +9078,34 @@ it, and the open question is whether what it is told is right.**
 Both halves of the answer turned out to be true. There was a missing term, and the
 target is beyond what transport can deliver.
 
-### Read this before reopening the finding
+### Read this before reopening the shade question
 
-**The 90-110 target is inconsistent with the contract's own photograph-derived shadow band
-by a factor of two, and that has been shown twice from unrelated premises.** This is not a
-record of failing to reach a target. It is a bounded, explained deviation, and the two
-demonstrations are:
+**Every request to brighten shaded rock in this scene has landed 1.6x beyond the light that
+is available to deliver it, and that factor has now arrived three times from unrelated
+premises.** This is not a record of declining to fix something. It is a bounded, explained
+deviation, measured three ways:
 
-- **From what light can physically arrive.** A facet with no direct sun, given a fully
-  sunlit infinite floor filling its lower hemisphere plus this corridor's warm upper one,
-  reaches side/top **0.250**. The target implies **0.401**. Derived below, from
-  `albedo_g / 2` plus the sky and escarpment terms; needs no model to state.
-- **From the contract's own ratio.** The complained-about facet, measured against its own
-  slab top, sits at **0.173 before any of this work and 0.189 after** — inside the
+- **From radiometry.** A facet with no direct sun, given a fully sunlit infinite floor
+  filling its lower hemisphere plus this corridor's warm upper one, reaches side/top
+  **0.250**. The 90-110 target implies **0.401**. Derived below, from `albedo_g / 2` plus the
+  sky and escarpment terms; needs no model to state. **1.6x.**
+- **From the contract's own photograph band.** The complained-about facet, measured against
+  its own slab top, sits at **0.173 before any of this work and 0.189 after** — inside the
   photograph-referenced **0.15-0.25** either way. The target, at that facet's own hue, is a
-  facet gate of **0.409 to 0.500**, which is **1.6x to 2.0x the top of the band**.
+  facet gate of **0.409 to 0.500**. **1.6x to 2.0x the top of the band.**
+- **From a facet's own measured fill budget.** A later, explicitly *different* and more
+  modest ask — bring the `ground` rim from 0.53x the sunlit floor to 0.65x — needs that
+  facet's fill to rise from 0.181 to 0.300 of the floor, on a facet that fill-only capture
+  shows already receives **105-126% of what the open sunlit floor receives**. **1.66x.**
+  Measured in the section on the delivery critic's `ground` rim, below.
 
-Two routes, one factor: the first from radiometry, the second from the photograph band the
-critics themselves supplied. **The facet was already inside the band before the work
-started**, in its bottom quarter, and the restricted term moves it to the middle. So the
-same critic lineage is asking simultaneously for a compressed range and for a cap on
-compression, and on this population those two requests differ by two. No transport term
-satisfies both, and one of them has to be given up before any further work here is
-meaningful.
+Three premises, one number. The first is radiometric, the second is the band the critics
+themselves supplied, and the third came from a population the critic offered specifically to
+avoid the first two. **The facet was already inside the band before the work started**, in
+its bottom quarter, and the restricted term moves it to the middle. So the same critic
+lineage is asking simultaneously for a compressed range and for a cap on compression, and on
+this population those two requests differ by two. No transport term satisfies both, and one
+of them has to be given up before any further work here is meaningful.
 
 What was genuinely missing was real, is fixed, and is worth **4 code values of red**, from
 37.5 to 41.5. The rest of this section is how that was established.
@@ -9433,7 +9438,9 @@ photograph-referenced shadow band, and **1.66x** from this facet's own measured 
 This one is a genuinely different population and a genuinely more modest ask, and it lands on
 the same number. No gate headroom was spent establishing that, and none needs to be: the rim
 is correctly lit and correctly coloured, and the critic's expectation is the thing that does
-not fit.
+not fit. The three routes are collected under *"Read this before reopening the shade
+question"* in the clast-facet section above; that block is the canonical statement and this is
+its third leg.
 
 ## The law: a statistic taken in a space the viewer does not occupy measures an object nobody is looking at
 
