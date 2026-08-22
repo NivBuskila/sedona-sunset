@@ -1061,32 +1061,101 @@ ladder had only ever been walked by hand, one rung at a time, by the tool that w
 measuring it. `#adapt` opts back in explicitly, `tools/govern.mjs` is the only
 thing that sets it, and captures are untouched.
 
-### 11.1 The frame cost moved 39% under the measurement
+### 11.1 The frame cost did not move. The machine did.
 
-Before anything about the governor: `tools/bench.mjs` on the tree at `2548d04`
-reports `wash_mid` at **24.48 ms**, against **16.80** two hours earlier at
-`fa8b9ec`. Both numbers are the same tool, the same machine, the same seven blocks
-of thirty. `govern.mjs --probe`, which is a different instrument in a different
-page, independently reads 23.34 at the same station and rung — so the regression
-is real and is not either tool's.
+**This section said "the frame cost moved 39% under the measurement" and it was
+wrong.** The claim is left named in the heading rather than deleted, because it
+was written into `CONTRACT.md`, escalated as the most important open item in the
+project, and reported to the user — and the correction matters more than the
+tidiness. What follows is the bisect.
 
-| | `fa8b9ec` | `2548d04` |
-|---|---|---|
-| `wash_mid`, rung 0 | 16.80 | 24.48 |
-| rung 4 | 8.21 | 13.23 |
-| rung 7 | 5.44 | 9.78 |
-| draw calls | 51–65 | 62–70 |
-| triangles | 3.97 M | 4.01 M |
+`tools/bench.mjs` read `wash_mid` at **16.80 ms** at `fa8b9ec` around 05:00 and
+**24.48** at `2548d04` around 07:45. Two independent instruments agreed on the
+second figure, which is what made it look like a code regression: `govern.mjs
+--probe`, a different tool in a different page, read 23.34 at the same station and
+rung. Both instruments were right. The inference was not, and the error was
+assuming the only thing that had changed between two measurements two hours apart
+was the code.
 
-Not attributed, and deliberately not attributed here: three systems were landing
-concurrently — an indirect-light fix in both `rock.js` and `terrain.js`, cliff
-jointing, and vegetation — and `rock.js`, `sky.js` and `vegetation.js` were all
-dirty in the working tree while this ran. Anyone bisecting it should start with
-the indirect-light change, because it lands on the two heaviest fragment shaders
-in the scene. **Every number below is on `2548d04`**, and none of it should be
-compared with §10 without reading this paragraph first.
+`tools/_regress.mjs` measures one cell — `wash_mid`, tier `high`, scale 1.0,
+2560×1440, paused loop, `readPixels` fence, median of five blocks of thirty, which
+is precisely bench.mjs's top-left number — from a detached worktree, so an old
+commit can be measured without checking anything out in the shared tree.
+Every source commit in the window, in order:
 
+| commit | | ms | calls | tris |
+|---|---|---|---|---|
+| `fa8b9ec` | the 16.80 baseline | **22.91** | 64 | 3.97 M |
+| `eaac382` | terrain, tap reduction comment | 22.62 | 64 | 3.97 M |
+| `ee49e63` | sky, comment fix | 22.65 | 64 | 3.97 M |
+| `2548d04` | **terrain occlusion tint + rake mip** | **22.67** | 64 | 3.97 M |
+| `25c93fb` | **rock occlusion tint + joints** | **22.85** | 64 | 3.97 M |
+| `0dbd81d` | terrain, geometric rake march | 22.54 | 64 | 3.97 M |
+| `9fa6819` | main, loading screen | 22.66 | 64 | 3.97 M |
+| `0609843` | rock, joints may only lighten | 23.20 | 64 | 3.97 M |
+| `ac39c5f` | rock, rim steps between beds | 23.05 | 64 | 3.96 M |
+| `39fe176` | terrain/textures, bed depth | 22.80 | 64 | 3.96 M |
+| `7727cc1` | rock, crest wavelength | 22.66 | 64 | 3.96 M |
+| `7caa9b7` | atmos, fill decomposition | 22.79 | 64 | 3.96 M |
+| `0e81b0c` | **vegetation, shrub transmission** | 22.68 | 70 | 4.00 M |
+| `7eef891` | textures, grain bed band weights | 23.14 | 70 | 4.00 M |
+| `af1abf0` | HEAD | 23.07 | 70 | 4.00 M |
+
+Flat. The whole spread is **0.83 ms across fourteen commits**, which is inside the
+block-to-block spread of a single run. And the endpoints interleaved, alternated
+so that machine drift cannot land on one of them:
+
+| | run 1 | run 2 | run 3 | mean |
+|---|---|---|---|---|
+| `fa8b9ec` | 22.91 | 22.60 | 22.40 | **22.64** |
+| `af1abf0` (HEAD) | 23.03 | 23.07 | 22.37 | **22.82** |
+
+**0.18 ms apart.** There is no regression in the code, and there never was.
+
+**The indirect-light fix costs nothing measurable.** `2548d04` reads 22.67 against
+`ee49e63`'s 22.65 immediately before it, and `25c93fb` reads 22.85 against
+`2548d04`'s 22.67 — both inside noise. So there is no trade to bring: the most
+valuable visual change of the night, which took all-channel black from 6% of the
+frame to 0.01% and gave the wall behind the floating slab tone, is free. A cubic
+per pixel on two heavy shaders is nothing next to twenty-odd dependent texture
+fetches; it was the right suspect on timing and the wrong one on arithmetic.
+Vegetation shows up in the counts — calls 64 → 70, triangles 3.96 M → 4.00 M — and
+not in the milliseconds, which is the same lesson §6 recorded about the triangle
+ceiling. Jointing likewise.
+
+**What actually changed is the machine.** Sampled with nothing of this
+investigation running, the GPU sits at a **66% utilisation floor** from processes
+that have nothing to do with the project — an animated Wallpaper Engine desktop,
+the NVIDIA overlay, the editor, and fourteen `chrome`/`node` processes belonging to
+the other agents working in this repo tonight. The 16.80 was taken around 05:00
+when fewer of those existed. 22.8 / 16.8 is 1.36, which is the shape of a scene
+being given roughly two thirds of a GPU instead of all of it.
+
+Three things follow, and the third is the one that matters for delivery:
+
+- **Every absolute number in §11 is a contended number**, including §11.2's table
+  and the `moving` column that went into the delivery note. They are self-
+  consistent and the *ratios* in them are sound — they were all taken in the same
+  session under the same load — but they are a floor on the user's experience and
+  not an estimate of it.
+- **The 16.80-era figures are not obviously the honest ones either.** They were
+  taken with fewer agents running, not with none. Neither end of this is a
+  measurement of a machine doing nothing but running the scene, and this project
+  does not currently have a way to take one: the render lock serialises captures
+  against each other but nothing serialises them against a desktop wallpaper.
+- **`bench.mjs` should record the machine, not just the frame.** A tool that
+  writes a millisecond into a contract without recording GPU utilisation and clock
+  alongside it produces figures that cannot be compared with each other across a
+  night, which is exactly what happened. `_regress.mjs` samples the frame's
+  luminance for the white-desert trap; the same argument applies to load, and it
+  is the cheaper of the two checks.
+
+The one honest way to state the result is as a range with its condition attached,
+and that is how the delivery note now states it.
 ### 11.2 A walking player pays a cascade redraw that no bench ever measured
+
+*(Absolute figures in this section are contended — see §11.1. The `held` against
+`moving` difference is a within-session comparison and is unaffected.)*
 
 The two shadow cascades are redrawn only when the rig moves. `bench.mjs` holds the
 camera still, so it has never once paid for them. Measured at every rung, camera
