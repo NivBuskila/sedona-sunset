@@ -5270,3 +5270,33 @@ amplitude at the framing that needs it lowered. The mechanism is specified and
 the footprints are measured for whoever picks it up. The remaining candidate is
 not amplitude but *character* — spatial frequency or the albedo mottle rather
 than the normal field — and nothing in tonight's work has tested that.
+
+### What the frames show, which is an eyeball and not a measurement
+
+Looking at `ground` and `wash_mid` after the revert sharpens the closing
+question above, and points at why the lever had no sign.
+
+**The two framings differ in clast-to-matrix ratio, and both metrics may be
+reading the clasts rather than the bed.** On `ground` the matrix *between* the
+stones is visibly smooth and unshaped — that is where the missing grad/L 0.088
+lives — while the stones themselves are strongly lit, hard-edged and read as
+sitting on the surface rather than in it. On `wash_mid`'s near floor the excess
+is the opposite: a dense scatter of small dark chips over a matrix that is not
+obviously too busy. So `ground` is short of *matrix* and `wash_mid` is long on
+*population*, and a bed amplitude gate moves neither, because in both frames the
+one-pixel gradient is dominated by clast silhouettes.
+
+That is a coherent explanation of the local minimum: changing bed relief barely
+shifts a statistic carried by clast edges, while it does perturb which pixels sit
+near the terminator, so the response is shallow and non-monotone rather than
+signed. It is consistent with every measurement in the section above, and it is
+still an eyeball — it has not been tested.
+
+**The test for whoever picks this up** is to mask the instanced clasts out and
+re-run `tools/_band2.mjs` on the matrix alone. If `wash_mid`'s near band falls
+into the 0.12-0.16 band once the clasts are excluded, then the surface is not
+over-detailed at all and the population count is the defect, which is a
+different fix in a different file from anything tried tonight. If it does not
+fall, the bed really is too busy there and the character question stands.
+`far_270` is clean on this framing: the lattice fix is holding, no
+salt-and-pepper, and the bank reads as rock.
