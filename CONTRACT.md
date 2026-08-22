@@ -2894,3 +2894,183 @@ Both were ruled on by the coordinator against the time remaining, and both are r
   metres across, and this one has joints, benches and spall scars but no concavities of that
   size. It is a genuine gap in the surface vocabulary rather than a defect in what is there.
   **Deferred, not forgiven.**
+
+## The floating slab is not a shadow hole. It is a shadow edge that is 10x too sharp
+
+Routed to System 4 as a shadow hole on the strength of System 2's ablation: the patch is
+5.68x its surround with shadows on and 1.04x with them off, therefore the geometry and the
+normals are continuous and the whole difference is the shadow term. Both readings are
+correct. The inference is not, and the trap is worth naming because it is a cheap one to fall
+into. Turning shadows off removes the occlusion, so the patch matches its surround at 1.04x
+whether the shadow map is broken **or** the occluder has a hole in it. That test clears the
+receiver's normals, which it does correctly. It cannot see the caster, and the caster is where
+this lived.
+
+`tools/_slabmap.mjs` fires a ray at the sun from every cell of a grid covering the patch and
+its surround. Every sample inside the slab is **unblocked** — the sun really does reach it —
+and every sample in the shadowed surround is blocked by `wallL` itself, at either 1 m of local
+relief or about 170 m up-canyon. The render agrees with the raycast at all nine probe points
+and at every cell of the 36x20 map. The shadow map is not failing here: a facet of the wall is
+lit through a grazing gap in its own crest, and the sun ray clears that crest by a hair —
+receiver at y 14, crest at y 55.7–59.5 at 170 m, the sun rising 0.259 per metre, so the ray
+passes within a metre of the skyline across the whole patch. Grazing occlusion against a
+near-straight crest is what makes the boundary look ruled.
+
+**What was actually wrong is the width of the edge, and that is a light property, so it is
+System 4's.** 170 m of gap under a half-degree sun is 1.6 m of penumbra, which at this
+framing's 0.05 m/px is about 32 px. Measured on the sRGB frame the terminator rose 10–90% in
+**3 px**. A razor edge on an occluder that far away is the loudest "this is a renderer" tell
+in a raking shot, and it is what turns a physically correct shaft of light into a decal.
+
+### The reason, and a retraction
+
+three's `PCF_SOFT` branch **ignores `shadowRadius` entirely**. Its kernel is a fixed
+bilinear-weighted 3x3 over one texel. This rig has been setting 3.5 and 1.7 texels since the
+cascades were built, and the project renders `PCFSoftShadowMap` on every tier above the
+lowest, so those numbers have never done anything.
+
+That retracts an experiment recorded in `sky.js`, which reached a true conclusion by a false
+route. Widening the radius from 3.5 to 10 texels measured floor `grad/L` at 0.186 both times
+and the shaded wall at 0.019 against 0.021, and this was read as evidence that cast-shadow
+edges are too small a share of a region's pixels to move a nine-pixel high-pass. They may well
+be, but the experiment did not show it: **both settings compiled to the same one-texel
+kernel**, so the null was the null of a test that never varied its independent variable.
+
+### The fix, and the one thing it broke on the way
+
+Penumbra width is now derived per fragment from the blocker distance and the sun's angular
+diameter. Three details carry their weight. The kernel is a disc in **world** space rather
+than in UV, because both cascades cover more ground across than up over a square map and a
+circle in texels is a 1.7:1 ellipse on the rock. Bias is **per tap** from the receiver plane's
+own depth gradient, which is what makes a 30-texel kernel affordable at all — `rpBias`
+estimates one number for the whole kernel from its radius, and at 30 texels that estimate
+either eats contact shadows or lets the wash floor shadow itself, a loop this rig has already
+been round once. Tap count follows the radius, so contact shadows still cost eight taps and
+only a penumbra metres wide pays for 28.
+
+Running that disc all the way down to contact cost **+0.063 of lit rock saturation** and
++0.033 of V, with the region's median falling while its bright tail clipped. A packed depth
+map cannot be bilinear-filtered — three sets `NearestFilter`, and must, since interpolating
+four packed bytes is meaningless — so `PCF_SOFT` emulates the interpolation in the shader with
+those `mix()` calls on the fractional texel position. A nearest-sampled disc at one texel has
+eight taps and eight levels and lands blocky beside it, and the rock's own micro-relief
+self-shadowing had gone binary under it. So the kernel splits on penumbra width: below three
+texels three's kernel keeps it, above seven the disc has it, `smoothstep` between. Contact
+shadows are a baseline this project already tuned and the penumbra work has no business
+touching them.
+
+`#hardshadow` drops back to the fixed kernel while leaving the rest of the build alone.
+Without it none of this could have been attributed, because the captures either side of the
+change also straddle System 5's shaft fix, which brightened shaded rock on its own.
+
+| figure | PCSS off | disc everywhere | split kernel, shipped | band |
+| --- | --- | --- | --- | --- |
+| slab terminator, 10–90% rise | 3 px | 27 px | **27 px** | ~32 px geometric |
+| lit rock saturation | 0.622 | 0.685 | **0.616** | 0.615–0.626 |
+| lit rock hue | 20.6 | 19.1 | **21.0** | 20–22 |
+| shadow gate | 0.232 | 0.231 | **0.213** | 0.15–0.25 |
+| floor `grad/L` | 0.087 | — | 0.089 | 0.12–0.16 |
+
+The gate moving 0.227 to 0.232 across the earlier pair was System 5's shaft fix, not the
+penumbra: across the same-tree ablation the penumbra moves it by 0.001. The 27 px still stands
+after `4d72ec6` rewrote `terrain.js`'s shadow wrapper, re-measured on `sys4s`.
+
+## The shade was brown because the corridor was modelled with one doorway
+
+Two reviewers reported independently that nothing in the scene is cool — the shaded banks read
+the same red-brown as the lit rock, only darker, and there is no blue rung anywhere in the
+aerial ladder. Both were right, and finding out why took retiring the instrument first.
+
+**Every "shaded" figure quoted in this project so far came from the darkest 40% of a region,
+and on the wash floor that population is not shade.** The sun is nine degrees off the corridor
+axis at fifteen degrees elevation and `tools/fillprobe.mjs --floor` measures that floor **0.70
+sunlit**, so its darkest 40% is grazing-lit dirt with pebble shadows in it — a weighted average
+of sun and fill, quoted as though it were the fill. It is a well-defined number of the wrong
+thing, and the same failure mode System 5 hit this round by measuring a region that another
+agent had rendering in false colour.
+
+`tools/_fillonly.mjs` renders the shade instead of hunting for it: zero the two sun cascades,
+pass `air=0`, and what is left is the scene lit by nothing but dome and bounce, with no
+threshold and no population selection to argue about. Under that light the wash floor read
+**hue 2.6 at saturation 0.606** and the shaded wall **hue 5.7 at 0.723** — the latter within
+noise of its full-light figure, so that wall genuinely is fill-lit and the fill is the whole of
+what to account for.
+
+### The arithmetic that decides what is even reachable
+
+Reflected B/G is the illuminant's B/G times the albedo's, so shade can only read cool where
+the illuminant's B/G clears the albedo's G/B. Those are **1.514** for the wash floor and
+**1.335** for the escarpment rock. This is why "make the shadows violet" is not a free
+parameter: on this pigment it is a threshold, and a few percent of illuminant chroma either
+side of it is the difference between plum and brown.
+
+### The defect
+
+`skylineSin` and `coverAt` put a 45 degree rock skyline at every bearing except a window
+toward the sun. **A wash is open up-canyon as well as down.** `tools/_skydist.mjs` bisects the
+skyline at 24 bearings from four points on the traverse and finds the bearing directly astern
+standing at 12 to 26 degrees at three of them, against 40 to 55 on the flanks; only at 40 m
+in, inside the narrow part, does it close to 50.
+
+That is the worst bearing to get wrong. The away-from-sun hemisphere is what every shaded face
+in this corridor is turned toward, so it is the lobe that lights all the shade — and it was
+being filled with escarpment, which `tools/_fillterms.mjs` shows is **92% reflected sunlight
+at B/G 0.462**, leaving the far wall at hue 17 and saturation 0.805. The lobe lighting every
+shadow in the project was arriving at **hue 10**, warmer than the sunlit rock it is supposed to
+contrast with. That is the entire complaint, and it was one missing window.
+
+| canyon probe, illuminant | before | after |
+| --- | --- | --- |
+| away from sun, hue | 10 | **333** |
+| away from sun, B/G | 0.855 | **1.148** |
+| up-facing, B/G | 1.362 | **1.477** |
+| shaded rock, up-facing, saturation | 0.492 | **0.404** |
+| shaded bank at 45°, saturation | 0.692 | **0.505** |
+| shaded bank at 45° | brown | **plum** |
+
+Measured in the render, same build, paired session:
+
+| fill-only | before | after |
+| --- | --- | --- |
+| wash floor, hue | 2.6 | **0.0** |
+| wash floor, B/G mean | 0.953 | **1.028** |
+| wash floor, saturation | 0.606 | **0.523** |
+| shaded wall, B/G | 0.824 | **0.857** |
+| shaded wall, saturation | 0.723 | **0.689** |
+
+Guardrails held: lit rock 0.620 to **0.616** saturation at hue **21.0** unchanged, gate 0.211
+to **0.213**, floor L 0.370 to 0.369.
+
+### Two hypotheses measured and declined, so they are not retried
+
+- **Aerial perspective inside the fill integral.** The escarpment enters `wallRadiance` as raw
+  rock with no extinction and no airlight, while System 5 measures the far landforms in the
+  image at 51 and 56% haze — which reads like the same inconsistency, and would have delivered
+  a cool term onto exactly the right population. It is not there: `_skydist` puts this skyline
+  at **7 to 60 m** over most bearings, where optical depth is under a percent. Only the
+  corridor-axis bearings reach 100–220 m, and even those are about 1%.
+- **A bluer dome.** `tools/skylut.mjs` puts the sky away from the sun at **B/G 1.39–1.42**,
+  which is what Rayleigh's inverse fourth power gives once the slant-path blue loss at this
+  elevation is taken out of it — roughly 2.23 in scattering against 0.60 of differential
+  transmittance. Ozone is already modelled, Chappuis band and all. The dome is as blue as the
+  physics allows and the deficit was never there.
+
+**So System 5's `R_GAIN` does not need to move.** The blue rung the aerial ladder is missing is
+a separate question from the shade's hue, and the shade's hue was a geometry error in
+`atmos.js`. Their measured constraint — Rayleigh at full strength putting 91% of the zenith's
+optical depth in by itself — stays closed, and nothing here reopens it.
+
+### What is left, and it is honest rather than fixable before midday
+
+The shaded wall in `wall_shade` is still warm at saturation 0.746, and that is **correct for
+its geometry**: it faces away from the sun across a corridor whose opposite wall is in full sun
+at tens of metres, so warm bounce genuinely dominates its fill, and the critic named that
+wall's warmth as one of the good things in the set. The residual warmth on the flanks is the
+45 degree escarpment, which is measured geometry. The floor is now marginally plum rather than
+violet-grey; closing the rest of that gap means either lowering the flank skyline below what
+`skyview.mjs` measured, or an aperture that varies with position and not only with height,
+which the probe height lerp cannot express.
+
+**Not claimed:** floor `grad/L` reads 0.141 against 0.089 across this window and is now inside
+its 0.12–0.16 band, but six commits landed between the two captures and `0885589` is explicitly
+"clear it of the hf/lf shortfall" in `rock.js`. That improvement belongs to it.
