@@ -6426,6 +6426,13 @@ seconds from navigation to `__game`, and `main.js`'s own comments already said
 "forty-odd". Both now say forty seconds, and the comment beside the string says to
 revise it from a measurement if it is ever revised.
 
+`tools/_bootpaint.mjs` on the delivery build puts the in-page total at **41.3 s**,
+with the message on screen at 7 ms and the longest single stall 11.4 s. The split
+did not lengthen the boot; it broke up the silence. The four phases worth knowing
+are raising the canyon walls at 11.4 s, scattering the stones at 10.4 s, cutting
+the wash at 7.8 s and compiling shaders at 5.5 s — between them 82% of the wait,
+so anybody wanting a shorter boot has four places to look and not fourteen.
+
 **`juniper.js` exports `PREVAILING`, not `WIND`.** The record had it as a should
 and it had not landed. It was safe: nothing outside `juniper.js` imported it, and
 the two internal uses are the tree's lean and its wind-piled litter. Verified with
