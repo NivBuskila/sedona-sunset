@@ -3749,3 +3749,36 @@ distant escarpment, which aerial perspective has already desaturated to B/G 0.83
 therefore not a lit-pigment window either. A window holding both sun and shade is precisely the
 population error retired above, and the sunlit floor is the better control anyway because it shares
 its albedo with the shaded half.
+
+### A block comment that closed inside a ternary, and why a known-false red is worse than no check
+
+`glslcheck` reported `src/sky.js:959 unclosed=1` and everyone knew to ignore it. The cause: the
+`#noastern` ablation was spliced into the middle of a sentence, so the block comment opened in one
+template literal and closed in **both arms of the ternary**. The assembled string was valid and the
+shader compiled, so the check was wrong about the outcome — but it was right about the structure,
+because no single literal was well-formed.
+
+Worth fixing rather than annotating, for two reasons. **A static check with a known-false failure is
+worse than no check**: the whole tree runs `glslcheck` before committing, and this night alone cost
+several hours to people trusting a green result or waving off a red one. And the fragility was real
+as well as cosmetic — validity rested on an invariant held in two places with nothing enforcing it,
+and node cannot see it, because the file parses either way. If an arm ever stopped closing that
+comment the result is an unparseable shader, which **does not fail loudly**: it falls back silently
+and the capture returns in three's default material. That has cost two seven-minute renders here
+and once presented as a phantom colour regression.
+
+The fix removes the invariant instead of documenting it. The astern line is built as a whole string
+before the literal and interpolated as `${ASTERN}`, so the comment lives entirely inside one
+literal and the arms hold no comment text — they cannot stop closing something they do not contain.
+`glslcheck` exits 0 across `src/*.js`. **Generalises: never let a comment span a template-literal
+boundary or a ternary arm.** Interpolate a finished line instead; the check is per-literal and
+cannot reason across the concatenation.
+
+Verified on paired same-build captures, since this touches the shipping path. Frame statistics are
+identical (`sky=153.1 gnd=56.8`, `lum med=24 p99=214`), and every figure on the paired window
+matches to three decimals — `floor shade` hue 4.1° at B/G 0.888, `floor lit` 21.3° at 0.631,
+`grad/L` 0.124 and 0.120 — with zero logged errors in both manifests. The arm that changed most is
+the ablation, so it was shot as well, and **it still ablates**: `#noastern` takes the shaded floor
+from B/G 0.888 to 0.818 and its hue q25 from −3.0° to 0.0°, while moving the sunlit floor by 0.008.
+A flag that compiled to nothing would have read identical, which is the failure this whole section
+is about.

@@ -955,6 +955,25 @@ function installProbeHeightLerp(A) {
     throw new Error('sky.js: three\'s light-probe line moved; the height lerp is not installed');
   }
   THREE.ShaderChunk.lights_pars_begin = BASE_PARS + PARS;
+  /* Built as a whole line before the literal rather than as a ternary inside it.
+     The ablation used to be spliced in mid-sentence, which meant the block comment
+     below opened in one template literal and closed in *both* arms of the ternary.
+     The assembled string was valid and the shader compiled, but no single literal
+     was well-formed, so `glslcheck` reported an unclosed comment here — and a
+     static check with a known-false failure is worse than no check at all. The
+     whole tree runs it before committing, and tonight cost several hours to people
+     trusting a green result or waving off a red one. The fragility was real as well
+     as cosmetic: validity rested on an invariant held in two places with nothing
+     enforcing it, and if either arm ever stopped closing the comment the result is
+     an unparseable shader, which does not fail loudly — it falls back silently and
+     the capture comes back in three's default material. That has cost this project
+     two seven-minute renders and once presented as a phantom colour regression.
+     Keeping the comment wholly inside the literal removes the invariant instead of
+     documenting it: the arms no longer contain comment text, so they cannot stop
+     closing something they do not have. */
+  const ASTERN = NO_ASTERN
+    ? '/* #noastern: the up-canyon aperture is off for this run. */'
+    : 'irradiance += s4AsternDelta( s4wn ) * ( s4AsternOpen( vFogW.z ) * ( 1.0 - s4open ) );';
   THREE.ShaderChunk.lights_fragment_begin =
     BASE_FRAG.replace(ANCHOR, `${ANCHOR}
     #if defined( USE_FOG )
@@ -969,9 +988,8 @@ function installProbeHeightLerp(A) {
            can be ablated inside one build. Comparing two sessions is not good
            enough for a chroma reading on shade: the fill-only frames sit at V 0.11
            to 0.24, which is far enough down the toe that any tone-curve work
-           landing in between moves the hue by more than this term does.` + (NO_ASTERN ? `
-           Off for this run. */` : ` */
-        irradiance += s4AsternDelta( s4wn ) * ( s4AsternOpen( vFogW.z ) * ( 1.0 - s4open ) );`) + `
+           landing in between moves the hue by more than this term does. */
+        ${ASTERN}
       }
     #endif`);
 }
