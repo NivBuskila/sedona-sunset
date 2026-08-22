@@ -1279,6 +1279,10 @@ to the eye, and one measurement does not stand in for the other.**
 
 ## RULE: a tool that measures nothing must not print a number
 
+*(This is the original write-up. **The rule and its full instance list now live in rule 2 at
+the top of this file**, which is at nine instances; the "four" below is the count on the night
+it was written. Kept because the reasoning is here.)*
+
 Four instances now, so it is a rule rather than an observation. `grad.mjs` turned an
 unrecognised flag into a `NaN` crop, selected no pixels and printed a header with no rows.
 `_p7name.mjs` silently measured nothing when given a mode that does not exist. `shoot.mjs`
@@ -1298,6 +1302,10 @@ name the mistake. `nonEmpty` goes immediately before the first number is printed
 three lines to adopt and every probe that takes a flag should.
 
 ## RULE: a negative result is only evidence if the thing you removed was doing something
+
+*(This is the original write-up. **The rule and its full instance list now live in rule 1 at
+the top of this file**, which adds `shadowRadius` — the second compile-time flag — and the
+bedform comb's unread gate to the three below.)*
 
 **Diff for liveness before believing an ablation.** Render the ablated frame against the
 unablated one and quote the percentage of differing pixels and the mean delta. If the
