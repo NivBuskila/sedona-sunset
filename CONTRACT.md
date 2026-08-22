@@ -3106,6 +3106,25 @@ needs `material.needsUpdate` beside it or the column is a no-op with a plausible
 attached. `bench.mjs` now forces the relink, in the warm-up frames, and reads 16.8 against
 11.0.
 
+**"My change did nothing" — check the variable was a variable before believing it.** Two of
+these turned up in one night in unrelated subsystems, and both produced a confident null from a
+knob that was never turned. One is `shadowMap.enabled` immediately above. The other is
+**`shadowRadius`, which `PCFSoftShadowMap` ignores outright** — `PCF_SOFT` compiles a fixed
+bilinear-weighted 3×3 over a single texel and never reads the uniform, so the 3.5 and 1.7 texels
+these cascades have carried since they were built have never done anything, and the experiment
+that widened 3.5 to 10, measured floor `grad/L` unchanged at 0.186 and concluded that cast-shadow
+edges are too small a share of a region to move a high-pass reached a plausible conclusion by a
+route that proved nothing. Full account under "Soft shadows" below.
+
+The shape is identical both times and is worth recognising rather than re-deriving. **A renderer
+setting consumed at compile time raises no error when written at runtime** — it silently keeps the
+old value, and every measurement downstream is precise, reproducible and about nothing. So before
+publishing that a term does not matter, prove the term moved: drive it to an absurd value and
+confirm the frame visibly breaks, or read back the compiled program, or dump the define. A null is
+evidence only once the independent variable is known to have varied. `#hardshadow` and `#noastern`
+exist so that two of these are now ablatable inside a single build, which is the structural answer
+— a flag the shader branches on cannot quietly not exist.
+
 **A tier is not a rung.** `perf.setTier` moves the quality tier and deliberately leaves the
 render scale at 1.0, which is the right control for "what does a tier cost" and the wrong
 answer to "does the fallback reach the target" — the governor descends an *interleaved*
@@ -3406,3 +3425,88 @@ unilaterally.
 **Not claimed:** floor `grad/L` reads 0.141 against 0.089 across this window and is now inside
 its 0.12–0.16 band, but six commits landed between the two captures and `0885589` is explicitly
 "clear it of the hf/lf shortfall" in `rock.js`. That improvement belongs to it.
+
+## The ninth viewpoint exists because the camera never visited the cool half of the walk
+
+The astern aperture made the fill's away-from-sun lobe arrive at hue 317 in the outer wash where
+it arrives at hue 10 at the head of it, and the immediate question was why no critique had ever
+seen that. The answer is where the cameras are. **The eight standard views stop at 120 m and five
+of them sit at 46 m or nearer**, inside the stretch of corridor whose walls fill 45–80° of their
+own sky with sunlit red rock. Warm shade there is what correct transport gives and it is not going
+to be faked. But `tools/_skydist.mjs` measures the up-canyon skyline falling from 80° at 8 m to
+about 17° past 160 m, so the cool half of the walk is real, physical, and traversed by the player —
+and every verdict this project has received was formed on the warm half. That is a **sampling
+failure on our side, not a scene defect**, and the remedy is a station rather than a colour change.
+
+`shade_far`, d 160 yaw −155 pitch −4, now in `tools/views.mjs` so every tool and every critic sees
+the same nine. Chosen by looking, over three stations and eleven bearings in `tools/_scout.mjs`,
+against a brief of **shaded ground against sunlit wall** — the contrast is the point and not the
+shade alone, because a frame of uniformly cool dirt would prove the fill works and say nothing
+about whether the warm/cool split reads. This bearing puts shaded floor across the right
+foreground with a soft terminator through it, sunlit floor at the left, and a sunlit stratified
+wall behind, so the two halves are in one frame and can be compared without remembering another.
+
+Two things the sweep settled that are worth keeping. **Further out is not better**: the outer wash
+is wide and its floor is largely grazing-lit, so past about 180 m the shaded fraction falls away
+and there is nothing left to contrast against — d 195 on the same bearing is a sunlit frame with a
+patch in it. And **the cool shade is not visible looking down-canyon**, because that is into the
+sun; the bearings that work look back astern, where a wall shows you its lit face and its own
+shadow lies at its foot. The astern aperture mix at this station is 0.945.
+
+## `V` 0.687 was in band, and the band it failed was a log of two old readings
+
+Routed here as an exposure fault on the grounds that an ungraded control cannot be explained by
+grading, which is sound reasoning. The reading reproduces exactly — `tools/_p7col.mjs` on
+`sys7k_wall_lit` gives **V 0.687 graded, 0.689 ungraded**. The band does not.
+
+`_p7col.mjs`'s footer printed `V 0.589-0.600+`. Neither number is a band. **0.589 is a reading**
+from the azimuth-elevation sweep and **0.600 is `sys4c`**, and this document introduces 0.600 in as
+many words as *"the first frame in the project inside the 0.59–0.73 reference band"* — so it is
+that band's **floor**, quoted back later as its ceiling. The real band is **0.59–0.73, from Sedona
+reference photographs**, and it appears four separate times here as exactly that. Both quoted
+readings also predate `EXPOSURE` coming down from 1.15 to 0.95, **a fit whose stated success
+criterion was putting lit-face V at 0.693 inside 0.59–0.73**. So the footer was asking the renderer
+to undo its own exposure fit, and 0.687 sits 0.006 below the number that fit was aiming at.
+
+Measured against the real bands, on the same paired capture:
+
+| figure | graded | ungraded | band | provenance |
+| --- | --- | --- | --- | --- |
+| lit wall V | 0.687 | 0.689 | 0.59–0.73 | reference photographs |
+| lit wall saturation | 0.615 | 0.615 | 0.615–0.626 | earned drift guard |
+| lit wall hue | 20.9° | 21.1° | 18.9–21.1° | earned drift guard |
+| wash floor V | 0.521 / 0.538 | 0.519 / 0.536 | 0.55 | exposure fit |
+
+**No exposure change, and the arithmetic of the alternative is the argument.** Pulling V from
+0.687 to 0.600 is a 0.742× linear cut, `EXPOSURE` 0.95 → 0.705. That would put the lit wall on the
+bottom edge of the band it is currently mid-way through, and take the wash floor from 0.521–0.538
+down to **0.455–0.470 against its 0.55**, turning a figure that is marginally under target into one
+that is clearly under it. Exposure is the one lever that moves everything, so the two guarded
+numbers would have gone with it for nothing.
+
+The caution about re-measuring first was well placed and it changed the answer twice. The floor
+has genuinely moved since the exposure fit — 0.562 then, 0.521–0.538 now, on the population that
+target was written for. And **the first floor figure I measured was 0.737**, because `sat.mjs
+--lit` reads the sunlit population while the 0.55 target was written against the whole window. Had
+I stopped there I would have reported the floor as 0.19 over target and recommended cutting
+exposure hard, which is the same population error as everything else in this section, arrived at
+from the opposite direction. Quote the window with the number.
+
+## Instrument retirement: the darkest 40% of the wash floor was never fill
+
+Every shaded figure this project published came from the darkest 40% of a region, and on the wash
+floor **that region measures 0.70 sunlit**. Its darkest 40% is therefore grazing-lit dirt with
+pebble shadows in it, quoted as though it were skylight fill. That is why the shade read warm and
+saturated for weeks in a way no ambient change could shift: the population being measured was
+mostly sun. `tools/_fillonly.mjs` is the honest replacement — it zeroes the sun intensities and
+the airlight and renders the fill directly, so a shade figure is a shade figure. **Shaded readings
+from before it exists should be treated as sunlit readings with a dark percentile taken.**
+
+Two more of my own, both the same failure mode as the band above — a metric being precise about
+the wrong thing. I published a fill hue shift as dramatic on a comparison whose two halves were
+**captured 2.5 hours apart**, spanning another system's tone-curve work, and whose "after" frame
+another agent had rendering **lavender with debug stripes** from an uncommitted terrain edit. Both
+errors were in one number and the number looked clean. A cross-session comparison is not an
+ablation, and **a frame should be looked at before it is measured**. The structural answer is that
+`#noastern` and `#hardshadow` make both terms ablatable inside a single build, so the comparison
+cannot span anything.
