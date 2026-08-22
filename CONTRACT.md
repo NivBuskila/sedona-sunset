@@ -594,8 +594,85 @@ arrives — which is exactly what the paired capture measured.
 
 The move that works is therefore a **rebalance and not a multiplier**: take contrast out of
 the sub-pixel grit and put it into pebble-scale relief, so grad/L holds while hf9 climbs.
-That is the right next piece of work on this surface, and `tools/_rakeprobe.mjs` will
-predict the terminator-crossing cost of any relief before a render is spent on it.
+
+### Correction: hf9 was misquoted above, and the corrected figures change the target
+
+The "0.056 against 0.115–0.137" in the paragraph above is wrong and the error is worth
+naming because a whole round of work was scoped from it. 0.056 is `grad.mjs`'s **one-pixel
+gradient**. `hf9` is a different statistic — RMS of a 9-pixel box high-pass, from
+`tools/hf.mjs` — and it is reported per horizontal band, which on a floor framing means per
+distance. Measured properly on the same captures:
+
+| view / band | reference | K = 1.0 | K = 1.5 |
+|---|---|---|---|
+| `ground` near | 0.075–0.094 | 0.0748 — at the floor | 0.0893 |
+| `ground` mid | 0.115–0.137 | 0.0895 | 0.1057 |
+| `wash_mid` near | 0.075–0.094 | **0.1128 — 20% over** | 0.1300 |
+| `wash_mid` mid | 0.115–0.137 | 0.0715 | 0.0736 |
+| `far_270` mid | 0.115–0.137 | 0.0572 | 0.0592 |
+
+So the near field is at or **above** the photographic reference everywhere, not at half of
+it. The mid field is short everywhere and barely responds to relief at all — 3% on
+`wash_mid` and `far_270` against 18% on `ground` — which is exactly what the melt probe
+already predicted: at 30 m the shading normal is 0.0061 of RMS tangent slope before the
+grainF fade and 0.0010 after, so **no texture change can matter there because no texture
+arrives**. The mid-field shortfall is not reachable from the dirt map at all.
+
+### The rebalance was then built, swept offline, captured, and reverted
+
+`makeDirt` now takes a `BED` weight per band — `fines` and `grit` are the 6–16 mm features
+that land at one to four pixels in `ground`, `coarse` is the 40–94 mm class that lands at
+nine and up — all defaulting to 1.0 as exact no-ops. `tools/_bedbalance.mjs` sweeps them
+against a simulated near-field render and reports both metrics plus the terminator guard.
+
+**The predictor was validated before it was used, and half of it failed.** Against the
+K = 1.5 capture it predicted hf9 within 4.3 points but over-predicted grad/L by 2.11×. The
+reason is structural and worth keeping: the simulation shades from the height map alone,
+while the real one-pixel gradient also carries albedo mottle, the grit layer, the rake term,
+the ripple and lineation shadows and the instanced clasts, all of which dilute a change to
+the normal field. Its hf9 column is a usable ranking; its grad/L column is divided by that
+measured over-response and treated as indicative only.
+
+Best safe candidate — `fines` 0.5, `grit` 0.6, K = 1.5, chosen because the higher-hf9 rows
+ran to RMS tangent slope 0.787 and 0.819 against the trap's recorded 0.8. Captured:
+
+| | `ground` grad/L | `ground` hf9 near | `wash_mid` grad/L | `wash_mid` hf9 near |
+|---|---|---|---|---|
+| baseline | 0.151 | 0.0748 | 0.160 | 0.1128 |
+| rebalanced | **0.156** ✓ | **0.0804** ✓ | **0.177** ✗ | 0.1281 |
+
+`ground` did exactly what it was supposed to: grad/L stayed in band and hf9 climbed off the
+floor into the reference range. `wash_mid` left the band and the change was reverted.
+
+### The result: no global weighting can satisfy both framings, because they want opposite things
+
+This is the finding, and it is a bounded impossibility rather than a failed tuning.
+
+- `ground` is **under**-detailed at 9 px (0.0748, at the reference floor) and has grad/L
+  headroom (0.151 against a 0.160 ceiling).
+- `wash_mid` is **over**-detailed at 9 px (0.1128 against a 0.075–0.094 reference, 20% over)
+  and has **no** grad/L headroom at all — it already sits exactly on the 0.160 ceiling.
+
+They therefore want opposite changes, and `wash_mid` is about three times more sensitive to
+the knob than `ground` is: the same edit moved it +10.6% against `ground`'s +3.3%. Holding
+`wash_mid` at or under 0.160 requires roughly zero net change, which means K ≤ 1.0, and at
+K = 1.0 with the fine band reduced `ground`'s hf9 falls to about 0.067 — below its reference
+floor. There is no setting of a global weight that improves one without failing the other.
+Two independent capture pairs give the same linear picture.
+
+**The way out is footprint-dependent amplitude, and it now has a positive justification
+rather than only a negative one.** The two framings differ by footprint geometry: `ground`
+looks down at the floor with a near-isotropic footprint, `wash_mid` grazes it with a heavily
+elongated one. The correct amount of surface detail per pixel depends on how much surface
+that pixel covers, and the shader currently applies one amplitude regardless — which is why
+one framing is 20% above the photographic reference while another is at its floor. The
+variable needed is already in the shader as `aniso`. Note the target is *not* "boost
+`ground` and hold `wash_mid`": `wash_mid` should come **down** toward reference at the same
+time, which makes this a correction rather than a compensation hack.
+
+Caveat for whoever picks this up: `hf.mjs` bands are horizontal strips of the frame, so
+`wash_mid`'s "near" strip is its near floor but may include instanced clasts as well as the
+bed. Worth confirming with a tighter crop before tuning against that 0.1128.
 
 ## For System 2 and System 4: the occlusion change, and what it does and does not reach
 

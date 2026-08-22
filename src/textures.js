@@ -269,8 +269,21 @@ for (const G of GRAINS) G.hMax = G.hgt * G.flat;
  * and it is the right next piece of work on this surface. */
 export const DIRT_RELIEF_K = 1.0;
 
-export function makeDirt(size = 1024) {
+/* The bed's two bands, as weights, so they can be swept offline.
+ * `fines` and the finest grain class land at one to four pixels in `ground` and
+ * are what the one-pixel gradient measures; the coarse grain class is 40-94 mm,
+ * which is nine pixels and up, and is what the 9-pixel high-pass measures. They
+ * are separate knobs because the measurement says the frame has too much of the
+ * first and too little of the second, and a single depth multiplier moves both
+ * together — which is exactly why DIRT_RELIEF_K could not be raised.
+ * Defaults are all 1.0 and are exact no-ops. */
+export const BED = { fines: 1.0, coarse: 1.0, mid: 1.0, grit: 1.0 };
+
+export function makeDirt(size = 1024, bed = BED) {
   const N = size * size;
+  /* GRAINS is coarse, mid, grit in that order: f 26 / 61 / 146, which is
+     40-94 mm, 19-38 mm and 9-16 mm across. */
+  const bedK = [bed.coarse, bed.mid, bed.grit];
   const h = new Float32Array(N);
   const rough = new Float32Array(N);
   const alb = new Uint8Array(N * 4);
@@ -288,7 +301,7 @@ export function makeDirt(size = 1024) {
       const fines = pfbm(u * 205, v * 205, 205, 2, 233);
 
       /* the matrix of fines, which is the bed the grains are set into */
-      let hh = broad * 0.13 + fines * 0.055;
+      let hh = broad * 0.13 + fines * 0.055 * bed.fines;
       let gi = -1, gid = 0, gtop = 0, gcell = 0;
 
       for (let L = 0; L < GRAINS.length; L++) {
@@ -311,7 +324,7 @@ export function makeDirt(size = 1024) {
            outlines, which is what fracture and abrasion actually produce. */
         const q = (w.f1 / rad) * (0.84 + 0.30 * fines);
         if (q >= 1) continue;
-        const top = G.hMax * Math.pow(1 - q * q, 0.36);
+        const top = G.hMax * bedK[L] * Math.pow(1 - q * q, 0.36);
         if (top > gtop) { gtop = top; gi = L; gid = t; gcell = w.id; }
       }
       /* max, not sum: the grain occupies the space and the fines fill around it */
