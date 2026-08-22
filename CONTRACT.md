@@ -523,6 +523,15 @@ comb are not just a cost — they are measuring the wrong quantity (see the alia
 below), so if that block is being touched for cost anyway, the footprint form written in
 the comment beside them is both cheaper and more correct.
 
+**One change since the map was written**, so the numbers stay honest: `bumpFrom` gained a
+tilt bound at `af365e8` — one `length()` and one divide per call, two calls, against a
+shader whose measured cost was 160 shadow comparisons and 41 fetches per ground pixel. It
+is noise on your budget, and it is load-bearing on correctness, so please do not lift it
+if the block is being rewritten for cost. It also means the `bankW` row's "one `bumpFrom`"
+and the `panW` desiccation call are now both bounded, which slightly *reduces* the number
+of pixels those branches change — but the branches are gated exactly as before, so nothing
+in the liveness column moves.
+
 Happy to walk any of this in more detail — that request outranks anything else I have.
 
 ## Landed: the mesh grid is a value now, not a number in a comment
