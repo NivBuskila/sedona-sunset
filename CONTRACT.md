@@ -6318,6 +6318,12 @@ contain sky at all, where it previously contained none.
 
 ### The last forty metres: much better, and now the softest thing on the route
 
+> **The heading is now the opposite of true.** The third walk measures the last forty metres at
+> **0.46–0.52 relative contrast from 292 m to 328 m, against 0.31–0.39 across the first hundred**
+> — the highest wall detail on the route rather than the softest. The `head_up` outlier this
+> section found at 0.16 is what the grit-normal fix was aimed at, and it now reads 0.2525. The
+> measurement below was correct when taken; keep it as the *before*, not as the status.
+
 It is rock. Red gravel bed, a proper channel narrowing into the box canyon, a
 stratified far butte through the gap, and — this is the indirect-light work
 showing — a shaded left bank at 322 m where the clasts are still legible instead
@@ -6331,6 +6337,15 @@ closer to a dune than to sandstone, and no bedding at all. It measures, too. The
 average, and the only station that is an outlier rather than noise.
 
 ### The mid distance is still waxy, and the frames name the mechanism
+
+> **Superseded — largely fixed. See "The 30 m detail cliff: fixed" and "The third walk".** The
+> localisation below is correct and is what made the fix findable: it is the channel floor and the
+> colluvial slopes, and the boundary is a distance rather than a place. What is stale is
+> ~~"this one is not fixed"~~ and the implication that the 30 m fade is the mechanism to attack.
+> The third walk reads the head slopes at **0.2525 against a 0.409 strip mean**, a ratio of 0.62
+> where it was 0.41, and the mid-distance channel floor reads as gravel rather than wax. **The
+> honest remaining limit is different in kind**: broad tonal banding from mesh undulation under a
+> 15° sun, which is geometry and which no texture layer can remove.
 
 This one is not fixed, and the useful part of this walkthrough is that it is now
 specific rather than an adjective. **It is the channel floor and the low
@@ -6502,6 +6517,12 @@ it is not rediscovered from scratch.
 
 ## The `far_320` headwall streaks are not in the height field
 
+> **Fixed at root — see "The 30 m detail cliff: fixed. The grit layer's normal, reprojected".**
+> This section and the three that follow it are the elimination chain that found it, and every
+> exclusion in them held. Read them for the method, not for the status: the headwall streaking is
+> no longer an open defect. The one hypothesis below that was *wrong* — the world-XZ plan
+> projection — is killed in the next section by the render it asks for.
+
 Not landed, and reverted. What follows is what was eliminated, so the next
 person does not spend their first hour where I spent mine.
 
@@ -6566,11 +6587,18 @@ myself.
 
 ### Mid-distance floor, for the record
 
-Untouched and unfixed. The grit layer was measured contributing 3.9% of the mid
+~~Untouched and unfixed.~~ **Fixed later the same morning, and this paragraph is the reasoning
+that pointed at the fix.** The grit layer was measured contributing 3.9% of the mid
 band's energy, so reaching the per-band `hf9` reference from 0.0716 needs roughly
 4.7x its amplitude, which at that footprint is a noise risk rather than a detail
 gain. There is gradient headroom there — mid `grad/L` is 0.121 against a 0.12–0.16
-band — so the room exists; the mechanism to spend it does not yet.
+band — so the room exists; ~~the mechanism to spend it does not yet~~.
+
+> The mechanism was there and was not being read: `makeGrit` packs a normal in `G,B` and
+> `terrain.js` read only `R` and `A`. The headroom named above is exactly what was spent —
+> `wash_mid` mid `grad/L` 0.1220 → **0.1374**, inside the same 0.12–0.16 band. The amplitude
+> question this paragraph frames as a noise risk was real and was settled by the terminator-crossing
+> predictor rather than by eye. See "The 30 m detail cliff: fixed".
 
 ### Tooling note
 
@@ -6599,6 +6627,12 @@ Tonight's count of tools taught to refuse rather than quietly answer a different
 question is five; this is the first where the refusal itself became the defect.
 
 ## The `far_320` streaks, localised to the shading normal by elimination
+
+> **This section is right and the defect it localises is now fixed** — see "The 30 m detail cliff:
+> fixed". "The defect is an absence, not a presence" is the sentence that found it. Only the
+> closing recommendation is stale: it names the `grainF` fade and the grit slope gate as the two
+> knobs, and the next section proves the fade cannot work at that range. The knob that worked was
+> a third one — the grit layer's unread normal channels.
 
 The specified diagnostic was run. **It killed the candidate**, and a second cheap
 render then narrowed the cause considerably. Nothing landed; `src/` is clean.
@@ -6707,6 +6741,11 @@ documented as the mid-distance floor limit, arriving as a far-field defect on a
 steep surface, where it costs far more because the slope faces the light.
 
 ## The fade was tried, and the blocker is the mip chain, not the weight
+
+> **This is the section that redirected the fix, and the fix it specifies landed** — see "The 30 m
+> detail cliff: fixed". Its closing sentence, *"give the footprint-locked grit layer a normal
+> contribution on far steep ground"*, is what shipped as `GRIT_N`. Nothing here is stale; it is
+> recorded as a negative result and it is the most load-bearing negative result in the thread.
 
 Authorised, built, measured, reverted. `src/` clean. The result is the most
 useful thing in this thread because it rules out the whole family of fixes I had
