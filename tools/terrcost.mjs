@@ -45,15 +45,29 @@ const VIEWS = [
    assembled fragment shader — literal rather than regex so a match is
    unambiguous and a miss is loud. */
 const ABLATIONS = [
-  /* The four extra shadow taps the footprint filter added. They are weighted
-     by `wide`, which is zero in the near field, so there they are already a
-     no-op that is paid for anyway; and getShadow under PCFSoft is nine
-     comparisons, times four extra taps, times two cascades. */
+  /* The four extra shadow taps the footprint filter added, now a bilinear
+     4-tap each rather than a full getShadow each. Weighted by `wide`, which is
+     zero in the near field, so there they are a no-op that used to be paid for
+     anyway. Sixteen comparisons per light. */
   ['shadowWide', 'if (wide > 0.02) {', 'if (false) {'],
-  /* The centre tap on its own: one stock getShadow, sixteen comparisons under
-     PCF_SOFT, times two directional lights. It carries the penumbra and cannot
-     go, but it is the other half of the bill and the table should say so. */
+  /* The centre tap on its own, and re-read this row before quoting it against
+     an old table: it is no longer three's fixed kernel. Since `639309d` /
+     `543ea94` it is System 4's blocker-search penumbra — a 12-tap search, then
+     either three's 16-tap kernel at contact or up to 28 spiral taps at width,
+     hybridised across the changeover, times two cascades. It carries the
+     penumbra that took the wall_shade terminator from 3 px to 27, so it cannot
+     go; `node tools/bench.mjs --hash hardshadow` is the way to price it against
+     the fixed kernel without pretending it is removable. */
   ['shadowCentre', 'float s = getShadow(sm, sz, si, sb, sr, sc);', 'float s = 1.0;'],
+  /* Not an ablation — the opposite. This puts the *old* footprint estimator
+     back, four full getShadow calls at the offsets, and so reports a negative
+     saving. It exists because the penumbra landing under the reduction changes
+     what that reduction is worth: when the offsets were three's fixed kernel
+     they were 16 comparisons each, and now each one would be a blocker search
+     plus a spiral. The row prices that directly instead of multiplying
+     shadowCentre by four and calling it an estimate. Pair it with
+     tools/shadowpair.mjs, which renders the same substitution for the picture. */
+  ['footFull(+)', 'footTap(sm, sz, si, sb, sc', 'getShadow(sm, sz, si, sb, sr, sc'],
   /* Every shadow lookup this material makes at once. Not a proposal — it
      deletes the cast shadows — but it prices the whole shadow term against
      everything else in the shader. */
@@ -134,14 +148,22 @@ try {
     const g = window.__game;
     const t = g._scene.getObjectByName('terrain');
     const mat = t.material;
-    window.__tc = { mat, saved: mat.onBeforeCompile, sub: null, hit: false };
+    /* `seen` outlives the per-view measurement on purpose. A program is cached
+       under the ablation's name, so it compiles once for the whole run and the
+       second view can only ever observe "onBeforeCompile did not run" — which
+       is true and is not a problem, because the program being timed there is
+       the same one whose substitution was counted in the first view. Recording
+       it once and carrying it is the honest form; re-reading a per-view flag is
+       how this column came to print NO beside a 4.44 ms saving. */
+    window.__tc = { mat, saved: mat.onBeforeCompile, sub: null, sites: -1, seen: {} };
     mat.onBeforeCompile = function (shader, renderer) {
       window.__tc.saved.call(this, shader, renderer);
       const s = window.__tc.sub;
       if (!s) return;
-      const before = shader.fragmentShader;
-      shader.fragmentShader = before.split(s.find).join(s.replace);
-      window.__tc.hit = shader.fragmentShader !== before;
+      const parts = shader.fragmentShader.split(s.find);
+      window.__tc.sites = parts.length - 1;
+      window.__tc.seen[s.name] = parts.length - 1;
+      shader.fragmentShader = parts.join(s.replace);
     };
     /* The stock key is a constant string, so the two variants would otherwise
        share one compiled program and every ablation would measure the first
@@ -170,14 +192,25 @@ try {
 
     const set = (s) => {
       window.__tc.sub = s;
-      window.__tc.hit = false;
+      window.__tc.sites = -1;     // "onBeforeCompile did not run", distinct from "ran and matched nothing"
       window.__tc.mat.needsUpdate = true;
       frame();                    // compile, untimed
     };
 
     const names = ['full', ...abl.map(a => a[0])];
     const acc = {}; for (const n of names) acc[n] = [];
-    const hits = {};
+    /* ---- this column read NO for every row, and the rows were fine ----
+       customProgramCacheKey carries the ablation's name, which is what stops
+       every variant sharing one program — but it also means the program is in
+       three's cache from block 0 onward, so onBeforeCompile does not run again
+       and a per-block read of the flag reports the *last* block: not compiled,
+       therefore not substituted, therefore "NO — CHECK" printed beside a
+       perfectly good 4.44 ms saving. The compiled program the later blocks time
+       is the substituted one; it is only the flag that went stale. So read the
+       run-long record, and print the number of sites rather than a boolean,
+       because "matched nothing" and "was never asked" are different failures
+       and a bare `false` conflates them. */
+    const hits = window.__tc.seen;
 
     set(null);
     time(12);
@@ -186,7 +219,6 @@ try {
       acc.full.push(time(reps));
       for (const [name, find, replace] of abl) {
         set({ name, find, replace });
-        hits[name] = window.__tc.hit;
         acc[name].push(time(reps));
       }
     }
@@ -194,7 +226,7 @@ try {
     frame();
     g.setPaused(false);
 
-    const res = { view: v.name, hits };
+    const res = { view: v.name, hits: { ...hits } };
     for (const n of names) res[n] = med(acc[n]);
     return res;
   }, [view, ABLATIONS, REPS, BLOCKS]);
@@ -204,12 +236,16 @@ try {
     out.views[v.name] = r;
     if (!JSON_OUT) {
       console.log(`\n  ── ${v.name} — full frame ${r.full.toFixed(2)} ms ──`);
-      console.log('  block            frame ms    saving   applied');
+      console.log('  block            frame ms    saving   sites substituted');
       const rows = ABLATIONS.map(a => a[0])
         .map(n => [n, r[n], r.full - r[n], r.hits[n]])
         .sort((a, b) => b[2] - a[2]);
-      for (const [n, ms, d, hit] of rows) {
-        console.log(`  ${n.padEnd(14)} ${ms.toFixed(2).padStart(9)} ${d.toFixed(2).padStart(9)}   ${hit ? 'yes' : 'NO — CHECK'}`);
+      for (const [n, ms, d, sites] of rows) {
+        const tag = sites > 0 ? String(sites)
+          : sites === 0 ? '0 — MATCHED NOTHING'
+          : 'NEVER COMPILED — CHECK';   // no program was ever built for this key
+
+        console.log(`  ${n.padEnd(14)} ${ms.toFixed(2).padStart(9)} ${d.toFixed(2).padStart(9)}   ${tag}`);
       }
     }
   }
