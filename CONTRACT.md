@@ -2914,6 +2914,70 @@ and 0.600 were both historical readings that this footer printed as limits, and 
 anything to route. See the V band section below; the correct conclusion was neither exposure nor
 grading but the instrument.
 
+## System 7 delivery record: `sys7final` and `sys7rung4`
+
+Shot at **`6c3b507`** with a clean `src/`, on the **frame-convergence settle** (`tools/settle.mjs`,
+100 frames minimum, all 26 views converged in 1.7–5.4 s) — not the 400 ms wall-clock settle it
+replaced, which covered roughly a fifth of that at this resolution.
+
+- **`sys7final`** — 2560×1440, 13 views × 2 arms, 26 frames, manifests log **0** entries.
+- **`sys7rung4`** — 1997×1123, the buffer the governor actually settles on at 120 fps, same 13
+  views × 2 arms, 26 frames, **0** logged entries.
+
+Each tag holds exactly one resolution. Quote the resolution with any pixel-scale figure below.
+
+### Colour, 2560×1440
+
+| window | graded | control | band | layer |
+| --- | --- | --- | --- | --- |
+| lit rock saturation | 0.618 | 0.618 | 0.615–0.626 | drift guard |
+| lit rock hue | 20.9° | 21.0° | 18.9–21.1° | drift guard |
+| lit rock V | 0.670 | 0.672 | 0.59–0.73 | reference photographs |
+| lit rock q25–q75 | 0.56–0.68 | 0.56–0.69 | spread intact | — |
+| clipped ≥254 / ≥250 | 0.03% / 0.35% | 0.01% / 0.05% | — | — |
+| far rock 270 saturation | 0.467 | 0.472 | — | — |
+
+### The paired window, and the one thing it proves that nothing else could
+
+`shade_far`'s two windows are **the same dirt**, one in sun and one in fill, each uniform in
+illumination by construction (99% and 100% kept), measured **whole** on both rows. So every
+difference between the rows is transport, and every difference between the arms is the grade.
+
+| 2560×1440 | graded | control | Δ from the chain |
+| --- | --- | --- | --- |
+| floor **shade** hue median | **4.3°** | 6.7° | −2.4°, cooler |
+| floor **shade** hue q25 | **−3.0°** | 0.0° | past red into magenta |
+| floor **shade** B/G | **0.894** | 0.826 | +0.068, cooler |
+| floor **lit** hue median | 21.4° | 21.7° | −0.3° |
+| floor **lit** B/G | 0.627 | 0.623 | +0.004 |
+| floor shade `grad/L` | 0.104 | 0.093 | +0.011, micro-relief kept |
+
+**This is the direct measurement of the original brief's hardest colour requirement** — that
+"teal" mean shadows cooling and not a global cyan drift. The shaded row moves 2.4° cooler and its
+lower quartile crosses zero into magenta, which is the brief's "purple shadows in the crevices" as
+a number; the sunlit row of *the same dirt* moves 0.3°. No unpaired window could separate those
+two claims, because a hue difference between different surfaces is always partly pigment. System 4
+supplies the cool shaded population and the split tone deepens it; `grad/L` rising 0.093 → 0.104
+says it does so without waxing over the micro-relief.
+
+### Banding, edges and structure, both delivery resolutions
+
+| | 2560×1440 graded | control | 1997×1123 graded | control |
+| --- | --- | --- | --- | --- |
+| sky worst run, `sun_gap` | **8** | 42 | **8** | 33 |
+| flat% | 42% | 94% | 43% | 92% |
+| skyline jump, median | **64.7** | 84.7 | **62.9** | 80.7 |
+| skyline jump, p90 | **111.2** | 207.3 | **109.7** | 204.9 |
+| `wall_lit` midwall `hf/lf` | 0.54 | 0.54 | 0.53 | 0.53 |
+| `wall_lit` upper `hf/lf` | 0.62 | 0.61 | 0.65 | 0.65 |
+
+Shadow gate 0.212 graded against 0.232 ungraded, target 0.15–0.25. Black clipping 0.05% against
+0.01%. Corner falloff 0.996–0.997 on bright pixels. `hf/lf` is identical between arms at both
+sizes, so the depth of field is not eating far-field detail.
+
+**Determinism** verified on the new settle: `wall_lit`, `shade_far` and `sun_gap` reshot at
+2560×1440 are byte-identical across runs, with matching convergence hashes.
+
 ## A reading is not a target, and a tool must say which it is printing
 
 Five population errors landed in one night and they share one shape: **a number was recorded as
