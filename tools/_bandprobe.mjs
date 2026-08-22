@@ -16,6 +16,7 @@
  */
 import { Terrain } from '../src/terrain.js';
 import { WashPath } from '../src/path.js';
+import { die, finite, nonEmpty } from './argcheck.mjs';
 
 const path = new WashPath();
 const terrain = new Terrain(path);
@@ -23,9 +24,15 @@ const terrain = new Terrain(path);
 /* 0.025 m sampling over a 25 m square: fine enough that the shortest octave
    under test is eight samples wide, and centred on open floor up-wash. */
 const STEP = 0.025;
-const HALF = +(process.argv[4] ?? 12.5);
-const CX = +(process.argv[2] ?? 0), CZ = +(process.argv[3] ?? -45);
+const HALF = finite('half-width', process.argv[4], 12.5);
+const CX = finite('centre x', process.argv[2], 0), CZ = finite('centre z', process.argv[3], -45);
+if (HALF <= 0) die(`half-width must be positive, got ${HALF}`);
 const N = Math.round((HALF * 2) / STEP);
+/* Refuse rather than fold: a half-width small enough to give fewer samples than
+   the longest octave under test produces a spectrum table that is arithmetically
+   valid and physically meaningless. */
+nonEmpty('the sample window', N >= 64 ? N : 0,
+  `${HALF} m at ${STEP} m gives ${N} samples; this needs at least 64.`);
 
 const H = new Float64Array(N * N);
 for (let j = 0; j < N; j++) {

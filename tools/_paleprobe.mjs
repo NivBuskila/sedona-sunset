@@ -11,11 +11,18 @@
  */
 import { readFileSync } from 'node:fs';
 import { decode } from './png.mjs';
+import { die, finite, nonEmpty } from './argcheck.mjs';
 
 const [file, ...r] = process.argv.slice(2);
+if (!file) die('needs a PNG: node tools/_paleprobe.mjs shots/tag_view.png [x0 y0 x1 y1]');
+/* Four fractions or none. A partial crop used to leave the rest undefined, which
+   became NaN, which selected no cells — and the tool then reported on an empty
+   set as though it had looked. */
+if (r.length && r.length !== 4) die(`the crop is four fractions x0 y0 x1 y1, got ${r.length}`);
 const s = decode(readFileSync(file));
-const fx0 = r.length ? +r[0] : 0, fy0 = r.length ? +r[1] : 0.35;
-const fx1 = r.length ? +r[2] : 1, fy1 = r.length ? +r[3] : 1;
+const fx0 = r.length ? finite('x0', r[0]) : 0, fy0 = r.length ? finite('y0', r[1]) : 0.35;
+const fx1 = r.length ? finite('x1', r[2]) : 1, fy1 = r.length ? finite('y1', r[3]) : 1;
+if (fx1 <= fx0 || fy1 <= fy0) die(`the crop is empty: x ${fx0}..${fx1}, y ${fy0}..${fy1}`);
 const X0 = Math.round(fx0 * s.w), X1 = Math.round(fx1 * s.w);
 const Y0 = Math.round(fy0 * s.h), Y1 = Math.round(fy1 * s.h);
 
@@ -40,6 +47,7 @@ for (let y = Y0; y + B <= Y1; y += B) {
 }
 /* Flat and bright. The sd gate is what separates a plate from sunlit gravel,
    which reaches the same peak value but never holds it over 8x8 px. */
+nonEmpty('the crop', cells.length, `It is ${X0}..${X1} x ${Y0}..${Y1} px in a ${s.w}x${s.h} image, and the cell is 8 px.`);
 const flat = cells.filter(c => c.sd < 0.055).sort((a, b) => b.v - a.v);
 const all = cells.slice().sort((a, b) => b.v - a.v);
 const med = all[Math.floor(all.length / 2)];

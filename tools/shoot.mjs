@@ -1,6 +1,8 @@
 /* Standard capture set for visual critique.
  *
  * usage: node tools/shoot.mjs [tag] [--only name,name] [--w 1600] [--h 900]
+ *                             [--far] [--hash nopost]
+ *                             [--minframes 90] [--settlemax 15000]
  *
  * Renders a fixed set of viewpoints so that two runs of two different builds are
  * directly comparable, and so a critic looking only at the PNGs is always looking
@@ -12,7 +14,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { run, capture } from './harness.mjs';
 import { VIEWS as SHARED_VIEWS } from './views.mjs';
-import { settle, settleTag } from './settle.mjs';
+import { settle, warmup, settleTag } from './settle.mjs';
 
 const DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -50,6 +52,9 @@ const num = (k, d) => {
 };
 const W = num('w', 1600), H = num('h', 900);
 const only = getf('only', '');
+/* Settle knobs. The defaults are in tools/settle.mjs; these exist so a framing
+   that reports `ceiling` can be given more room without editing the tool. */
+const MINF = num('minframes', 90), SMAX = num('settlemax', 15000);
 /* Passed through to the page's location hash, which is how the render stages
    read their own switches — `--hash nopost` gets you the scene without System
    7's chain. Added because a defect in one stage now contaminates every other
@@ -124,17 +129,21 @@ await run({ width: W, height: H, waitReady: false }, async ({ page, errs }) => {
   console.log(`  boot ${((Date.now() - t0) / 1000).toFixed(0)}s`);
   await page.evaluate(() => window.__game.begin());
 
-  // one settle pass so procedural textures and any deferred geometry are resident
-  await page.waitForTimeout(4000);
+  /* One warmup pass so procedural textures and any deferred geometry are
+     resident. Deliberately not the convergence settle — see warmup's comment. */
+  const boot = await warmup(page, { frames: MINF * 2 });
+  console.log(`  ${settleTag(boot)}`);
 
   const results = [];
+  let unstable = 0;
   for (const v of views) {
     await page.evaluate(([d, yaw, pitch]) => {
       const g = window.__game;
       g.walkTo(d);
       g.lookAt(yaw, pitch);
     }, [v.d, v.yaw, v.pitch]);
-    await page.waitForTimeout(400);
+    const s = await settle(page, { minFrames: MINF, maxMs: SMAX });
+    if (s.exit !== 'converged') unstable++;
 
     const file = path.join(shotsDir, `${tag}_${v.name}.png`);
     await capture(page, file);
@@ -143,14 +152,23 @@ await run({ width: W, height: H, waitReady: false }, async ({ page, errs }) => {
       const g = window.__game;
       return { fps: +(g.fps || 0).toFixed(1), info: g.info(), probe: g.probe() };
     });
-    results.push({ view: v.name, file: path.basename(file), ...st });
+    results.push({ view: v.name, file: path.basename(file), settle: s, ...st });
     const i = st.info, p = st.probe;
     console.log(`  ${v.name.padEnd(11)} calls=${String(i.calls).padStart(4)} ` +
                 `tris=${(i.triangles / 1000).toFixed(0)}k tex=${i.textures} ` +
-                `| lum med=${p.median} p99=${p.p99} sky=${p.skyAvg} gnd=${p.groundAvg}`);
+                `| lum med=${p.median} p99=${p.p99} sky=${p.skyAvg} gnd=${p.groundAvg} ` +
+                `| ${settleTag(s)}`);
   }
 
   fs.writeFileSync(path.join(shotsDir, `${tag}.json`),
-    JSON.stringify({ results, logs: [...new Set(errs)] }, null, 2));
+    JSON.stringify({ settle: { minFrames: MINF, maxMs: SMAX, boot }, results, logs: [...new Set(errs)] }, null, 2));
   console.log(`\n${results.length} shots → shots/${tag}_*.png`);
+  /* Loud, because the whole point of the convergence settle is that an
+     under-settled capture stops being invisible. A byte diff against a framing
+     that hit its ceiling is not evidence of anything. */
+  if (unstable) {
+    console.log(`\n  WARNING: ${unstable} framing${unstable > 1 ? 's' : ''} hit the settle ` +
+                `ceiling and ${unstable > 1 ? 'are' : 'is'} not established as byte-stable. ` +
+                `Raise --settlemax before comparing them.`);
+  }
 });

@@ -17,14 +17,26 @@
  */
 import { makeClastSurface, makeGrit } from '../src/textures.js';
 
+import { die, finite, oneOf } from './argcheck.mjs';
+
+const KNOWN = ['w', 'h', 'sun', 'only', 'mpp'];
+for (const a of process.argv.slice(2)) {
+  if (a.startsWith('--') && !KNOWN.includes(a.slice(2))) {
+    die(`unknown flag "${a}". Known flags: ${KNOWN.map(k => '--' + k).join(' ')}`);
+  }
+}
 const arg = (k, d) => {
   const i = process.argv.indexOf('--' + k);
-  return i < 0 ? d : Number(process.argv[i + 1]);
+  return i < 0 ? d : finite('--' + k, process.argv[i + 1]);
 };
 const W = arg('w', 384), H = arg('h', 384);
 const SUNEL = arg('sun', 8) * Math.PI / 180;
 const oi = process.argv.indexOf('--only');
-const ONLY = oi < 0 ? 'all' : process.argv[oi + 1];
+/* Not a free string: `--only` selects which layers contribute, and an
+   unrecognised value used to switch *both* off and then report the numbers from
+   a facet with no coarse map and no grit on it — a plausible-looking table
+   describing nothing. */
+const ONLY = oi < 0 ? 'all' : oneOf('--only', process.argv[oi + 1], ['all', 'coarse', 'grit']);
 
 function pyramid(data, size, ch = 4) {
   const lv = [];
@@ -182,7 +194,8 @@ function probe(mpp) {
 }
 
 const mi = process.argv.indexOf('--mpp');
-const MPPS = mi >= 0 ? [Number(process.argv[mi + 1])] : [0.0015, 0.004, 0.012, 0.035];
+const MPPS = mi >= 0 ? [finite('--mpp', process.argv[mi + 1])] : [0.0015, 0.004, 0.012, 0.035];
+if (MPPS.some(m => m <= 0)) die('--mpp is metres per pixel and must be positive');
 console.log(`clast facet, SC ${SC} cyc/m, glock ${GLOCK}, gn ${GN} gt ${GT} gc ${GC}, only=${ONLY}`);
 for (const mpp of MPPS) {
   const s = stats(probe(mpp), W, H);
