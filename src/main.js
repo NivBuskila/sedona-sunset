@@ -12,6 +12,7 @@
  */
 import * as THREE from 'three';
 import { WashPath } from './path.js';
+import { buildCorridor, confine } from './corridor.js';
 import { Terrain, buildTerrainMesh, makeTerrainMaterial, syncWind, applyScour } from './terrain.js';
 import { buildScatter } from './scatter.js';
 import { buildWalls, buildDistantButtes, buildTalus, makeRockMaterial } from './rock.js';
@@ -32,6 +33,104 @@ import { createPost } from './post.js';
 
 const EYE = 1.65;
 const DEG = Math.PI / 180;
+
+/* ── the loading screen ────────────────────────────────────────────────────
+ *
+ * Cold boot is forty-odd seconds — every texel of every texture in the scene is
+ * written in JavaScript before there is anything to show — and until this
+ * existed the whole of it was a black, unresponsive tab. Six measured loads ran
+ * 36 to 46 s with the main thread blocked solid; screenshot attempts at 5, 10,
+ * 15, 20, 25, 30 and 35 seconds all failed because the renderer could not
+ * answer. On a slower machine Chrome offers to kill the page.
+ *
+ * The message has to be painted *and the paint has to have happened* before any
+ * generation starts, which is the whole reason this is a prelude with an await
+ * after it rather than a line at the top of the file. A message drawn into a
+ * canvas and then followed immediately by forty seconds of synchronous work is
+ * worth exactly nothing: the compositor never gets a turn, and the user sees the
+ * same black tab they saw before.
+ *
+ * It is its own 2D canvas because a canvas that has handed out a 2D context can
+ * never hand out a WebGL one, and it is removed from the document the instant
+ * the first real frame is on screen — `document.body` in the shipped frame is
+ * `[SCRIPT, CANVAS]` and CONTRACT.md's no-HUD rule keeps it that way.
+ */
+const loading = (() => {
+  const c = document.createElement('canvas');
+  c.style.cssText =
+    'position:fixed;inset:0;width:100%;height:100%;display:block;z-index:2';
+  document.body.appendChild(c);
+  const g = c.getContext('2d');
+  let w = 0, h = 0;
+  /* The boot log. `painted` is the one that matters and it is the reason
+     `yieldPaint` distinguishes how it resolved: rAF firing means the browser
+     produced a frame, so a `painted` timestamp is proof the message was on
+     screen — which a screenshot cannot give, because the request to take one
+     goes to the same blocked main thread and simply times out. `stalls` is the
+     rest of the story, the longest run of work between two yields. */
+  const log = { t0: performance.now(), painted: null, phases: [], stalls: 0 };
+  let mark = log.t0;
+
+  function paint(note) {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const cw = Math.max(1, Math.round(window.innerWidth * dpr));
+    const ch = Math.max(1, Math.round(window.innerHeight * dpr));
+    if (cw !== w || ch !== h) { c.width = w = cw; c.height = h = ch; }
+    /* Dusk, roughly where the scene it is standing in front of ends up, so the
+       first real frame arrives as a change of subject rather than a flash. */
+    const sky = g.createLinearGradient(0, 0, 0, h);
+    sky.addColorStop(0, '#1a1013');
+    sky.addColorStop(0.62, '#3a1f18');
+    sky.addColorStop(1, '#120b0a');
+    g.fillStyle = sky;
+    g.fillRect(0, 0, w, h);
+    const px = Math.round(15 * dpr);
+    g.font = `${px}px ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif`;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillStyle = '#d8b49a';
+    g.fillText(note, w / 2, h / 2);
+  }
+
+  /* rAF fires before the paint, so the resolve is deferred one further task to
+     land after it. The wall-clock fallback is there because a backgrounded tab
+     throttles rAF to nothing and a boot that waits on it would never finish —
+     which would take every capture in the repo with it. */
+  const yieldPaint = () => new Promise((res) => {
+    let done = false;
+    const fin = (via) => {
+      if (done) return;
+      done = true;
+      if (via === 'raf' && log.painted === null) log.painted = performance.now() - log.t0;
+      res();
+    };
+    requestAnimationFrame(() => setTimeout(() => fin('raf'), 0));
+    setTimeout(() => fin('timer'), 250);
+  });
+
+  return {
+    log,
+    async note(text) {
+      const now = performance.now();
+      if (log.phases.length) {
+        const ms = now - mark;
+        log.phases[log.phases.length - 1].ms = Math.round(ms);
+        if (ms > log.stalls) log.stalls = Math.round(ms);
+      }
+      log.phases.push({ note: text, ms: 0 });
+      paint(text);
+      await yieldPaint();
+      mark = performance.now();
+    },
+    done() {
+      log.phases[log.phases.length - 1].ms = Math.round(performance.now() - mark);
+      log.total = Math.round(performance.now() - log.t0);
+      c.remove();
+    },
+  };
+})();
+
+await loading.note('Sedona Sunset — drawing the desert. About a minute.');
 
 /* ── renderer ──────────────────────────────────────────────────────────── */
 
@@ -101,26 +200,49 @@ const camera = new THREE.PerspectiveCamera(
   58, window.innerWidth / window.innerHeight, 0.06, 9000);
 camera.rotation.order = 'YXZ';
 
-/* ── content ───────────────────────────────────────────────────────────── */
+/* ── content ───────────────────────────────────────────────────────────────
+ *
+ * The awaits between the phases below are the loading screen's whole reason for
+ * being able to say anything after the first line. Each one is a single frame's
+ * yield — a few tens of milliseconds against forty seconds of work — and what
+ * it buys is a tab that repaints and answers the compositor between phases
+ * instead of one that Chrome offers to kill. Nothing about the order changes.
+ *
+ * Deliberately *not* an attempt to move generation into workers. Every one of
+ * these hands back a live THREE object built against this context.
+ */
 
-const tex = {
-  dirt: makeDirt(1024),
-  sand: makeSand(512),
-  rock: makeRock(1024),
-  /* The footprint-locked detail layer. Small, because it carries no low
-     frequencies — see makeGrit for why that is the property that lets rock.js
-     read it at whatever scale a pixel happens to be. */
-  grit: makeGrit(256),
-  clast: makeClastSurface(512),
-  macro: makeMacro(512),
-  variance: makeVariance(512),
-  crack: makeCracks(512),
-};
+/* Split one texture per yield rather than built as one object literal, because
+   this block is the longest stall in the boot by a wide margin and an
+   unbroken one is a tab that cannot answer for twenty seconds. The two 1024s
+   are most of it. Same calls, same order, same textures. */
+const tex = {};
+await loading.note('Drawing the wash floor…');
+tex.dirt = makeDirt(1024);
+await loading.note('Drawing sand…');
+tex.sand = makeSand(512);
+await loading.note('Drawing sandstone…');
+tex.rock = makeRock(1024);
+await loading.note('Drawing grit…');
+/* The footprint-locked detail layer. Small, because it carries no low
+   frequencies — see makeGrit for why that is the property that lets rock.js
+   read it at whatever scale a pixel happens to be. */
+tex.grit = makeGrit(256);
+await loading.note('Drawing gravel…');
+tex.clast = makeClastSurface(512);
+await loading.note('Weathering it…');
+tex.macro = makeMacro(512);
+tex.variance = makeVariance(512);
+tex.crack = makeCracks(512);
+
+await loading.note('Cutting the wash…');
 
 const path = new WashPath();
 const terrain = new Terrain(path);
 const terrainMesh = buildTerrainMesh(terrain, makeTerrainMaterial(tex));
 scene.add(terrainMesh);
+
+await loading.note('Raising the canyon walls…');
 
 /* System 2. The rock is not part of the height field — see rock.js for why a
    height field cannot draw a cliff — so it arrives as its own meshes: two wall
@@ -140,8 +262,12 @@ for (const m of rocks) scene.add(m);
    depth ladder was air thick enough to contradict a blue zenith. Its own group,
    not in `rocks`, because it carries no rock material and the vegetation
    scatter walks that list looking for cliffs to grow under. */
+await loading.note('Setting the far country…');
+
 const farRidges = buildFarRidges(terrain, path);
 scene.add(farRidges);
+
+await loading.note('Scattering the stones…');
 
 const clasts = buildScatter(terrain, tex);
 /* The boulders dig hollows the mesh was built too early to know about. */
@@ -150,6 +276,8 @@ for (const m of clasts) scene.add(m);
 
 /* System 3: the hero juniper, and the sparse pinyon-juniper scatter that says
    this is 4,500 ft in Arizona rather than an empty desert. */
+await loading.note('Growing the juniper…');
+
 setPlantAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
 for (const m of buildJuniper(terrain, tex)) scene.add(m);
 for (const m of buildVegetation(path, terrain, rocks)) scene.add(m);
@@ -161,6 +289,8 @@ function syncViewport() {
   clastU.uVpH.value = renderer.domElement.height || window.innerHeight;
 }
 syncViewport();
+
+await loading.note('Lighting the sky…');
 
 const sky = buildSky();
 sky.scale.setScalar(5000);
@@ -181,6 +311,15 @@ const audio = createAudio({ camera, canvas, path });
 syncWind(terrainMesh.material, audio.api);
 
 /* ── player ────────────────────────────────────────────────────────────── */
+
+/* Lateral confinement. The ground clamp has always been solid — a hundred
+   metres off-piste at 12 m/s in six directions produces no fall-through and no
+   NaN — but nothing stopped the player walking sideways *through* a canyon
+   wall, and twenty-five metres of strafing did exactly that. See corridor.js
+   for why this is a soft limit on distance from the wash centreline rather than
+   collision against the wall mesh, and for how its width is read out of the
+   cross-section instead of being a number somebody chose. */
+const corridor = buildCorridor(path, terrain);
 
 const player = {
   x: 0, y: 0, z: 0,
@@ -344,6 +483,13 @@ function step(dt) {
   player.vx += (ax - player.vx) * k;
   player.vz += (az - player.vz) * k;
   if (!f && !r && Math.hypot(player.vx, player.vz) < 0.004) { player.vx = 0; player.vz = 0; }
+
+  /* Confinement acts on the velocity, before it is integrated, so it is not a
+     position fixup that can accumulate and so it is identically inert at rest —
+     the loop stays a fixed point when no key is held, which every capture
+     depends on. It also never fires in the middle of the wash: the limit is
+     eight to eighteen metres either side of the centreline the player walks. */
+  confine(corridor, path, player, path.atZ(player.z, _q), dt);
 
   player.x += player.vx * dt;
   player.z += player.vz * dt;
@@ -560,10 +706,25 @@ const api = {
   _three: THREE,
   _scene: scene, _camera: camera, _terrain: terrain, _path: path, _atmo: atmo,
   _post: post,
+  /* When the loading message reached the screen, how long each generation phase
+     blocked for, and the worst of them. tools/_bootpaint.mjs reads it; nothing
+     in the contract surface does. */
+  _boot: loading.log,
+  _corridor: corridor,
   _instances: clasts.reduce((n, m) => n + m.count, 0),
 };
 
+/* Shader compilation is the last long stall of the boot and the loading screen
+   should still be up for it, so the note goes before the render and the screen
+   comes down after. */
+await loading.note('Compiling shaders…');
 renderOnce();   // compile everything before the harness starts timing
+/* The scene is on the canvas, so the message can go. `document.body` is back to
+   `[SCRIPT, CANVAS]` from here on, which is the shipped state CONTRACT.md's
+   no-HUD rule requires and which a QA check verifies. */
+loading.done();
+/* Unchanged, and deliberately: the harness waits on this global with a long
+   timeout and nothing above may move when or how it appears. */
 window.__game = api;
 
 /* The harness drives the loop itself, via begin() after it has waited for
