@@ -882,6 +882,11 @@ function installProbeHeightLerp(A) {
     return `vec3(${((o.x - s.x) * f).toFixed(7)},${((o.y - s.y) * f).toFixed(7)},` +
       `${((o.z - s.z) * f).toFixed(7)})`;
   };
+  const ast = (k) => {
+    const o = A.shAstern.coefficients[k], s = A.sh.coefficients[k], f = SCALE * K[k];
+    return `vec3(${((o.x - s.x) * f).toFixed(7)},${((o.y - s.y) * f).toFixed(7)},` +
+      `${((o.z - s.z) * f).toFixed(7)})`;
+  };
   /* Fitted in tools/probefit.mjs against the raycast table. The two ramps exist
      because the thing that differs between normals is not the level but the
      rate: an up-facing surface is already half open at the floor and saturates
@@ -896,6 +901,32 @@ function installProbeHeightLerp(A) {
       + ${lit(4)} * ( x * y ) + ${lit(5)} * ( y * z )
       + ${lit(6)} * ( 0.743125 * z * z - 0.247708 )
       + ${lit(7)} * ( x * z ) + ${lit(8)} * ( x * x - y * y );
+  }
+  vec3 s4AsternDelta( vec3 n ) {
+    float x = n.x, y = n.y, z = n.z;
+    return ${ast(0)} + ${ast(1)} * y + ${ast(2)} * z + ${ast(3)} * x
+      + ${ast(4)} * ( x * y ) + ${ast(5)} * ( y * z )
+      + ${ast(6)} * ( 0.743125 * z * z - 0.247708 )
+      + ${ast(7)} * ( x * z ) + ${ast(8)} * ( x * x - y * y );
+  }
+  /* How open the corridor is behind you, which is the second axis of aperture and
+     the one skyview.mjs concluded did not exist. What is astern is the wash you
+     have already walked, so it lengthens as you go and its skyline drops:
+     tools/_skydist.mjs measures 80 degrees at 8 m along, then 57, 46, 37, 27, 22
+     at 30, 46, 62, 92 and 120, flattening near 17 beyond that. Nine measured
+     points sit within two degrees of 17 + 63 exp(-(d-8)/45), and world Z stands in
+     for arc length because the wash is straight - x holds inside 9 m over 332 m,
+     so d is 8 - z to 1.4 percent. That is the whole reason this can be one exp of
+     a world coordinate instead of a path lookup.
+     Interpolating by sin squared of the skyline rather than by the angle: what the
+     two probes differ by is the cosine-weighted solid angle the escarpment covers,
+     and that is sin squared of its elevation, so this is the parameter the pair is
+     actually linear in. Against the angle it would be off by six points of mix at
+     the middle of the walk. */
+  float s4AsternOpen( float wz ) {
+    float el = min( 0.296706 + 1.099557 * exp( wz * 0.0222222 ), 1.5707963 );
+    float s = sin( el );
+    return clamp( ( 0.5 - s * s ) * 2.412545, 0.0, 1.0 );
   }
   float s4ProbeOpen( float wy, float ny ) {
     /* The free-exponent fit wanted 1.46 and 1.12; pinning them to 1.5 and 1.125
@@ -927,7 +958,12 @@ function installProbeHeightLerp(A) {
     #if defined( USE_FOG )
       {
         vec3 s4wn = inverseTransformDirection( geometryNormal, viewMatrix );
-        irradiance += s4ProbeDelta( s4wn ) * s4ProbeOpen( vFogW.y, s4wn.y );
+        float s4open = s4ProbeOpen( vFogW.y, s4wn.y );
+        irradiance += s4ProbeDelta( s4wn ) * s4open;
+        /* Scaled by what the height lerp has not already opened. Above the rim
+           shOpen has no escarpment left in it at any bearing, so there is no
+           up-canyon window left to open and crediting one would double-count it. */
+        irradiance += s4AsternDelta( s4wn ) * ( s4AsternOpen( vFogW.z ) * ( 1.0 - s4open ) );
       }
     #endif`);
 }

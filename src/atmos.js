@@ -777,25 +777,28 @@ export function computeAtmosphere(over = {}) {
   const GAP_W = Math.cos((over.gapHalfWidthDeg ?? 22) * DEG);
   const GAP_W2 = Math.cos((over.gapHalfWidthDeg ?? 22) * DEG + 28 * DEG);
   /* The corridor has two ends, and until now this model knew about one of them.
-     A wash is open up-canyon as well as down, and tools/_skydist.mjs bisects the
-     skyline at 24 bearings from four points along the traverse: at 100, 160 and
-     220 m along, the bearing directly *away* from the sun stands at 12 to 26
-     degrees, against the 40 to 55 the flanks stand at. Only at 40 m in, where
-     the walk starts inside the narrow part, does it close up to 50.
-     Leaving it at 45 mattered more than a missing doorway usually would, because
-     of which doorway it is. The away-from-sun hemisphere is exactly what a shaded
-     face in this corridor is turned toward, so it is the lobe that lights every
-     shaded wall in the set - and it was being filled with escarpment, which is
-     92 percent reflected sunlight at B/G 0.462 (tools/_fillterms.mjs). That lobe
-     came out at hue 10, warmer than the sunlit rock it is supposed to contrast
-     with, which is the whole of the "shade is brown, not blue" complaint from
-     both the critic and System 5.
-     Slightly wider than the sun's window and slightly higher: the measured band
-     of low skyline spans about 24 degrees either side of dead astern, and 20
-     degrees is the median of the three open viewpoints. The near viewpoint's 50
-     is not averaged in - it is a different place, not noise, and the probe height
-     lerp is what carries position-dependent aperture. */
-  const GAPA_EL = (over.gapAwayDeg ?? 20) * DEG;    // skyline up-canyon, astern
+     The away-from-sun hemisphere is what a shaded face in this corridor is turned
+     toward, so it is the lobe that lights every shadow in the set - and it was
+     being filled with escarpment, which tools/_fillterms.mjs shows is 92 percent
+     reflected sunlight at B/G 0.462. That lobe arrived at hue 10, warmer than the
+     sunlit rock it is meant to contrast with, which is the whole of the "shade is
+     brown, not blue" complaint.
+     But the aperture astern is not a constant, and reading it as one is what the
+     first attempt at this got wrong. tools/_skydist.mjs bisects the skyline at 24
+     bearings, and dead astern it stands at 80 degrees at 8 m along the walk, 57
+     at 30, 46 at 46, 37 at 62, 27 at 92, 22 at 120 and about 17 beyond - because
+     what is behind you is the corridor you have already walked, and it gets
+     longer. Any single value is wrong nearly everywhere: 20 degrees is right past
+     120 m and absurd at 8, and the mean over the eight standard viewpoints is 45,
+     which is what SKYLINE already was. So this is the *open* end of that range
+     and src/sky.js carries the position term, exactly as it already carries the
+     height term for the flanks.
+     That also explains why skyview.mjs missed it and reported the aperture as a
+     function of height alone: it sampled 18 through 120 m and saw little change,
+     which is true over that stretch but is the flat end of a curve that runs to
+     332. Both sweeps were right about where they looked.
+     The band is about 24 degrees either side of dead astern, measured. */
+  const GAPA_EL = (over.gapAwayDeg ?? 17) * DEG;    // skyline astern, wide open
   const GAPA_W = Math.cos((over.gapAwayHalfWidthDeg ?? 24) * DEG);
   const GAPA_W2 = Math.cos((over.gapAwayHalfWidthDeg ?? 24) * DEG + 28 * DEG);
   const WALL_SKYVIS = over.wallSkyVis ?? 0.20;      // the far wall is in the same room
@@ -839,8 +842,13 @@ export function computeAtmosphere(over = {}) {
   };
   /* One skyline, used by both the escarpment's radiance and its coverage. They
      used to compute it separately from the same constants, which is two places
-     to add a doorway to and one of them to forget. */
-  const skylineEl = (d) => {
+     to add a doorway to and one of them to forget.
+     `astern` is the up-canyon skyline to use, passed in rather than closed over,
+     because this is evaluated twice per direction - once with the corridor astern
+     shut and once with it open - to give src/sky.js two probes to interpolate
+     between by position. Passing SKYLINE reproduces the single-doorway model
+     exactly, not approximately, which is what makes the pair a clean ablation. */
+  const skylineEl = (d, astern) => {
     const hl = Math.hypot(d[0], d[2]) || 1e-6;
     const towardSun = (d[0] * sunH[0] + d[2] * sunH[2]) / hl;
     const gs = smooth(GAP_W2, GAP_W, towardSun);
@@ -848,10 +856,10 @@ export function computeAtmosphere(over = {}) {
     /* The two windows face opposite bearings and their ramps end 50 and 52
        degrees out, so they cannot both be open on one direction and adding them
        is a selection rather than a sum. */
-    return SKYLINE + (GAP_EL - SKYLINE) * gs + (GAPA_EL - SKYLINE) * ga;
+    return SKYLINE + (GAP_EL - SKYLINE) * gs + (astern - SKYLINE) * ga;
   };
-  const skylineSin = (d) => Math.sin(skylineEl(d));
-  const wallRadiance = (d, out) => {
+  const skylineSin = (d, astern) => Math.sin(skylineEl(d, astern));
+  const wallRadiance = (d, out, astern) => {
     const hl = Math.hypot(d[0], d[2]) || 1e-6;
     /* A wall seen in direction d faces back along -d, so its cosine to the sun
        is the component of -d along the sun's azimuth. Crucially that cosine is
@@ -865,7 +873,7 @@ export function computeAtmosphere(over = {}) {
        was raised. Lit fraction therefore climbs from nothing at the wall's foot
        to full at its crest. Without this the up-canyon skyline reads as a fully
        sunlit cliff and *raises* the shaded fill, which is what it just did. */
-    const hs = skylineSin(d);
+    const hs = skylineSin(d, astern);
     const lit = WALL_LIT * smooth(LIT_FOOT * hs, hs, d[1]);
     const eDirect = facing * lit * Math.cos(SUN_EL);
     for (let k = 0; k < 3; k++) {
@@ -888,10 +896,10 @@ export function computeAtmosphere(over = {}) {
      above, with the doorway toward the sun. The soft edge is there because a
      ridge is not a straight line and because a hard step in the environment
      rings the SH fit. */
-  const coverAt = (d) => {
+  const coverAt = (d, astern) => {
     const y = d[1];
     if (y < 0) return 1;
-    const hs = skylineSin(d);
+    const hs = skylineSin(d, astern);
     return 1 - smooth(hs - 0.07, hs + 0.07, y);
   };
 
@@ -913,9 +921,17 @@ export function computeAtmosphere(over = {}) {
      undersides untouched, because SH9 is low order and the sky coefficients leak
      into a down-facing lobe by 19 to 30 percent. */
   const shOpen = new THREE.SphericalHarmonics3();
+  /* And the same environment again with the corridor astern opened to its far
+     value. Three probes rather than two because the aperture has two independent
+     axes and one interpolant cannot carry both: height opens the flanks, and
+     distance along the wash opens the up-canyon end. src/sky.js drives this one
+     from world Z, which is legitimate here only because the wash is straight -
+     x stays inside 9 m over 332 m of walk, so arc length is 8 minus z to within
+     1.4 percent. */
+  const shAstern = new THREE.SphericalHarmonics3();
   const basis = [0, 0, 0, 0, 0, 0, 0, 0, 0];
   const dir = new THREE.Vector3();
-  const d3 = [0, 0, 0], env = [0, 0, 0], wall = [0, 0, 0];
+  const d3 = [0, 0, 0], env = [0, 0, 0], envA = [0, 0, 0], wall = [0, 0, 0];
   const eH = [0, 0, 0], eVsun = [0, 0, 0], eVanti = [0, 0, 0];
   const eSkyH = [0, 0, 0];
 
@@ -941,14 +957,21 @@ export function computeAtmosphere(over = {}) {
         const cH = Math.max(0, d3[1]);
         for (let k = 0; k < 3; k++) eSkyH[k] += (k === 0 ? sky0 : k === 1 ? sky1 : sky2) * cH * dw;
 
-        const cov = coverAt(d3);
-        if (d3[1] < 0) { env[0] = localGround[0]; env[1] = localGround[1]; env[2] = localGround[2]; }
-        else if (cov > 0) {
-          wallRadiance(d3, wall);
-          env[0] = sky0 + (wall[0] - sky0) * cov;
-          env[1] = sky1 + (wall[1] - sky1) * cov;
-          env[2] = sky2 + (wall[2] - sky2) * cov;
-        } else { env[0] = sky0; env[1] = sky1; env[2] = sky2; }
+        /* The environment for one astern skyline. Called twice, and the only
+           thing that differs between the two calls is how much of the up-canyon
+           bearing is rock rather than sky. */
+        const envFor = (astern, out) => {
+          const cov = coverAt(d3, astern);
+          if (d3[1] < 0) { out[0] = localGround[0]; out[1] = localGround[1]; out[2] = localGround[2]; }
+          else if (cov > 0) {
+            wallRadiance(d3, wall, astern);
+            out[0] = sky0 + (wall[0] - sky0) * cov;
+            out[1] = sky1 + (wall[1] - sky1) * cov;
+            out[2] = sky2 + (wall[2] - sky2) * cov;
+          } else { out[0] = sky0; out[1] = sky1; out[2] = sky2; }
+        };
+        envFor(SKYLINE, env);
+        envFor(GAPA_EL, envA);
 
         dir.set(d3[0], d3[1], d3[2]);
         THREE.SphericalHarmonics3.getBasisAt(dir, basis);
@@ -956,6 +979,9 @@ export function computeAtmosphere(over = {}) {
           sh.coefficients[k].x += basis[k] * env[0] * dw;
           sh.coefficients[k].y += basis[k] * env[1] * dw;
           sh.coefficients[k].z += basis[k] * env[2] * dw;
+          shAstern.coefficients[k].x += basis[k] * envA[0] * dw;
+          shAstern.coefficients[k].y += basis[k] * envA[1] * dw;
+          shAstern.coefficients[k].z += basis[k] * envA[2] * dw;
         }
         const op0 = d3[1] < 0 ? localGround[0] : sky0;
         const op1 = d3[1] < 0 ? localGround[1] : sky1;
@@ -982,7 +1008,7 @@ export function computeAtmosphere(over = {}) {
     lut, SKY_W, SKY_H,
     sunRGB, sunLum, sunSpec: SUN_SPEC,
     mieTintRGB, groundRGB, groundSpec,
-    sh, shOpen,
+    sh, shOpen, shAstern,
     irradiance: { horizontal: eH, vertSun: eVsun, vertAnti: eVanti, skyHorizontal: eSkyH },
     directHorizontal: [sunRGB[0] * sy, sunRGB[1] * sy, sunRGB[2] * sy],
     ms,

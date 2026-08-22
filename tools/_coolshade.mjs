@@ -84,6 +84,10 @@ const line = (lab, e) => {
 
 console.log('\n  the canyon probe (A.sh) - what a surface on the wash floor gets');
 for (const [lab, n] of NORMALS) console.log(line(lab, irr(A.sh, n)));
+console.log('\n  the astern probe (A.shAstern) - corridor astern open, flanks still shut.');
+console.log('  src/sky.js blends toward this by world Z, so it is what the far half of');
+console.log('  the wash gets and the near half does not.');
+for (const [lab, n] of NORMALS) console.log(line(lab, irr(A.shAstern, n)));
 console.log('\n  the open probe (A.shOpen) - escarpment lifted, same ground half');
 for (const [lab, n] of NORMALS) console.log(line(lab, irr(A.shOpen, n)));
 

@@ -26,13 +26,26 @@
 import { run } from './harness.mjs';
 
 const NAZ = 24;
+/* Default to the distances the standard views actually sit at, because that is
+   the population any constant fitted here gets applied to. The first sweep of
+   this used 40/100/160/220 and found the astern skyline opening from 50 to 12
+   degrees along the walk - which is a real gradient, but three of those four
+   points are past `sun_gap` at 120 m and no view in the set is out there.
+   skyview.mjs made the same mistake in the other direction: it sampled 18
+   through 120 and concluded from the flatness it saw that aperture is a function
+   of height and not of position. Both sweeps were right about where they looked. */
+const DS = (() => {
+  const i = process.argv.indexOf('--d');
+  if (i >= 0) return process.argv[i + 1].split(',').map(Number);
+  return [8, 30, 46, 62, 92, 120];
+})();
 
 await run({ width: 320, height: 200, hash: 'high&noadapt' }, async ({ page, errs }) => {
   await page.waitForFunction(() => !!window.__game, null, { timeout: 420_000 });
   await page.evaluate(() => window.__game.begin());
   await page.waitForTimeout(2000);
 
-  const r = await page.evaluate((NAZ) => {
+  const r = await page.evaluate(([NAZ, DS]) => {
     const g = window.__game, THREE = g._three, scene = g._scene;
     const lights = [];
     scene.traverse((o) => { if (o.isDirectionalLight && o.castShadow) lights.push(o); });
@@ -48,7 +61,7 @@ await run({ width: 320, height: 200, hash: 'high&noadapt' }, async ({ page, errs
     /* Four points along the wash, the same traverse skyview.mjs samples. */
     const rc = new THREE.Raycaster(); rc.far = 3000;
     const out = [];
-    for (const d of [40, 100, 160, 220]) {
+    for (const d of DS) {
       g.walkTo(d);
       const eye = g._camera.position.clone();
       const p = new THREE.Vector3(eye.x, eye.y - 1.4, eye.z);   // ground, not eye
@@ -84,7 +97,7 @@ await run({ width: 320, height: 200, hash: 'high&noadapt' }, async ({ page, errs
       out.push({ walk: d, rows });
     }
     return { out, sunAz: +(sunAz * 180 / Math.PI).toFixed(1) };
-  }, NAZ);
+  }, [NAZ, DS]);
 
   console.log(`\n  skyline distance by bearing. sun azimuth ${r.sunAz} deg.`);
   console.log('  "rel" is degrees from the sun\'s bearing: 0 looks into the sun, 180 up-canyon away.\n');
