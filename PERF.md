@@ -1347,7 +1347,10 @@ leaves behind, reached without a transient to confound the reading — and watch
 No oscillation anywhere in the trace, and every climb was a probe that held. Run
 at `#target=60` on purpose: with nothing on the current tree reaching 8.33 ms the
 governor correctly pins at the floor and there is no climb to observe, which would
-make a fixed ratchet indistinguishable from a broken one.
+make a fixed ratchet indistinguishable from a broken one. *(That flag is now the
+default — §15. Needing it to see the ladder work at all was the first sign that 120 was
+the wrong target, and this trace is consequently the only existing measurement at the
+shipping one.)*
 
 The first version of the recovery test ground a second WebGL context to contend
 for the device. It worked far too well — the queued draws took four minutes to
@@ -1587,12 +1590,34 @@ constants, and the ratchet is gone. This is the current policy, with the reasoni
 because a reader who knows why it remembers prices rather than guessing headroom can
 reason about it and one who only has the constants cannot.
 
-### The target: 8.33 ms, fixed
+### The target: 16.67 ms, fixed — and it was 8.33 until the ladder was measured moving
 
-**120 fps.** `targetFps = #target=N` if given, else the loop cap from `#fps=N`, else
-120; `target()` is `1000 / targetFps`. Every threshold below is a multiple of it, so
-changing the target moves the whole policy coherently — which is the point of writing
-them as ratios.
+**60 fps.** `targetFps = #target=N` if given, else the loop cap from `#fps=N`, else 60;
+`target()` is `1000 / targetFps`. Every threshold below is a multiple of it, so changing
+the target moves the whole policy coherently — which is the point of writing them as
+ratios, and it is why this change is one token.
+
+**It was 120 for most of this project, and the reason it is not is the most consequential
+thing performance found today.** The 120 was defensible on its face: the panel is 200 Hz
+and its owner's reference for smooth is a AAA title at 200+. But no rung on this ladder
+reaches 8.33 ms with the camera moving — the floor, 1280×720, is 11.27 ms — so the
+descend rule fired at every rung, the climb gate was satisfiable nowhere, and the
+governor walked to the bottom of the ladder and stayed. **Aiming at 120 did not produce
+120. It produced 1280×720 upscaled to a 1440p display**, the softest picture this project
+can draw, on a machine that renders 1997×1123 comfortably. The entire cost of chasing an
+unreachable number was paid in image quality and none of it came back as frame rate.
+
+That is a general trap and worth naming as one: **an unreachable target in an adaptive
+system is not a stretch goal, it is an instruction to spend everything.** A governor that
+can only trade picture for frame time, told to hit a frame time it cannot hit, will
+correctly give away all of the picture. The failure is silent because every individual
+decision it makes is right.
+
+At 60 the descend gate is 19.17 ms, which mid-ladder rungs clear while moving, so there
+is somewhere to stand that is not the floor. The trade is the brief's own priority order —
+the picture is what this is for, 50-plus is smooth at walking pace, and 89 fps buys
+nothing on a 200 Hz panel if what is being shown at 89 is 720p. `#target=120` restores
+the old behaviour exactly for anyone who wants motion over image.
 
 It is a *fixed* number and not an inferred one, and that was a deliberate reversal.
 The first version tried to measure the panel's refresh period from the loop's shortest
@@ -1603,9 +1628,8 @@ panel's, so a machine running this at 40 fps measures 40, concludes 40 is the ta
 and never adapts. The governor switches itself off on exactly the hardware that needs
 it.
 
-120 rather than 60 because this machine has a 200 Hz panel and its owner's reference
-for "smooth" is a AAA title at 200+; 120 rather than 200 because shedding image
-quality to chase the last 80 Hz of a walking-pace landscape buys fan noise.
+Not 200, for the same reason it is not 120 and then some: shedding image quality to
+chase the last 140 Hz of a walking-pace landscape buys fan noise.
 
 ### The signal: GPU time, and a refusal to guess when there is none
 
@@ -1621,9 +1645,9 @@ time — a couple of milliseconds on a scene of sixty draws — one frame after 
 change, reads it as enormous headroom, and climbs again. That is a climb loop with no
 brakes, so `adapt()` returns instead: `if (!(cost > 0)) return;`.
 
-### Descending: above 9.58 ms, by one to three rungs
+### Descending: above 19.17 ms, by one to three rungs
 
-`cost > target × 1.15` — **9.58 ms** at the shipping target. The step size is scaled
+`cost > target × 1.15` — **19.17 ms** at the shipping target. The step size is scaled
 to how far off the pace the machine is, `r = target / cost`: one rung if `r > 0.72`,
 two if `r > 0.45`, three otherwise. A machine running at a fifth of the target does
 not want one notch a second for half a minute, it wants to be somewhere playable now.
@@ -1639,7 +1663,9 @@ This is the part worth understanding, and the defect it replaced is the clearest
 statement of why.
 
 **The old rule asked the wrong question.** It descended above `target × 1.15` and
-climbed below `target × 0.62` — 9.58 ms and 5.17 ms — and on this scene the measured
+climbed below `target × 0.62` — 9.58 ms and 5.17 ms at the 120 fps target of the day,
+which is where they were unsatisfiable and so is how they are quoted; the argument is
+about the ratio and holds at any target — and on this scene the measured
 cost of every rung below 4 sits *between* those two. So the governor could descend and
 then never satisfy the condition to come back: a transient stall was permanent until
 the page was reloaded, and the playthrough found it at the floor for 99 of 108 samples
@@ -1656,10 +1682,14 @@ all four of:
 
 | condition | value | why |
 |---|---|---|
-| `cost < target × 0.92` | **7.67 ms** | some headroom on the rung being stood on |
+| `cost < target × 0.92` | **15.33 ms** | some headroom on the rung being stood on |
 | sustained for `CLIMB_HOLD` | **3000 ms** continuously | one cheap frame is a viewpoint, not a machine |
 | the rung above is not on cooldown | — | it failed recently; do not thrash it |
-| its price is unknown, or `< target × 1.02` | **8.50 ms** | "would the next rung up fit", asked directly |
+| its price is unknown, or `< target × 1.02` | **17.00 ms** | "would the next rung up fit", asked directly |
+
+The wall-clock constants in that table — and the holds, the probe window and the
+cooldowns below — deliberately **do not** scale with the target. They are properties of
+a walking player and an ANGLE compile, not of a frame budget.
 
 "Unknown counts as eligible" is deliberate. A rung that has never been measured is
 worth one look, and the probe below is what makes looking cheap.
@@ -1713,35 +1743,59 @@ table — 2560×1440, RTX 4060, machine gated quiet", the only one to quote — 
 immediately, so
 the document should say it rather than leave it to be inferred.
 
-**At the shipping target, on this scene, the governor descends to the floor of the
-ladder and stays there.** That is measured, not inferred — it is why §11.4's recovery
-trace had to be run at `#target=60` to have any climb to observe at all: with nothing
-on the tree reaching 8.33 ms, a correctly-working governor and a broken one are
-indistinguishable at 120 because both sit at the bottom. So **the picture a player
-gets on the default target is rung 8, 1280×720**, and the honest frame rate is the
-moving column, not the held one.
+**At the old 120 target the governor descended to the floor of the ladder and stayed
+there**, which is measured and is why §11.4's recovery trace had to be run at
+`#target=60` to have any climb to observe at all: with nothing on the tree reaching
+8.33 ms, a working governor and a broken one are indistinguishable, because both sit at
+the bottom. That is the finding that changed the default.
 
-The practical consequence is worth stating plainly, because it is a product decision
-and not a performance one. Since the target is unreachable, the governor spends the
-walk at its *lowest* quality rung — a softer picture than this machine actually needs.
-A 4060 that can hold a walk at 1997×1123 is being given 1280×720 because it was asked
-for 120 and could not have it. **`#target=60` is the setting that changes that**: the
-descend threshold moves to 19.2 ms and the climb gate to 15.3, which mid-ladder rungs
-clear, and §11.4's trace shows it climbing seven rungs and settling without
-oscillation. Recorded rather than changed, because the default is defensible if the
-brief's 120 is read as an instruction and indefensible if it is read as an aspiration,
-and that is not performance's call to make.
+**Where it settles at 60 has not been measured and is not stated here.** The machine
+belongs to its owner and they are using it; the confirming run is pending. What can be
+said offline is the arithmetic against the fenced moving ladder, which is a *prediction*
+and is labelled as one:
+
+| rung | buffer | fenced moving | against the new gates |
+|---|---|---|---|
+| 0–2 | 2560×1440 … 2253×1267 | 26.81 … 20.81 | over 19.17 — descend |
+| **3** | **1997×1123** medium | **19.13** | **hold**, by 0.04 ms |
+| **4** | **1997×1123** low | **15.85** | **hold** |
+| 5–8 | 1741×979 … 1280×720 | 13.88 … 11.27 | under 15.33 — climb-eligible |
+
+So the expectation is **rung 3 or rung 4, both of which render 1997×1123**, differing
+only in tier — which is a useful robustness property, because the resolution a player
+sees is the same either way and the prediction does not have to be exact to be right
+about the picture. Two reasons it is nevertheless only a prediction, and they point in
+opposite directions. Rung 3 clears the descend gate by **0.04 ms**, which is inside that
+rung's own measured spread of 0.03 — on a knife edge, so it may oscillate 3↔4 or sit at
+4. And the governor reads GPU median where this table is fenced wall time, several
+milliseconds higher (below), so the real settling point may be **above** rung 3 and
+sharper than predicted rather than softer.
+
+**And there is one existing trace at this target, which suggests the prediction above is
+too pessimistic.** §11.4's recovery test was run at `#target=60` — that is why it exists —
+and it climbed 8→7→6→5→4→3→2→1 and settled at **rung 1, 2253×1267**, with no oscillation.
+Holding rung 1 requires its GPU median to have been under 15.33 ms, against 24.02 in the
+fenced ladder. Three reasons not to quote it as the answer: it was taken under contention,
+it was a climb-from-the-floor recovery test rather than a natural settle from a cold load,
+and it predates the cascade-scheduling fix. But it is real, it is at the right target, and
+it points two rungs *above* the arithmetic.
+
+**All of this is deliberately written as expected-pending-confirmation, because the error
+it replaces was exactly the pattern of stating a settling rung that arithmetic implied and
+measurement contradicted.** The previous version of this section asserted 1997×1123 from a
+comparable calculation and was wrong for hours. The settling rung goes in this document
+when `tools/govern.mjs` has reported it on a quiet machine, and not before.
 
 **One caveat on comparing the target against the ladder at all, and it cuts in the
 user's favour.** They are not the same quantity. The governor's `cost` is the GPU
 timer's median — GPU execution alone. The delivery ladder is wall time across
 `renderOnce` with a one-pixel `readPixels` fence, which serialises CPU submit behind
 GPU execution and therefore reads roughly their *sum*, where a real loop overlaps them
-and pays about the larger. The gap is real and it is not small: §11.4's trace climbed
-to and held rung 1 under a 16.67 ms target, which requires its GPU median there to
-have been under 15.3 ms, against 24.02 ms for the same rung in the fenced ladder. So
-**the fenced ladder is a conservative floor on what a player sees, not an estimate of
-it**, and the README's numbers are quoted from it deliberately for that reason. What
+and pays about the larger. The rung-1 trace above is the measure of that gap: under
+15.33 ms of GPU median against 24.02 ms of fenced wall time for the same rung, which is
+most of a rung's worth of difference between the two instruments. So **the fenced ladder
+is a conservative floor on what a player sees, not an estimate of it**, and the README's
+numbers are quoted from it deliberately for that reason. What
 this project has never had is a quiet real-loop `fps` trace to put beside it; that is
 the one measurement left worth taking, and `tools/govern.mjs` already produces it.
 

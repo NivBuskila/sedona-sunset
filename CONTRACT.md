@@ -38,10 +38,14 @@ is hidden:
 - **Performance does not meet the brief and this is the largest open item.** The contract
   asked for 120+ fps at 1440p. **That is not reachable on this scene on this GPU at any rung
   with the camera moving.** The honest figure is **37 fps walking at native 2560×1440** on the
-  top tier. The governor targets 8.33 ms, cannot reach it at any rung, and therefore **descends to
-  the floor of the ladder — 1280×720 at 89 fps moving** — trading the sharpest picture for the
-  smoothest one; `#target=60` inverts that trade and settles around 1997×1123 at 52. The frame is
-  fill-bound, not geometry-bound. One measurement in that
+  top tier. **The governor's target is now 60 fps, not 120, and that was a picture decision.**
+  8.33 ms is unreachable at every rung moving, so aiming at it made the governor descend to the
+  floor and stay — 1280×720 upscaled, the softest picture the project can draw, on a machine that
+  renders 1997×1123 comfortably. An unreachable target in a system that can only trade picture for
+  frame time is an instruction to spend all of the picture. At 60 it has somewhere to stand;
+  `#target=120` restores the old behaviour. **Where it settles at 60 is measured-pending — see
+  `PERF.md` §15, which states the prediction as a prediction.** The frame is fill-bound, not
+  geometry-bound. One measurement in that
   account is **unexplained and is recorded as unexplained**: the same cell read 16.80 ms in one
   tool and 23.06 in another on the same commit, and neither code growth (a fourteen-commit
   bisect says the frame is flat to 0.83 ms) nor machine contention (23.06 quiet against 23.30
@@ -154,9 +158,9 @@ a real sunset photograph of Sedona. Not stylized, not low-poly, not "good for a 
   the triangle ceiling was measured to be the wrong axis entirely — removing the far
   ridgelines is worth 0.02 ms of a 30 ms frame, and the frame is fill-bound. **120 fps at
   native 1440p is not reachable on this scene on this GPU**, at any rung, with the camera
-  moving. The shipped figure is **37 fps walking at native 2560×1440**, and the governor — unable
-  to reach its 8.33 ms target anywhere on the ladder — settles at the floor, 1280×720 at 89 fps
-  moving. See "Triangles are not what this frame costs" and,
+  moving. The shipped figure is **37 fps walking at native 2560×1440**, and the governor now
+  targets 60 rather than 120 precisely because an unreachable target drove it to the floor of the
+  ladder and cost the picture — `PERF.md` §15. See "Triangles are not what this frame costs" and,
   for the one table to quote, **"The delivery table — 2560×1440, RTX 4060, machine gated
   quiet"** — every earlier fps table on this project was taken with the camera held and is not
   what a walking player gets, and every "120 fps", "123", "59 fps" and "55 fps" figure in this
@@ -4407,10 +4411,11 @@ Per rung at `sun_gap`, 2560×1440, RTX 4060, median of seven blocks of thirty:
 ~~The governor targets 8.33 ms and settles at rung 4, so the shipped experience on this machine
 is **120+ fps at an upscaled 1997×1123**, and `#high` pins 2560×1440 at 59.~~ **Struck: those are
 held-camera figures and neither survives.** The delivery run puts rung 4 at **63 fps moving** and
-rung 0 at **37 fps moving**. And the governor does not target 60: **it targets 8.33 ms / 120 fps,
-which nothing on this ladder reaches while moving, so it descends to the *floor* — rung 8,
-1280×720 — and stays there.** That is measured; see `PERF.md` §15 for the whole policy and for
-`#target=60`, which is the flag that settles it around rung 3 instead. **No rung on this ladder
+rung 0 at **37 fps moving**. And the governor no longer targets 120 at all: 8.33 ms is unreachable
+at every rung moving, so targeting it drove the ladder to the *floor* — rung 8, 1280×720 — and kept
+it there, which is a soft picture bought for no frame rate. **The default target is now 60**;
+`#target=120` restores the old behaviour. See `PERF.md` §15, which states the new settling point as
+a prediction because it has not yet been measured. **No rung on this ladder
 reaches 120 fps with the camera moving.** Quoting a
 scale-1.0 tier row as the fallback is the error the row above documents — and quoting a
 held-camera row as the shipped experience is the error this sentence was.
@@ -4634,13 +4639,17 @@ because walking is what the player does. Both include the cascade-scheduling fix
 | 8 | potato | 0.50 | 1280×720 | 7.95 | 126 | **11.27** | **89** | 0.07 |
 
 **What the user gets, and it is what the README now says.** **37 fps walking at native 2560×1440 on
-the top tier**, and because the governor targets 8.33 ms and no rung on this ladder reaches it while
-moving, **it descends to the floor — rung 8, 1280×720, at 89 fps moving — and stays there.** So the
-default trade is the smoothest picture rather than the sharpest, and `#target=60` is the flag that
-inverts it, settling around rung 3 at 1997×1123 and 52 fps. **120 fps is not reachable at any rung
-with the camera moving**, and the brief's target is not met at any buffer on this scene, which is
-said plainly rather than implied. Both sentences are in `README.md` under "How it will run" with the
-whole ladder beside them, and the governor's full policy is in `PERF.md` §15.
+the top tier**, and **120 fps is not reachable at any rung with the camera moving** — the brief's
+target is not met at any buffer on this scene, said plainly rather than implied.
+
+That measurement changed the governor's default. Aiming at 8.33 ms, which no rung reaches moving,
+made it descend to the floor and stay: 1280×720 upscaled to 1440p, 89 fps, the softest picture the
+project can draw. **The target is now 60 fps**, so it has a mid-ladder rung to stand on, and the
+trade is stated in the README in one sentence — a sharp picture at a comfortable fifty-something
+rather than the smoothest motion at a soft one. `#target=120` restores the old behaviour for anyone
+who wants it. **Where it settles at 60 is not yet measured and is written as a prediction** in
+`PERF.md` §15, which also carries the whole policy; the one existing trace at that target settled
+two rungs above the arithmetic, so the prediction is probably pessimistic.
 
 **These figures are a floor, not a best estimate, and the direction matters.** They are wall time
 across `renderOnce` behind a one-pixel `readPixels` fence, which serialises CPU submit behind GPU
@@ -4661,7 +4670,16 @@ because a governor whose bottom step is over budget has nowhere to put a struggl
 
 ### What the governor does now
 
-**What it targets: 8.33 ms, 120 fps, fixed.** `#target=N` overrides it, `#fps=N` caps the loop and
+**What it targets: 16.67 ms, 60 fps, fixed — and it was 120 until the ladder was measured with the
+camera moving.** No rung reaches 8.33 ms moving, so the old target fired the descend rule at every
+rung and walked the governor to the floor: aiming at 120 produced not 120 but 1280×720 upscaled to a
+1440p panel. A system whose only lever is picture-for-frame-time, given a frame time it cannot
+reach, will correctly give away all of the picture, and every individual decision on the way down
+looks right — which is why it went unnoticed. `#target=120` restores it exactly.
+**Captures are unaffected**: the harness clause pins `pinned = 0`, `adapting` is false, and
+`adapt()` returns before the target is read, so no gate in this file needs re-shooting, and
+`bench.mjs` walks the ladder through explicit `setRung()` which never consults it.
+`#target=N` overrides it, `#fps=N` caps the loop and
 targets that, and every threshold is a multiple of the target so moving it moves the policy
 coherently. It is deliberately not inferred from the panel: measuring the refresh period from the
 loop's shortest observed interval reads the *scene's* frame time on a vsynced uncapped loop, so a
@@ -4688,8 +4706,10 @@ memory after 8 s because the player is walking, probes a climb for 900 ms, rever
 overruns, and puts a failed rung on a 15/30/60 s backoff whose expiry clears the price — so
 nothing is closed off permanently. Verified by putting it at the floor and watching: it climbed
 8→7→6→5→4→3→2→1 with no oscillation, back where it started after 37 s. **That test had to be run at
-`#target=60`**, because at the shipping target nothing on this tree reaches 8.33 ms, so the governor
-correctly sits at the floor and a working ladder is indistinguishable from a broken one.
+`#target=60`**, because at the then-shipping 120 nothing on this tree reaches 8.33 ms, so the
+governor correctly sat at the floor and a working ladder was indistinguishable from a broken one.
+Having to reach for `#target=60` to see the ladder work at all was the first clue that 120 was the
+wrong default; it took another hour to notice that it was also the reason the picture was soft.
 
 **On a contended machine — a game, a stream, a compile — expect it at the floor within a few
 seconds**, and expect it to climb back on its own when the other work stops: three seconds of

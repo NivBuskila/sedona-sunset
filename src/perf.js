@@ -46,6 +46,8 @@
  *   #scale=0.8                   pin the render scale
  *   #fps=120                     cap the loop, and adapt toward that rate
  *   #target=200                  adapt toward a rate without capping the loop
+ *                                (default 60 — see "the governor" below for why
+ *                                 it is not 120, which cost the picture)
  *   #perf                        live overlay: tier, scale, cpu/gpu ms, calls
  *   #noadapt                     leave the tier alone but keep the readout
  *   #adapt                       adapt even under automation — see `automated`
@@ -194,7 +196,10 @@ const RSCALE = [1.0, 0.88, 0.78, 0.68, 0.58, 0.50];
    being three quarters of the frame, a *tier* step became worth roughly as much
    as a scale step and costs less picture than one. The old order reached the
    8.33 ms budget at medium/0.68 — 1741x979. This one reaches it at low/0.78 —
-   1997x1123, which is 34% more pixels at a shorter frame. Both numbers are
+   1997x1123, which is 34% more pixels at a shorter frame. (Both the table and
+   the budget above are held-camera and predate the moving measurements; the
+   target is now 16.67. The conclusion is a comparison of two orderings under
+   one instrument, so it is unaffected.) Both numbers are
    measured; the trade the retune makes is MSAA for resolution, and it is the
    right way round because System 7's along-edge resolve runs at full strength
    on every rung precisely so that the samples-0 rungs are not left bare.
@@ -512,16 +517,37 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
    * measures 40, concludes that 40 is the target, and never adapts — the
    * governor switches itself off on precisely the hardware that needs it.
    *
-   * So: 120 fps, 8.33 ms. Chosen rather than 60 because this machine has a
-   * 200 Hz panel and its owner's reference for "smooth" is a AAA title at 200+,
-   * and rather than 200 because shedding image quality to chase the last 80 Hz
-   * of a walking-pace landscape is a bad trade — past about 120 the frame is
-   * smooth and what the setting buys is fan noise.
+   * So: **60 fps, 16.67 ms.** It was 120 for most of this project's life, on the
+   * reasoning that the panel is 200 Hz and its owner's reference for "smooth" is
+   * a AAA title at 200+. That reasoning was sound and the consequence was not,
+   * and the consequence is the whole argument for the number being 60 now.
    *
+   * Measured: no rung on this ladder reaches 8.33 ms with the camera moving —
+   * the floor, 1280x720, is 11.27 ms. So a target of 120 is unsatisfiable
+   * everywhere, the descend rule fires at every rung, and the governor walks to
+   * the bottom of the ladder and stays there. **Aiming at 120 does not produce
+   * 120; it produces 1280x720 upscaled to a 1440p display**, which is the
+   * softest picture this project can draw, on a machine that renders 1997x1123
+   * comfortably. The cost of chasing an unreachable number is paid entirely in
+   * image quality, and none of it comes back as frame rate.
+   *
+   * At 60 the descend rule fires above 19.17 ms, which the mid-ladder rungs
+   * clear while moving, so the governor has somewhere to stand that is not the
+   * floor. The trade is deliberate and it is the brief's own priority order:
+   * this is a walking simulator whose point is the picture, 50-plus is smooth
+   * for a walking pace, and 89 fps buys nothing on a 200 Hz panel if the thing
+   * being shown at 89 is 720p.
+   *
+   * Every threshold in `adapt()` is a multiple of `target()`, so this moves the
+   * whole policy coherently rather than one gate of it. The wall-clock constants
+   * — hold, probe, cooldown, price TTL — are properties of a walking player and
+   * a shader compile, not of a frame budget, and deliberately do not scale.
+   *
+   *   #target=120   the old default, for a smoother and softer picture
    *   #target=200   adapt toward 200 fps without capping the loop
    *   #fps=60       cap the loop at 60 and adapt toward it
    */
-  const targetFps = num('target', 0) || frameCap || 120;
+  const targetFps = num('target', 0) || frameCap || 60;
   const target = () => 1000 / targetFps;
 
   /* ── the timebase, which was the wrong one ──────────────────────────────────
@@ -549,7 +575,11 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
    *    work ─────────────────────────────────────────────────────────────────
    *
    * The old rule was: descend above `t * 1.15`, climb below `t * 0.62`. On this
-   * scene those are 9.58 ms and 5.17 ms, and the measured cost of every rung
+   * scene at the then-current 120 fps target those are 9.58 ms and 5.17 ms —
+   * quoted at the target of the day, since that is what made them
+   * unsatisfiable; at today's 60 they would read 19.17 and 10.33, and the
+   * argument below is about the *ratio* and holds at either — and the measured
+   * cost of every rung
    * below 4 sits *between* them — so the governor could descend and then never
    * satisfy the condition to come back. A transient stall was permanent until
    * the page was reloaded. The playthrough found it sitting at the floor for 99

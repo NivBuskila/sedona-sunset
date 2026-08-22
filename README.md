@@ -58,21 +58,22 @@ There is no crosshair, no HUD and no menu, on purpose.
 ## How it will run
 
 On a computer that isn't doing anything else, the walk runs at about **37 frames a second
-at the full 2560×1440 setting** on an RTX 4060, and the game quietly lowers the resolution
-and detail to keep the motion smooth rather than letting it stutter — **settling at
-1280×720, where the same walk runs at about 89**.
+at the full 2560×1440 setting** on an RTX 4060 — so the game quietly renders into a
+slightly smaller picture and lets your screen scale it back up, choosing how much smaller
+by watching how long frames are actually taking.
 
-Those are honest numbers and they are measured ones, not targets. The scene is expensive
-to draw at full resolution, so the game renders into a smaller buffer and lets the screen
-scale it back up, choosing how much smaller by watching how long frames are actually
-taking. It is aiming for 120 frames a second, which this scene cannot reach on this card
-at any setting, so left alone it goes all the way down to the softest setting it has and
-gives you the smoothest picture instead of the sharpest one.
+**It aims for a sharp picture at a comfortable fifty-something rather than the smoothest
+possible motion at a soft one.** That is a deliberate choice and it is the one this piece
+is for: it is a walk through a landscape, the landscape is the point, and a frame rate
+above about fifty is already smooth at walking pace. Expect it to settle somewhere in the
+middle of the range below, well short of the softest setting it owns.
 
-**If you would rather have the sharper picture, load `http://localhost:8099/#target=60`.**
-That asks it for a steady 60 instead of an unreachable 120, and it settles around
-1997×1123 — hard to tell from native on a 1440p monitor — at roughly 52. Which of those
-two you prefer is a matter of taste and neither is wrong.
+If you would rather have it the other way round — the smoothest motion this card can
+manage, at a visibly softer image — load `http://localhost:8099/#target=120`. That asks
+for 120 frames a second, which this scene cannot reach at any setting, so it will go all
+the way down to 1280×720 and give you about 89 instead. Sharper or smoother is a matter of
+taste and neither is wrong; sharper is the default because of what this particular thing
+is.
 
 **Give it a couple of seconds to find its level.** It starts at full 2560×1440 and steps
 down to the setting it settles on within about two and a half seconds of the first frame.
@@ -96,8 +97,8 @@ you move:
 | 1280×720 | 126 fps | **89 fps** |
 
 So it will not give you 120 frames a second while you are walking, at any setting, on this
-card — the bottom of that list is 89, and that is where it ends up by default. If your
-monitor runs at 200 Hz you will not saturate it. What you do get is a frame rate that
+card — the bottom of that list is 89, and reaching even that means accepting 1280×720. If
+your monitor runs at 200 Hz you will not saturate it. What you do get is a frame rate that
 holds its number rather than collapsing when you turn to face the wall.
 
 These are also a floor rather than a best guess: the way they were timed makes the
