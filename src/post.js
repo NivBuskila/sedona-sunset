@@ -140,20 +140,31 @@ export const POST_DEFAULTS = {
    * so like every other term in this file it leaves HSV saturation and hue
    * exactly where they were.
    *
-   * The knee is bounded by something real, and it is what kills the term: the
-   * facet at 0.0092 and the shaded floor at 0.0221 are 1.27 stops apart, so no
-   * operation keyed on luminance can lift one without lifting the other. The
-   * shadow gate is a *mean* over a shaded window, so it moves with the whole
-   * population rather than with the worst pixel, and it moves first. Measured at
-   * gain 4, knee 0.045: the gate goes to 0.418 against a 0.25 ceiling.
+   * Keyed on luminance alone this term is dead: the facet at 0.0092 and the shaded
+   * floor at 0.0221 are 1.27 stops apart, and the gate is a *mean* over a shaded
+   * window, so it moves with the population rather than with the worst pixel and
+   * it moves first. Measured at gain 4, knee 0.045 the gate went to 0.418 against
+   * a 0.25 ceiling. The local-maximum mask in the shader is what rescued it, by
+   * discriminating on spatial scale instead — and with it the gate goes the other
+   * way, to 0.214, because the mask finds more to open in the sunlit window's
+   * crevices than in the shaded wall's flat.
    *
-   * So this ships at 1.0, the identity, where the branch does not even run. It is
-   * off because it was measured and cannot be afforded, not because it is
-   * unfinished. `#lift=N` and `#liftknee=N` drive the arms, and CONTRACT.md has
-   * the swept table, the captured pair, and the reason the decision above this
-   * line is a contract question rather than a code one. */
-  shadowLift: 1.0,
+   * Shipped at 5, chosen by eye against a three-way capture and not by the table.
+   * 8 measures better on every figure — worst facets to 26.5 cv against 16.7 —
+   * and looks worse, because by then the gravel's inter-pebble shadows are lifted
+   * too and the ground reads as a pushed shadows slider rather than as light. 5
+   * takes the side faces off the floor and leaves the relief alone. Every
+   * protected figure holds or improves at 5; the numbers are in CONTRACT.md, and
+   * this constant is the whole of the decision if anyone disagrees with my eye. */
+  shadowLift: 5.0,
   shadowLiftKnee: 0.045,
+  /* Radius of the local-maximum taps, in pixels at 1440 lines, and the mask ramp
+     on sqrt(linear luminance). The radius is an optical size and so scales with
+     the frame like the circle of confusion and the grain do, rather than being a
+     contrast threshold that must not — see CONTRACT.md on which post terms scale
+     and which do not, which was got wrong once already on the silhouette gate. */
+  shadowLiftRadius: 24,
+  shadowLiftMask: [0.10, 0.30],
   /* Chroma-preserving, and applied after the sRGB encode with the pivot at
      encoded middle grey. See the shader for why both of those are corrections
      rather than choices. */
@@ -627,6 +638,7 @@ export function createPost({ renderer, camera, atmo, sun }) {
      shipped arm gets paired against the curve as it was. */
   P.shadowLift = num('lift', P.shadowLift);
   P.shadowLiftKnee = num('liftknee', P.shadowLiftKnee);
+  P.shadowLiftRadius = num('liftr', P.shadowLiftRadius);
   P.toeTop = num('toe', P.toeTop);
   P.toeSlope = num('toes', P.toeSlope);
   P.shoulderTop = num('sh', P.shoulderTop);
@@ -954,7 +966,7 @@ ${GHOSTS.map(([t, r, tr, tg, tb, gi]) => `    {
   /* ── pass 5: defocus, grade, tone map, grain ───────────────────────────── */
 
   const finalMat = new THREE.ShaderMaterial({
-    defines: { DOF_TAPS: 12, USE_BLOOM: 1 },
+    defines: { DOF_TAPS: 12, USE_BLOOM: 1 , USE_LIFT: 1 },
     uniforms: {
       tScene: { value: null },
       tBloom: { value: null },
@@ -983,6 +995,8 @@ ${GHOSTS.map(([t, r, tr, tg, tb, gi]) => `    {
       uSplitPivot: { value: P.splitPivot },
       uVibrance: { value: P.vibrance },
       uLift: { value: new THREE.Vector2(P.shadowLift, P.shadowLiftKnee) },
+      uLiftR: { value: P.shadowLiftRadius },
+      uLiftMask: { value: new THREE.Vector2(...P.shadowLiftMask) },
       uContrast: { value: P.contrast },
       uContrastPivot: { value: P.contrastPivot },
       uToe: { value: new THREE.Vector2(P.toeTop, P.toeSlope) },
@@ -1019,6 +1033,8 @@ uniform float uVibrance;
 uniform float uContrast;
 uniform float uContrastPivot;
 uniform vec2 uLift;
+uniform float uLiftR;
+uniform vec2 uLiftMask;
 uniform vec2 uToe;
 uniform vec2 uShoulder;
 
@@ -1169,11 +1185,37 @@ void main() {
      original luminance and its measured effect on shaded rock is unchanged, and
      before ACES because that is the compression being answered. Identically 1.0
      at and above the knee, so nothing in the measured middle can move. */
+#if USE_LIFT
   if (uGrade > 0.0 && uLift.x > 1.0) {
     float ly = max(luma(c), 0.0);
-    float w = max(0.0, 1.0 - ly / uLift.y);
-    c *= 1.0 + (uLift.x - 1.0) * w * w * uGrade;
+    float wl = max(0.0, 1.0 - ly / uLift.y);
+    /* The second key, and the one that makes this affordable. Keyed on luminance
+       alone the term is dead on arrival: the facet at 0.0092 scene-linear and the
+       shaded floor at 0.0221 are 1.27 stops apart, and the gate is a mean over a
+       shaded window, so anything that reaches the facet drags the window with it.
+       The two populations do differ, just not in level — a clast side face is a
+       *small* dark region surrounded by blazing ground, and the shaded wall is a
+       large uniform one. So compare against the local maximum: on a facet one tap
+       lands on lit ground and the mask opens, and in the middle of a big shadow no
+       tap does at any radius, however dark it is.
+       Maximum rather than a mean because it is what survives a low tap count —
+       eight taps against the max reproduce a 24px gaussian's answer here to within
+       two code values, which is what lets this live in an existing pass instead of
+       costing a blur chain. On sqrt of linear luminance because that is one
+       instruction and the thresholds were swept in the same space. */
+    float s0 = sqrt(ly);
+    float mx = s0;
+    for (int i = 0; i < 8; i++) {
+      float fi = float(i) + 0.5;
+      float a = fi * 2.39996323;
+      float rr = uLiftR * sqrt(fi / 8.0);
+      vec2 off = vec2(cos(a), sin(a)) * rr / uRes;
+      mx = max(mx, sqrt(max(luma(sane(texture2D(tScene, vUv + off).rgb)), 0.0)));
+    }
+    float mask = smoothstep(uLiftMask.x, uLiftMask.y, mx - s0);
+    c *= 1.0 + (uLift.x - 1.0) * wl * wl * mask * uGrade;
   }
+#endif
 
   vec3 o = aces(c);
 
@@ -1551,12 +1593,18 @@ void main() {
   let level = { dofTaps: 12, flare: 2, bloom: 4, edge: 1 };
 
   function setLevel(l) {
-    const next = { dofTaps: 12, flare: 2, bloom: 4, edge: 1, ...(l || {}) };
+    const next = { dofTaps: 12, flare: 2, bloom: 4, edge: 1, lift: 1, ...(l || {}) };
     if (next.dofTaps === level.dofTaps && next.flare === level.flare &&
-        next.bloom === level.bloom && next.edge === level.edge) return;
+        next.bloom === level.bloom && next.edge === level.edge &&
+        next.lift === level.lift) return;
     level = next;
     finalMat.defines.DOF_TAPS = level.dofTaps;
     finalMat.defines.USE_BLOOM = level.bloom > 0 ? 1 : 0;
+    /* Eight full-resolution taps, which is the whole cost of the shadow lift and
+       the only reason it is on the ladder at all. Compiled out rather than
+       branched, and off entirely on potato: a tier that has already given up
+       bloom, defocus and the flare is not the tier that pays to open shadows. */
+    finalMat.defines.USE_LIFT = level.lift > 0 ? 1 : 0;
     finalMat.needsUpdate = true;
     flareMat.defines.FLARE_LEVEL = level.flare;
     flareMat.needsUpdate = true;
@@ -1733,6 +1781,7 @@ void main() {
     fu.uSplitPivot.value = P.splitPivot;
     fu.uVibrance.value = P.vibrance;
     fu.uLift.value.set(P.shadowLift, P.shadowLiftKnee);
+    fu.uLiftMask.value.set(P.shadowLiftMask[0], P.shadowLiftMask[1]);
     fu.uContrast.value = P.contrast;
     fu.uContrastPivot.value = P.contrastPivot;
     fu.uToe.value.set(P.toeTop, P.toeSlope);
@@ -1778,6 +1827,12 @@ void main() {
        so no recorded figure moves. */
     ru.uGrainPx.value = 256 * (h / 900);
     ru.uGrain.value = P.grain;
+    /* The shadow lift's tap radius scales for the same reason the grain plate
+       does and the silhouette gate does not: it is a distance in the image plane,
+       so the region it calls "the neighbourhood" has to stay the same fraction of
+       the frame or the mask changes meaning with resolution. Exactly the tuned
+       value at 1440 lines, which is what the swept table was measured at. */
+    fu.uLiftR.value = P.shadowLiftRadius * (h / 1440);
     draw(resolveMat, null);
     return true;
   }

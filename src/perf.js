@@ -153,10 +153,10 @@ import * as THREE from 'three';
    the sample count — it is deliberately at full strength on every rung, being
    about six texture fetches, which is less than the branch to skip it. */
 export const QTIERS = [
-  { name: 'high',   shadowFar: 4096, shadowNear: 2048, shimmer: true,  samples: 4, shafts: 2, dust: 1.00, salt: 1.00, far: 4, softShadow: true,  post: { bloom: 4, dofTaps: 12, flare: 2, edge: 1 } },
-  { name: 'medium', shadowFar: 3072, shadowNear: 1536, shimmer: true,  samples: 2, shafts: 2, dust: 0.70, salt: 0.70, far: 4, softShadow: true,  post: { bloom: 4, dofTaps:  6, flare: 2, edge: 1 } },
-  { name: 'low',    shadowFar: 2048, shadowNear: 1024, shimmer: true,  samples: 0, shafts: 1, dust: 0.45, salt: 0.40, far: 3, softShadow: false, post: { bloom: 8, dofTaps:  0, flare: 1, edge: 1 } },
-  { name: 'potato', shadowFar: 1024, shadowNear:  512, shimmer: false, samples: 0, shafts: 1, dust: 0.25, salt: 0.20, far: 2, softShadow: false, post: { bloom: 0, dofTaps:  0, flare: 0, edge: 1 } },
+  { name: 'high',   shadowFar: 4096, shadowNear: 2048, shimmer: true,  samples: 4, shafts: 2, dust: 1.00, salt: 1.00, far: 4, softShadow: true,  post: { bloom: 4, dofTaps: 12, flare: 2, edge: 1, lift: 1 } },
+  { name: 'medium', shadowFar: 3072, shadowNear: 1536, shimmer: true,  samples: 2, shafts: 2, dust: 0.70, salt: 0.70, far: 4, softShadow: true,  post: { bloom: 4, dofTaps:  6, flare: 2, edge: 1, lift: 1 } },
+  { name: 'low',    shadowFar: 2048, shadowNear: 1024, shimmer: true,  samples: 0, shafts: 1, dust: 0.45, salt: 0.40, far: 3, softShadow: false, post: { bloom: 8, dofTaps:  0, flare: 1, edge: 1, lift: 1 } },
+  { name: 'potato', shadowFar: 1024, shadowNear:  512, shimmer: false, samples: 0, shafts: 1, dust: 0.25, salt: 0.20, far: 2, softShadow: false, post: { bloom: 0, dofTaps:  0, flare: 0, edge: 1, lift: 0 } },
 ];
 
 /* 0.50 is new, and it is the honest kind of addition: it buys about a

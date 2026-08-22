@@ -8563,3 +8563,103 @@ exactly.
 This is a rebuild of the wall's lateral-offset field plus a new material channel
 plus a bedding reparameterisation. It is more than today, and the honest thing
 is to say so rather than to spend the time moving 3% by another 3%.
+
+---
+
+## System 7: the black-sided slabs, and the local shadow lift
+
+The critic's top finding — flat pale slabs whose side faces read as pure black next
+to blazing orange ground — was attributed to the transfer function rather than to
+any material, and the attribution holds. Terrain reached it two ways; a third route
+here avoids the sky-visibility figure they self-flagged, and uses the scene's own
+shaded floor to pin sky-only illumination on an open horizontal surface: it sits at
+7.4% of the sunlit floor, so a facet at the measured 71.5% visibility predicts 5.3%
+and the frame contains 3.1%. Burial and contact darkening cover the rest. Nothing
+upstream is broken, and deleting the whole clast occlusion chain moves the worst
+pixel only from rgb(6,3,3) to rgb(13,9,7) — **the entire available range is inside
+the ACES toe.**
+
+### Why the obvious fix does not work
+
+A lift keyed on luminance, applied in scene-linear immediately before ACES, is the
+textbook answer and it fails here for a reason worth recording. The worst facet sits
+at 0.0092 scene-linear and the shaded floor at 0.0221 — **1.27 stops apart**. No
+operation keyed on level can separate them. And the shadow gate is a *mean* over a
+shaded window, so it moves with the whole population rather than with the worst
+pixel, which means it moves first and by more:
+
+| gain | knee | shadow gate | ceiling | verdict |
+| --- | --- | --- | --- | --- |
+| 4 | 0.045 | 0.418 | 0.25 | far out of band |
+
+Every setting inside the band moved the worst facet from code 6 to at most code 9.
+
+### What does work: discriminating on spatial scale
+
+The two populations differ, just not in level. A clast side face is a **small** dark
+region surrounded by blazing ground; the shaded wall is a **large** one. Comparing
+each pixel against the local *maximum* separates them — on a facet one tap lands on
+lit ground, and in the middle of a big shadow no tap does at any radius, however
+dark it is. Measured on the shipped frames, that mask reads **0.219 on ground's dark
+facets against 0.011 inside the gate window**, a twentyfold separation, where the
+level key has none.
+
+Two things make it cheap enough to live in the existing grade pass rather than
+costing a blur chain:
+
+- **Maximum, not mean.** Max is what survives a low tap count. Eight taps against
+  the local max reproduce a 24px gaussian's answer to within two code values.
+- **On sqrt of linear luminance**, which is one instruction per tap, and the
+  thresholds were swept in that same space so prediction and implementation cannot
+  drift apart.
+
+The tap radius **scales with resolution** and the mask thresholds do **not**, for
+the reason recorded above for grain and the silhouette gate: the radius is a
+distance in the image plane, so what it calls "the neighbourhood" must stay a fixed
+fraction of the frame, while a contrast threshold must not move.
+
+### The trade, measured
+
+Paired capture, 2560x1440, nine-view pool, control arm `#lift=1` which is the
+shipped ACES chain untouched. The shipped default is byte-identical to the `#lift=5`
+arm, so these figures describe what ships.
+
+| figure | shipped ACES | **gain 5, shipped** | gain 8 | band |
+| --- | --- | --- | --- | --- |
+| **worst facets (<=7cv), ground** | 3.6 cv | **16.7 cv (4.6x)** | 26.5 cv (7.3x) | — |
+| all dark facets (<=14cv) | 7.0 cv | **22.1 cv (3.1x)** | 32.9 cv (4.7x) | — |
+| **shadow gate** | 0.223 | **0.214** | 0.208 | 0.15–0.25 |
+| lit rock saturation | 0.613 | **0.614** | 0.614 | 0.42–0.65 |
+| lit rock hue | 20.6° | **20.5°** | 20.5° | +15.6–31° |
+| lit rock V | 0.690 | **0.685** | 0.685 | 0.59–0.73 |
+| floor shade, sat / V | 0.641 / 0.131 | **0.640 / 0.132** | — | — |
+| floor lit, sat / V | 0.626 / 0.636 | **0.623 / 0.640** | — | — |
+| midwall hf/lf | 0.53 | **0.53** | 0.52 | ≥0.55 gate |
+| wash floor hf/lf | 0.49 | **0.49** | — | — |
+| banding: run / step / flat | 9 / 0.722 / 42% | **identical** | identical | — |
+| clipped >=250 | 0.45% | **0.44%** | 0.44% | — |
+| black at 0,0,0 | 0.07% | **0.07%** | 0.07% | — |
+
+Two results in that table are worth reading twice. **The gate improves rather than
+degrades** — the mask finds more to open in the sunlit window's crevices than in the
+shaded wall's flat, so the denominator rises faster than the numerator. And the
+**absolute** shadow gradient on midwall rises 20% (0.0153 to 0.0183 at gain 8),
+because detail that was crushed flat against the floor is now above it: the lift
+recovers structure rather than costing it. `grad/L` falls 3%, which is the honest
+way to state the same thing.
+
+### Why 5 and not 8
+
+**Chosen by eye against a three-way capture, not from the table.** 8 measures better
+on every figure and looks worse: by then the gravel's inter-pebble shadows are
+lifted too and the ground reads as a pushed shadows slider rather than as light. 5
+takes the side faces off the floor and leaves the relief alone. This is the second
+time on this system that looking has overruled a number, and the first time it went
+the other way — a 4x downscale of the shaded wall read as flattened and brighter,
+and at full resolution the two arms are almost indistinguishable, which is what the
+rising gradient had already said. **Downscales are for finding candidates; only
+full-resolution crops settle them.**
+
+`shadowLift` in `src/post.js` is the whole of the decision if anyone disagrees with
+that judgement, and `#lift=N` sweeps it live. The eight taps are on the tier ladder
+as `post.lift` and compile out on potato.
