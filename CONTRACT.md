@@ -8474,7 +8474,10 @@ Third time on this project that a regular period was the whole problem and a
 phase warp rather than an amplitude was the cure, after the crest that held one
 bed level for 50-100 m and the apron rows at a dead-regular pitch.
 
-### Two instrument notes, one of them a negative result
+### buildWalls returns a creased mesh, and offline rock measurement works
+
+The heading is the finding, because at least one agent has already concluded the
+opposite and reasoned from it for hours.
 
 `buildWalls` returns a **creased** mesh - `creasedMesh` splits vertices per face
 so hard edges can carry their own normals - so the `(column, row)` grid the
