@@ -1461,6 +1461,16 @@ picture leaves the frame 0.4 ms ahead of where it would be having given up the
 most valuable visual change of the night. That is the whole trade, and it is not
 close.
 
+Verified on the shared tree after landing, where the total walking penalty reads
++2.41 against +3.22 before the change — but with the split moved to +0.26 walk and
++2.15 redraw, because `path.js`, `rock.js`, `terrain.js` and `vegetation.js` were
+all dirty with other systems' work at that moment and both terms depend on them:
+vegetation adds casters to the shadow passes and `path.js` is inside `walkTo`. The
+total is the post-fix total; the two halves of it are a different scene's halves.
+Worth recording rather than smoothing, because it is the same hazard §12 avoided
+by ablating in one load — a two-term split measured across two builds attributes
+whatever moved in between to whichever term is being watched.
+
 There is more in the same direction for anyone continuing: the remaining +1.43 is
 the fine cascade redrawing on nearly every frame, and its grid is fine enough that
 coarsening it — or amortising the coarse cascade over a fixed cadence rather than
