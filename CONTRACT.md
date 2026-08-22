@@ -9358,6 +9358,83 @@ gate is the evidence for that. **The critic's two findings — compress the rang
 to 0.25 — are mutually inconsistent on this population by a factor of two, and no term can
 satisfy both.**
 
+## The delivery critic's `ground` rim: not neutral, and not fill-starved (System 4)
+
+A separate finding from the one above, and the critic was careful to say so: the hero slab's
+vertical rim reads **L 46.4** against a top face of **137.3** and a sunlit floor of **87.4**,
+so **0.53x the sunlit floor thirty millimetres away**, and it is *"a neutral dark brown —
+there is no red bleed on it at all."* Prescription, ranked sixth of six: bring the rim to
+0.65-0.8x the floor and let it take the floor's colour.
+
+The population reproduces exactly. Selecting every pixel at L 38-56 whose 14 px neighbourhood
+contains both a >120 top and an 80-95 floor gives **rim 46.6, floor 87.7, top 136.0** on
+`s4rb_ground` at full resolution — all three of the critic's figures within 1.3 cv, on 77k
+pixels. So this is the right population, and the two claims can be answered separately.
+
+### The hue claim is false, and the way it is false is the interesting part
+
+| | RGB | hue | saturation | absolute chroma |
+| --- | --- | --- | --- | --- |
+| sunlit floor | 142.5, 75.5, 46.9 | 18.0 | 0.671 | 96 |
+| the rim | 80.2, 38.6, 26.7 | 13.4 | **0.667** | **53** |
+| a neutral facet at that red would be | 80.2, 80.2, 80.2 | — | 0.000 | 0 |
+
+**The rim's saturation matches the floor's to 0.004, and its hue is 4.6 degrees *redder*.**
+Scaling the floor's colour down to the rim's red predicts `80.2, 42.5, 26.4`; the rim measures
+`80.2, 38.6, 26.7`. **The residual is (0.0, -3.9, +0.3).** The rim is the floor's colour at
+0.563 of its magnitude, to within four code values of green — which is precisely what a
+correctly-coloured bounce off that floor looks like. There is no grey component to find.
+
+Why it reads neutral anyway is the finding worth keeping. **Equal saturation at 0.56 of the
+luminance is 0.56 of the absolute chroma**: 53 code values of max-minus-min against the
+floor's 96. The eye reads absolute chroma, so a darker patch of identical chromaticity looks
+less colourful, and at 53 it looks *achromatic* beside a neighbour at 96. This is the mirror
+of the rule already recorded in this file — a hue angle quoted without its chroma magnitude
+is not a colour — and it is the third colour claim today that turned out to be a
+magnitude-versus-angle confusion rather than a measurement.
+
+### Nor is it fill-starved. It receives more fill than the open floor.
+
+`tools/_fillonly.mjs` zeroes the two directional intensities inside one session, so
+`full - fill` is the beam exactly, with the aerial term off in both arms:
+
+| population | full L | fill-only L | fill as % of open floor's fill |
+| --- | --- | --- | --- |
+| open sunlit floor | 87.7 | 15.1 | 100% |
+| the rim population | 46.6 | **15.9** | **105%** |
+| largest contiguous facet, (580,268) | 40.6 | 17.8 | **118%** |
+| second, (678,272) | 40.4 | 19.0 | **126%** |
+| third, (303,394) | 43.3 | 16.6 | **110%** |
+| a deep cross-sun slab side face | 22.7 | 4.0 | 26% |
+
+**Every object in the critic's population receives 105-126% of the fill that the open sunlit
+floor receives**, and the fill arriving on it is the same colour — hue 3.7 at saturation 0.660
+against the floor's fill at 4.2 / 0.693. It is darker than the floor because it gets **42% of
+the floor's beam**, which is the facet's orientation and not a transport term. The last row is
+the contrast that makes the point: a genuinely shade-starved facet reads 26%, and this
+population reads 105-126%.
+
+That also answers whether the restricted band reaches it: it does, and it is worth +0.3 of
+79.9 in red, 0.4%. Not because the term declines the facet — the facet is over sunlit floor
+and the length-scale test passes — but because **the population is 66% direct beam by
+luminance**, so a fill term is arithmetically incapable of moving it much. Its fill is
+already at or above the open floor's.
+
+### The modest ask is the same 1.6x, from a third direction
+
+0.53x to 0.65x is +0.119 of the floor's luminance. The rim's beam is 0.349 of the floor and
+its fill 0.181, so delivering that from fill requires the fill to reach **0.300 — a factor of
+1.66** on a facet that already receives 105-126% of what the open floor receives. There is no
+further ground to bounce off; the increase would have to be invented.
+
+So the same factor has now arrived by three unrelated routes: **1.6x** from what a hemisphere
+of sunlit floor can radiometrically deliver, **1.6-2.0x** from the contract's own
+photograph-referenced shadow band, and **1.66x** from this facet's own measured fill budget.
+This one is a genuinely different population and a genuinely more modest ask, and it lands on
+the same number. No gate headroom was spent establishing that, and none needs to be: the rim
+is correctly lit and correctly coloured, and the critic's expectation is the thing that does
+not fit.
+
 ## The law: a statistic taken in a space the viewer does not occupy measures an object nobody is looking at
 
 Four independent instances in one day is enough to stop calling it a lesson and
