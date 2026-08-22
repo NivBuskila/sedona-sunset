@@ -84,6 +84,23 @@ const REGIONS = {
   bend:       [['wall', [0.06, 0.30, 0.22, 0.26]]],
   far_270:    [['far rock', [0.30, 0.30, 0.40, 0.30]]],
   far_320:    [['far rock', [0.30, 0.30, 0.40, 0.30]]],
+  /* The paired floor windows, and the only pair in the tables: the same dirt in sun
+     and in fill, so every difference between the rows is transport and none of it is
+     pigment. Both rows are measured on the WHOLE window rather than the brightest
+     40%, and that is not a lapse from the rule this file exists to enforce — it is
+     the rule applied. A brightest-40% population is the right one for a lit rock
+     window because that window contains rock at a range of orientations and the
+     target describes the sunlit part of it. These two windows are each uniform in
+     illumination by construction, which is the point of the viewpoint, so there is
+     no sub-population to select and taking the brightest 40% of the shaded row
+     would quietly report its brightest pixels as its fill. That is the darkest-40%
+     error inverted, and it is the fourth of five populations mis-taken tonight.
+     sat.mjs, hue.mjs and grad.mjs read these windows whole, and this file agrees
+     with them deliberately so the paired rows cannot disagree across tools.
+     No wall window here on purpose: at 160 m astern every wall crop straddles the
+     terminator. Do not add one. */
+  shade_far:  [['floor shade', [0.58, 0.66, 0.34, 0.28], 1],
+               ['floor lit',   [0.04, 0.74, 0.22, 0.20], 1]],
 };
 
 const q = (arr, p) => arr.length ? arr[Math.min(arr.length - 1, Math.floor(p * arr.length))] : NaN;
@@ -99,7 +116,7 @@ function hueOf(r, g, b) {
   return h > 180 ? h - 360 : h;
 }
 
-function measure(img, [fx, fy, fw, fh]) {
+function measure(img, [fx, fy, fw, fh], whole) {
   const x0 = Math.round(img.w * fx), y0 = Math.round(img.h * fy);
   const x1 = Math.min(img.w, x0 + Math.round(img.w * fw));
   const y1 = Math.min(img.h, y0 + Math.round(img.h * fh));
@@ -115,7 +132,8 @@ function measure(img, [fx, fy, fw, fh]) {
   }
   if (!px.length) return null;
   px.sort((p, r) => p.v - r.v);
-  const sel = POP === 1 ? px : px.slice(-Math.max(1, Math.round(px.length * POP)));
+  const pop = whole ? 1 : POP;
+  const sel = pop === 1 ? px : px.slice(-Math.max(1, Math.round(px.length * pop)));
   const S = sel.map((p) => p.s).sort((p, r) => p - r);
   const H = sel.map((p) => p.h).sort((p, r) => p - r);
   const mean = (v) => v.reduce((p, r) => p + r, 0) / v.length;
@@ -155,7 +173,10 @@ console.log(POP === 1
     '  at 20.9 degrees restricted and 0.685 at 14.3 whole, because the unrestricted\n' +
     '  window includes the oblique and shaded parts of the wall, which are redder and\n' +
     '  more saturated. Quoting this against the band reads as a regression twice over.'
-  : '\n  lit rock colour, brightest 40% of the window — the contract population');
+  : '\n  rock and floor colour. Population is per window and printed on every row:\n' +
+    '  the brightest 40% where a window holds surfaces at a range of orientations and\n' +
+    '  the target describes the sunlit part, the whole window where the window is\n' +
+    '  uniform in illumination by construction and there is no sub-population to pick.');
 console.log('  ' + 'frame'.padEnd(24) + 'resolution '.padEnd(11) + 'sat   q25-q75      hue   q25-q75     B/G      V   maxcv  >=254  >=250');
 
 let refused = 0;
@@ -176,12 +197,13 @@ for (const f of files) {
     refused++; continue;
   }
 
-  for (const [label, r] of REGIONS[key]) {
+  for (const [label, r, whole] of REGIONS[key]) {
     const im = down(decode(readFileSync(f)), DOWN);
-    const m = measure(im, r);
+    const m = measure(im, r, whole);
     if (!m) { console.log('  ' + base.padEnd(30) + '  window empty'); continue; }
     const spread = m.hueQ[1] - m.hueQ[0];
-    const flag = spread < 3 ? '  <-- SPREAD COLLAPSED, sample is probably not rock' : '';
+    const flag = (spread < 3 ? '  <-- SPREAD COLLAPSED, sample is probably not rock' : '') +
+      (whole ? '  [whole window: uniform illumination by construction]' : '');
     console.log('  ' + base.padEnd(24) + `${im.w}x${im.h}`.padEnd(11) +
       m.sat.toFixed(3) + ' ' + `${m.satQ[0].toFixed(2)}-${m.satQ[1].toFixed(2)}`.padStart(11) +
       m.hue.toFixed(1).padStart(9) + ' ' + `${m.hueQ[0].toFixed(1)}-${m.hueQ[1].toFixed(1)}`.padStart(11) +
