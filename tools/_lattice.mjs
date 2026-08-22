@@ -25,7 +25,16 @@
 import { readFileSync } from 'node:fs';
 import { decode } from './png.mjs';
 
-const a = process.argv.slice(2);
+const a0 = process.argv.slice(2);
+/* Opt-in search range. The default is unchanged, so every existing invocation
+   and every number already in the record still means what it meant. It is here
+   because the window silently bounds the answer: a period longer than MAXD
+   cannot be found, so a family that moves *out* of range is reported as a
+   family that went away. A test whose prediction is "the period doubles" has to
+   be able to see the doubled period, and at the shipped 34 it cannot. */
+const mi = a0.indexOf('--maxd');
+const MAXD_ARG = mi >= 0 ? Number(a0[mi + 1]) : null;
+const a = mi >= 0 ? a0.filter((_, i) => i !== mi && i !== mi + 1) : a0;
 const file = a[0];
 const bands = a.slice(1).map((s) => s.split(',').map(Number));
 if (!file || !bands.length) {
@@ -70,7 +79,7 @@ const LO = blur(L, 14);
 const HI = new Float32Array(w * h);
 for (let i = 0; i < HI.length; i++) HI[i] = L[i] - LO[i];
 
-const MAXD = 34;
+const MAXD = MAXD_ARG ?? 34;
 console.log(`${file}   ${w}x${h}`);
 for (const [x0, y0, x1, y1] of bands) {
   /* Normalised autocorrelation over a window of offsets. */

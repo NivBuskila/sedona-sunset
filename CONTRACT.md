@@ -7694,3 +7694,76 @@ the periods must **double**, 29.6 px to about 59 px, at unchanged angles.
 
 Not run: the authorised test was Nyquist, it returned a negative so there is no
 trade to decide, and the performance measurements need an idle machine.
+
+---
+
+## The uvK test: `uvK` is causal, and my period arithmetic was coincidence
+
+One render (`uvk5`), `uvK` halved in `scatter.js:626`, GPU path, HEAD `a5bd14b`,
+`src/` unchanged since the `ab0` baseline so that baseline still stood.
+`far_320` came back **byte-identical** (`#ebb7a1e4`), a clean control confirming
+the change is scoped to clasts and confirming the earlier correction that
+`far_320` is not this defect.
+
+### First, a trap I walked into and caught
+
+`_lattice.mjs` searches lags to `MAXD = 34`, so **no period above ~34 px on an
+axis is findable.** The prediction under test was "the period doubles to about
+59 px", which the instrument could not have seen: a family moving *out* of range
+is reported identically to a family that went away. The first measurement showed
+a collapse and that collapse was uninterpretable.
+
+This is the **third** time an instrument has answered a question I did not ask,
+and all three are one family: the window not matching the question. A global
+coefficient averaged a point-coincidence away, a one-axis fold never landed on a
+two-axis node, and now a search range shorter than the predicted answer. Added
+`--maxd` as an **opt-in** argument, default unchanged, so every number already in
+the record still means what it meant.
+
+### Re-measured with a range that can see a doubling
+
+Band 220x190 on the boulder, search to 80 px. Floor for this band size, from
+clean floor in the same frame: **r ~= 0.084**.
+
+| family | `ab0` shipped | `uvK` halved |
+|---|---|---|
+| **29-31 px @ 6-8 deg** | **r 0.172** | **gone** (below 0.098) |
+| 39.1 px @ 3 deg | r 0.132 | r 0.127 |
+| 70-73 px @ -9 deg | r 0.103 | r 0.099 |
+| *predicted 59-62 px* | - | **nothing** |
+
+**What is established:** halving `uvK` destroys the dominant family. This is the
+*first and only* change that has moved it. The octave ablation and the LOD change
+both left period and angle identical; this removes the strongest family outright.
+By eye the boulder face changes from an even, regular stipple to a coarser and
+more irregular one. **`uvK` is causal.**
+
+**What is falsified:** my pre-registered prediction. The period did **not**
+double, and nothing appeared near 59-62 px. The other two families are unmoved,
+so this is not a global softening.
+
+So the simple model - screen period = screen diameter / tile count - is **wrong**,
+and with it the arithmetic that made this the strongest lead. Predicted 29.6
+against measured 28.3 and 30.1 was **a coincidence**. That is the third numerical
+coincidence to be seductive today, after the 24 cm ripple match and the octave
+lattice, and it is the one I was most confident in. A quantitative match earns a
+test; it does not substitute for one.
+
+**Where that leaves the mechanism:** `uvK` sets how hard the base maps are
+minified across the hull, not only how many times they repeat. At 18 the maps are
+minified severely; halving reduces that. A minification artefact would be
+destroyed by the change without its period being the tile period - which is
+exactly the pair of results observed. That is a hypothesis and it has earned
+nothing yet.
+
+### The trade, for the coordinator
+
+`uvK` is causal, so a fix exists, but lowering the count is the wrong lever: it
+trades the pattern for texel density on the largest stones, in the strongest
+stretch of the walk, and the clamp at 18 exists to hold that density.
+
+**A per-instance rotation or offset of the hull UVs is the better candidate**,
+because coherence *across* stones is what makes a weave read as manufactured, and
+it costs no density on any one stone. Note this test does not bear on it: the
+measurement is on a single instance, so it says nothing about inter-instance
+coherence either way. That needs its own framing and its own test.
