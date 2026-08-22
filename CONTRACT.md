@@ -4157,3 +4157,66 @@ System 7's committed delivery record and the frames the critic actually judged; 
 figures were verified identical to a predecessor capture; and `_litguard`/`_coolshade`, which are
 analytic and render nothing. **Nobody can produce a same-build verification of a shaded-surface change
 until those three files land.**
+
+## Two rules from the shade arbitration, stated so they are findable
+
+**Quoting a hue angle without its chroma magnitude is the same error as quoting a saturation without
+the clipped fraction beside it.** Hue is an angle on a circle whose radius is the chroma; as the
+radius goes to zero the angle is still perfectly well defined and means nothing. I published "a
+quarter of the shaded floor has wrapped past red into the magenta quadrant" off a hue q25 of −3.0°,
+and it was repeated upward as the brief's purple shadows made measurable. At the B/R of 0.28 that
+population actually carries, a negative hue angle is one code value of blue over green — it is the
+dither pattern. `tools/hue.mjs` has excluded V < 0.06 for this reason since the day it was written;
+the same discipline applies to the chroma radius and not only to the value. **Report hue with B/R or
+B/G beside it, always.**
+
+**A statistic that returns the same answer for two populations cannot be evidence about either.**
+The final critic's shade finding was mean chroma by luminance decile, and the disproof was not an
+argument about tone curves — it was running the same instrument on sunlit dirt in the same window
+shape and getting the same gradient at the same magnitude, with no shade in it and no crush. Where a
+metric is suspected of measuring the instrument rather than the scene, **find the population where
+the effect must be absent and check the metric is absent there too.** That is cheaper than reasoning
+about the mechanism and it is decisive where reasoning is not.
+
+## Retraction: the stipple is mine, and neither mechanism I published for it survived
+
+The ablation is clean and it is worth stating first, because it is the one part of this that held.
+`#hardshadow` on the same tree, same frame, same crop: **the lit patch has perfectly hard edges and
+no stipple whatsoever.** With the PCSS filter on, it stipples. So the artifact is unambiguously this
+filter's, which is what the earlier entry claimed and remains true.
+
+Everything published about *why* was wrong, twice.
+
+**Withdrawn: the hard early-out mechanism.** I attributed the stipple to `if ( cnt < 0.5 ) return
+1.0;` after the twelve-tap blocker search, on the reasoning that whether a tap lands on a sparse
+occluder is decided by the per-pixel rotation and the cost of missing is a full-amplitude flip. From
+that I generalised: *an averaging kernel degrades to noise of amplitude 1/n; a kernel with a hard
+early-out degrades to noise of amplitude 1* — and asserted that the line-640 comment had reasoned
+correctly about the filter loop and misapplied it to the search loop. **It is a good sentence and it
+is not what is happening here.** I implemented the confidence blend it implies and the artifact was
+unchanged, pixel for pixel. The measurement that should have preceded the claim: luminance across
+the stippled edge runs 23, 25, 49, 67, 46, 46, 47, 47, 65, 77, 66, 79, 62, 77, 96, 89, 103 — **a
+continuous ramp with roughly 12–20% noise on it, not a binary flip between two levels.** A
+continuous ramp rules out amplitude-1 noise on inspection, and one line of pixel values would have
+said so before any of it was written down. The original line-640 comment was closer to right than my
+correction of it.
+
+**Withdrawn: within-pixel tap count.** Second attempt, that the noise is the filter's own 1/n with
+`n` sitting on its floor of 8 — arithmetically plausible, since `pen` caps at 2 m against a 0.10 m
+far-cascade texel, so `r / texelM * 1.2` lands near the floor rather than the ceiling, and 1/8 is
+12.5% against a measured 12–20%. Raised the wide-path floor from 8 to 20 taps. **Unchanged.** Both
+attempts are reverted; `src/sky.js` is at its delivered state.
+
+**What is left, and it is a hypothesis and labelled as one.** The remaining per-pixel variable is the
+filter *radius*: `pen` is derived from `sum / cnt` over twelve blocker taps, so every pixel averages
+a disc of a slightly different size, and **more taps inside a pixel cannot reduce variance that comes
+from the pixel's disc being a different size than its neighbour's** — which is exactly why the second
+attempt did nothing, and is the first thing consistent with all three results. The diagnostic is to
+hold `pen` constant and see whether the stipple goes; it did not run, because the capture died on a
+page error out of another agent's file while five source files were mid-edit.
+
+**The corollary that matters more than the fix.** With the filter off, the patch is a hard-edged
+bright quadrilateral — the decal that critics named originally. With it on, the edge is soft and
+noisy. The penumbra work traded a hard edge for a grainy one, and *both* read as artificial for the
+same reason: they sit against a wall carrying no tone at all. The crush fix is worth more here than
+any further work on this filter, and that conclusion did not depend on getting the mechanism right.
