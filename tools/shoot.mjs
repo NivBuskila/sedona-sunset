@@ -12,13 +12,43 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { run, capture } from './harness.mjs';
 import { VIEWS as SHARED_VIEWS } from './views.mjs';
+import { settle, settleTag } from './settle.mjs';
 
 const DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const args = process.argv.slice(2);
 const tag = (args[0] && !args[0].startsWith('--')) ? args[0] : 'run';
+
+/* Every flag this tool accepts, and whether it takes a value. A mistyped flag
+   used to be ignored in silence, which is how `grad.mjs` came to print a header
+   with no rows and `_p7name.mjs` came to measure nothing: an instrument that
+   answers a question it did not understand is worse than one that refuses. The
+   rule, four instances in now — a tool that measures nothing must not print a
+   number, and must exit non-zero. */
+const FLAGS = { only: 1, w: 1, h: 1, hash: 1, minframes: 1, settlemax: 1, far: 0 };
+const die = (msg) => { console.error(`shoot: ${msg}`); process.exit(2); };
+for (let i = (args[0] && !args[0].startsWith('--')) ? 1 : 0; i < args.length; i++) {
+  const a = args[i];
+  if (!a.startsWith('--')) die(`unexpected argument "${a}" — the tag must come first`);
+  const k = a.slice(2);
+  if (!(k in FLAGS)) {
+    die(`unknown flag "${a}". Known flags: ${Object.keys(FLAGS).map(f => '--' + f).join(' ')}`);
+  }
+  if (FLAGS[k]) {
+    if (i + 1 >= args.length || args[i + 1].startsWith('--')) die(`"${a}" needs a value`);
+    i++;
+  }
+}
+
 const getf = (k, d) => { const i = args.indexOf('--' + k); return i < 0 ? d : args[i + 1]; };
-const W = Number(getf('w', 1600)), H = Number(getf('h', 900));
+const num = (k, d) => {
+  const v = getf(k, null);
+  if (v === null) return d;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) die(`--${k} wants a positive number, got "${v}"`);
+  return n;
+};
+const W = num('w', 1600), H = num('h', 900);
 const only = getf('only', '');
 /* Passed through to the page's location hash, which is how the render stages
    read their own switches — `--hash nopost` gets you the scene without System
@@ -33,12 +63,21 @@ const hash = getf('hash', '');
    a second copy of it in tools/sundisc.mjs had drifted out of step with this one. */
 const VIEWS = SHARED_VIEWS;
 
-/* The wash runs 340 m and every one of the eight framings above sits inside its
-   first third, so roughly two thirds of the walk has never appeared in a capture
-   and has never been critiqued. These four cover the rest of it. They are kept
-   out of VIEWS deliberately: the eight are the comparison set that every measured
-   figure in this project is quoted against, and silently widening it would orphan
-   all of them. Shoot these with `--far`. */
+/* The wash runs 340 m and eight of the nine framings above sit inside its first
+   third, so roughly two thirds of the walk had never appeared in a capture and had
+   never been critiqued. These four cover the rest of it. They are kept out of VIEWS
+   deliberately: it is the comparison set that every measured figure in this project
+   is quoted against, and silently widening it would orphan all of them.
+
+   `shade_far` is the one deliberate widening, and it orphans nothing because every
+   figure here is quoted per view, so adding a station changes no existing number —
+   it only costs a frame per capture and makes the cool half of the walk visible to
+   critics. Worth noting why these four did not already do that job: **all of them
+   look down-canyon at yaw 0, which is into the sun.** Distance was never the whole
+   problem. Looking toward the sun the walls show their shadowed faces against a
+   bright aureole and the floor is grazing-lit, so the cool shade the outer wash
+   actually produces is invisible from the one bearing we extended the walk with.
+   `shade_far` looks back astern for that reason. Shoot these with `--far`. */
 const FAR_VIEWS = [
   { name: 'far_170', d: 170, yaw: 0,   pitch: 2 },
   { name: 'far_220', d: 220, yaw: 0,   pitch: 2 },
@@ -48,6 +87,18 @@ const FAR_VIEWS = [
 
 const pool = args.includes('--far') ? [...VIEWS, ...FAR_VIEWS] : VIEWS;
 const views = only ? pool.filter(v => only.split(',').includes(v.name)) : pool;
+
+/* Same rule as the flags. Rendering nothing and writing a manifest with an empty
+   results array is a capture run that looks like it happened. The commonest
+   version of this is asking for a far framing without --far. */
+if (!views.length) {
+  const want = only.split(',').filter(Boolean);
+  const far = want.filter(n => FAR_VIEWS.some(v => v.name === n));
+  die(`--only "${only}" matched no viewpoint.` +
+      (far.length ? ` ${far.join(', ')} ${far.length > 1 ? 'are' : 'is'} a far framing — add --far.` : '') +
+      `\n  available: ${pool.map(v => v.name).join(', ')}` +
+      (args.includes('--far') ? '' : `\n  with --far, also: ${FAR_VIEWS.map(v => v.name).join(', ')}`));
+}
 
 const shotsDir = path.join(DIR, 'shots');
 fs.mkdirSync(shotsDir, { recursive: true });
