@@ -192,7 +192,28 @@ for (const f of files) {
   }
 }
 
-console.log('\n  bands: saturation 0.615-0.626, hue 18.9-21.1 degrees, V 0.589-0.600+.');
+/* Two layers, and they are not interchangeable — printing them as one line cost a
+ * morning. The outer layer is what Sedona photographs actually contain and is the
+ * only thing that can put a figure "out of band". The inner layer is tighter than
+ * the photographs and exists as a drift guard on numbers this project has earned;
+ * a reading outside it means look, not fail.
+ *
+ * V has no inner guard, and the 0.589-0.600 this footer used to print as one was
+ * not a band at all. Those are two readings out of CONTRACT.md's own history -
+ * 0.589 from the azimuth-elevation sweep and 0.600 from `sys4c`, and the document
+ * introduces 0.600 as "the first frame in the project inside the 0.59-0.73
+ * reference band", so it is that band's floor and not its ceiling. Both predate
+ * `EXPOSURE` coming down to 0.95, a fit whose stated success criterion was putting
+ * lit-face V at 0.693 inside 0.59-0.73. So the footer was asking the renderer to
+ * undo its own exposure fit, and 0.687 was reported out of band while sitting
+ * nearer the middle of the real band than either number quoted against it.
+ */
+console.log('\n  acceptance bands, from Sedona reference photographs — a figure outside');
+console.log('  one of these is out of band: saturation 0.42-0.65, hue +15.6-31 degrees,');
+console.log('  V 0.59-0.73.');
+console.log('  drift guards, tighter than the photographs, earned rather than referenced —');
+console.log('  outside one of these means look, not fail: saturation 0.615-0.626, hue');
+console.log('  18.9-21.1 degrees. There is no drift guard on V; read it against 0.59-0.73.');
 console.log('  A saturation figure without the clipped fraction beside it cannot be');
 console.log('  checked for a moved ceiling later, and a hue spread under 3 degrees on a');
 console.log('  rock crop means the window is not looking at rock.\n');
