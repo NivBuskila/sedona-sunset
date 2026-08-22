@@ -8613,6 +8613,48 @@ costing a blur chain:
   thresholds were swept in that same space so prediction and implementation cannot
   drift apart.
 
+### The hollow the mask caused, and why widening cannot fix it
+
+**Caught by looking at the delivery frames before measuring them.** A local maximum
+with a single radius **hollows out any dark region wider than twice that radius**:
+near the edge a tap reaches lit ground and the pixel lifts, past the radius none
+does and it stays put, and because eight taps make the mask a staircase in distance
+the change lands within a few pixels. On a clast side face 123×30 px across:
+
+| point | ungraded | one unweighted ring |
+| --- | --- | --- |
+| outer band | rgb(12,3,4) | rgb(40,21,20) |
+| inner region | rgb(13,4,3) | rgb(11,2,3) |
+
+Ungraded those two are **the same value — there is no rectangle in the frame.** The
+lift raised the border 3.3× and left the middle alone, *manufacturing* a hard-edged
+black rectangle: precisely the artefact the term exists to remove, and worse than
+doing nothing.
+
+**A second wider ring closes it and cannot be used.** The wall's own shadow bands are
+tens of pixels across, so a 96px ring finds lit rock nearly everywhere inside them
+and **17% of `wall_lit` washes into fill light** — obvious in a three-way crop.
+**In this scene the facet scale and the shadow-band scale overlap, so no radius
+separates them.** Anyone tempted to widen the radius should read that twice.
+
+**Subtracting a distance term is the fix.** Discounting each tap by how far it is
+makes the mask decay with distance to the nearest lit pixel instead of stopping dead
+at the radius, so a facet fills as a gradient and a wide shadow's interior is reached
+only weakly. Same eight taps. Swept:
+
+| radius | falloff | facet centre | facet border | `wall_lit` vs one ring |
+| --- | --- | --- | --- | --- |
+| **48** | **0.22** | **43** | **40** | **−0.7 cv** |
+| 48 | 0.35 | 34 | 40 | −1.8 cv |
+| 32 | 0.15 | 11 | 40 | −0.9 cv (hollow remains) |
+
+Shipped at radius 48, falloff 0.22: the facet is uniform and the wall keeps its
+depth. **The general lesson is that a masked local operator must be checked for what
+it does to regions larger than its own kernel, and the check is a full-resolution
+crop, not a mean.** No aggregate figure in the table below moved when this artefact
+was present — the gate, lit rock and the floor rows were all in band with a black
+rectangle sitting in the frame.
+
 The tap radius **scales with resolution** and the mask thresholds do **not**, for
 the reason recorded above for grain and the silhouette gate: the radius is a
 distance in the image plane, so what it calls "the neighbourhood" must stay a fixed
@@ -8663,3 +8705,57 @@ full-resolution crops settle them.**
 `shadowLift` in `src/post.js` is the whole of the decision if anyone disagrees with
 that judgement, and `#lift=N` sweeps it live. The eight taps are on the tier ladder
 as `post.lift` and compile out on potato.
+
+### The delivery record: `sys7d` / `sys7dpx`
+
+Nine views × two arms at each of two buffers, 36 frames, **every manifest logs 0
+entries**, settle by frame convergence at 180 frames, one resolution per tag.
+`sys7far` adds `far_220` for the varnish look-check. The control arm is `#nopost`,
+so the left column is the scene with no post chain at all.
+
+**2560×1440 — the shipped buffer, since the governor holds rung 0 natively.**
+
+| figure | ungraded control | **graded, ships** | band |
+| --- | --- | --- | --- |
+| worst facets ≤7cv, `ground` | 3.7 cv | **19.0 cv (5.1×)** | — |
+| dark facets ≤14cv, `ground` | 6.3 cv | **21.5 cv (3.4×)** | — |
+| **shadow gate** | 0.244 | **0.213** | 0.15–0.25 |
+| lit rock saturation | 0.613 | **0.614** | 0.42–0.65 |
+| lit rock hue | 20.7° | **20.5°** | +15.6–31° |
+| lit rock V | 0.692 | **0.685** | 0.59–0.73 |
+| floor **shade**, sat / hue / V | 0.658 / 6.7° / 0.149 | **0.641 / 4.3° / 0.131** | paired |
+| floor **lit**, sat / hue / V | 0.625 / 21.6° / 0.642 | **0.623 / 21.3° / 0.638** | paired |
+| midwall hf/lf | 0.53 | **0.53** | — |
+| upper wall hf/lf | 0.62 | **0.62** | — |
+| wash floor / wall hf/lf | 0.49 / 0.60 | **0.49 / 0.62** | — |
+| banding `sun_gap`, run / step / flat | 42 / 0.125 / 94% | **8 / 0.651 / 42%** | — |
+| banding `wash_mid`, run / step / flat | 36 / 0.171 / 92% | **7 / 0.670 / 43%** | — |
+| clipped ≥250 / ≥254, `wall_lit` | 0.05% / 0.00% | **0.44% / 0.04%** | — |
+| black at 0,0,0 / within 2, `wall_shade` | 0.01% / 1.17% | **0.07% / 1.28%** | — |
+
+**1997×1123 — the second buffer, for the pixel-scale figures.**
+
+| figure | value | note |
+| --- | --- | --- |
+| lit rock sat / hue / V | 0.614 / 20.5° / 0.684 | colour is resolution-invariant, as recorded |
+| shadow gate | 0.213 | identical to 1440p |
+| floor shade / lit, sat | 0.640 / 0.625 | within 0.001 of 1440p |
+| worst facets ≤7cv | 3.7 → 17.4 cv (4.7×) | slightly less reach, radius scales |
+| banding `sun_gap` | 8 / 0.711 / 42% vs ungraded 33 / 0.185 / 93% | dither's margin widens |
+| midwall / upper / wash floor hf/lf | 0.52 / 0.66 / 0.52 | **resolution-dependent, as recorded** |
+
+**Cost.** The lift's eight taps at rung 0, 2560×1440: **17.91 ms against 17.89 ms**
+with the term off. Inside noise. On the ladder as `post.lift`, compiled out on potato.
+
+### Two residuals, stated rather than hidden
+
+1. **A facet inside an already-shaded field stays at code 11.** Measured on
+   `juniper`, a slab face reads rgb(11,4,3) and the shadowed ground around it
+   rgb(26,10,10). **Identical in both arms** — the mask correctly finds no lit
+   neighbour, so the lift does not fire, and the face/ground ratio is 0.40 graded
+   against 0.36 ungraded, i.e. the grade slightly improves the separation. Reaching
+   it requires lifting large dark regions, which is the luminance-keyed family that
+   takes the gate to 0.418. **This one is genuinely blocked, not deferred.**
+2. **The near-field clasts are rectangular boxes** — flat top, straight side, hard
+   90° edges — which reads as a brick rather than a fractured sandstone slab. That
+   is geometry and belongs with the transported-lithology work, not with the grade.
