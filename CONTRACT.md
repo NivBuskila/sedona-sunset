@@ -13,36 +13,62 @@ the thing this build is proudest of.
 singled it out — `wall_lit` and `sun_gap` are clean at full resolution and `far_270` is the
 strongest frame in the set. The arrival works now: the wash heads up into a real box canyon
 with a breached apron, a pour-off notch and distant land visible *through* it, where a month
-ago it read as "the trail ran out". Colour is measured against real photographs rather than
-asserted, and lit rock sits inside its bands on hue, value and B/G. The `shade_far` station
-carries the only paired window in the project — the same dirt in sun and in fill — and the
-2.4° of cooling it measures is the best colour evidence in the handoff. The sound is complete
-and its quiet is the feature. The corridor holds you without ever being felt: 4.2 minutes of
-driven wandering, 5.8 m off the centreline, zero frames touched. And the loading screen means
-the forty-second boot is a wait rather than a hung tab.
+ago it read as "the trail ran out" — and it reads without the player thinking to look up,
+because the view eases up twelve degrees over the last forty-five metres out of a budget it
+cannot exceed. **The last forty metres now carries the highest wall detail on the route**
+rather than the lowest, which is a reversal from two days ago. Colour is measured against real
+photographs rather than asserted, and lit rock sits inside its bands on hue, value and B/G. The
+`shade_far` station carries the only paired window in the project — the same dirt in sun and in
+fill — and the 2.4° of cooling it measures is the best colour evidence in the handoff. The sound
+is complete and its quiet is the feature. The corridor holds you without ever being felt: 4.2
+minutes of driven wandering, 5.8 m off the centreline, zero frames touched. And the loading
+screen means the boot — just under a minute — is a wait rather than a hung tab.
+
+**Closed in the last two days, so nobody re-opens them.** The straight fifty-column skyline
+(a reversed path heading, one quad stretched 83 m across the corridor). The streaked `far_320`
+headwall and the waxy mid distance, which turned out to be **one defect**: the grit texture
+packs a normal in `G,B` and the ground shader read only `R` and `A`. The arrival reading only
+if you looked up. Each is written up with the eliminations that found it, and each of those
+sections now carries a banner saying it is closed.
 
 **What is honestly still weak.** More than one would like on delivery morning, and none of it
 is hidden:
 
 - **Performance does not meet the brief and this is the largest open item.** The contract
   asked for 120+ fps at 1440p. **That is not reachable on this scene on this GPU at any rung
-  with the camera moving.** The honest figure is 40–60 fps at native 1440p on the top tier,
-  with the adaptive governor settling somewhere in the 80s–100s. The frame is fill-bound, not
-  geometry-bound, and the last clean measurement was taken on a machine already 65–100% busy
-  with other agents' work — so the number is a floor rather than an estimate. A final benchmark
-  is running.
-- **Mid-distance floor detail.** Past the bed-grain fade at 30 m and past the clast scatter
-  radius, there is nothing left but smooth shading, and the channel floor and the low colluvial
-  slopes read waxy from about the middle of the frame outward. Three independent attempts to
-  move it were built, measured and reverted; the surface is now **bounded from three
-  directions** rather than merely unfixed, and the map is written up in "The wash floor,
-  bounded from three directions". The leading untested hypothesis is that both metrics are
-  reading clast silhouettes rather than the bed.
-- **A near-field quilted tiling pattern on rock, and pale flat angular slabs.** Both present in
-  the delivery set, both identical in the ungraded arm so neither is the grade's, and **both
-  being worked now.** The slabs read as untextured placeholder geometry and are new since the
-  previous build. `hf/lf` measured the quilted floor at a perfectly respectable 0.45 — see
-  rule 10.
+  with the camera moving.** The honest figure is **37 fps walking at native 2560×1440** on the
+  top tier, and the governor lowers the buffer to 1997×1123 to hold **a steady 60**; the floor
+  of the ladder is 89. The frame is fill-bound, not geometry-bound. One measurement in that
+  account is **unexplained and is recorded as unexplained**: the same cell read 16.80 ms in one
+  tool and 23.06 in another on the same commit, and neither code growth (a fourteen-commit
+  bisect says the frame is flat to 0.83 ms) nor machine contention (23.06 quiet against 23.30
+  contended) accounts for it. Two confident causal stories died there in one morning; do not
+  quote either.
+- **A near-field quilted tiling pattern on rock, and pale flat angular slabs.** **The
+  playthrough ranked the slabs the most attention-breaking thing on the whole route**, and they
+  are the largest visual item still open. Both are present in the delivery set, both identical
+  in the ungraded arm so neither is the grade's, and the slabs read as untextured placeholder
+  geometry and are new since the previous build. `hf/lf` measured the quilted floor at a
+  perfectly respectable 0.45 — see rule 10, which exists because of it.
+- **The juniper leans across a wind that nothing else in the scene blows along.** `juniper.js`
+  leans and piles its litter on (0.94, 0.34); the dust, the saltation ribbons and the bed drift
+  run off `WIND_HEADING = 0.12` in `atmosphere.js` and `audio.js`, driven live through
+  `syncWind()`. Those are **76° apart**. Worse, `terrain.js:1252` documents its `uWind` uniform
+  as *"the shared WIND"* and says the other systems "should agree with this; it is exported for
+  that" — **which was never true of the shipped build**: nothing outside `juniper.js` ever
+  imported it. The export has been renamed `PREVAILING` so the name can no longer imply the
+  agreement, but the comment is still wrong and **the two vectors are still 76° apart**. It is
+  nobody's mistake in particular and it was too large to start on delivery morning. Fixing the
+  comment is a one-line change in `terrain.js`; reconciling the vectors is not.
+- **Mid-distance floor detail — much improved, and the remaining limit is a different thing.**
+  This was two items ago the second-worst defect on the route and it is now largely closed: the
+  head slopes went from 0.16 relative contrast against a 0.38–0.40 strip to **0.2525 against
+  0.409**, half the deficit, and the channel floor that read as wax reads as gravel. **The
+  honest remaining limit is broad tonal banding from mesh undulation under a 15° sun**, and
+  that is geometry — no texture layer can remove it, only put material on it. It is a smaller
+  complaint than the one it replaced. The three earlier attempts that were built, measured and
+  reverted are still worth reading: the surface is **bounded from three directions** in "The
+  wash floor, bounded from three directions".
 - **Warm shade in the corridor.** The brief imagined blue canyon shade. What the corridor
   actually delivers is warm shade, and that is **physically correct rather than a defect**: on
   a shaded lateral face the fill decomposes as 47.8% sky, 25.1% escarpment bounce, 27.2% ground
@@ -68,16 +94,19 @@ is hidden:
 - **Smaller, named.** A stipple on wide penumbra edges — this filter's, confirmed by ablation,
   with two published mechanisms both withdrawn and a third recorded as an unverified lead. A
   masonry read on `wall_lit`, accepted as shipped because the same arrises are what make
-  `sun_gap`'s wall good. The slopes flanking the wash head are the smoothest geometry on the
-  route and the only statistical outlier among thirty-two stations. And **nobody in this
-  pipeline has heard the sound** — every judgement on it is from spectrograms.
+  `sun_gap`'s wall good. The slopes flanking the wash head are still the softest geometry on
+  the route, though they are no longer an outlier — the station that read 0.16 against a 0.409
+  mean now reads 0.2525. And **nobody in this pipeline has heard the sound** — every judgement
+  on it is from spectrograms.
 
 **Two things to know before quoting anything in this file.** Read **THE PROCESS RULES** below
-first; they are ten hard-won rules with the instances that earned them, and rule 3 in
+first; they are fifteen hard-won rules with the instances that earned them, and rule 3 in
 particular will stop you quoting a number against the wrong population. And several figures
 here were **superseded or retracted**, and are struck in place with a pointer rather than
 deleted, because each had already been quoted downstream. If a figure is struck, the pointer
-next to it is the current answer.
+next to it is the current answer. **This applies hardest to the frame-rate figures**: every
+"120 fps", "123", "59 fps" and "55 fps" in this file was taken with the camera held, and the
+only table to quote is "The delivery table — 2560×1440, RTX 4060, machine gated quiet".
 
 ## The governing instruction
 
