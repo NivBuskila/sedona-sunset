@@ -8130,3 +8130,60 @@ regression, but it is a real change to the far-field convergence colour and is
 recorded as such.
 
 **Visual confirmation rides along with the next capture; it does not need its own.**
+
+---
+
+## Reprojection applied harder: third failure. Stopping.
+
+Gate narrowed from `smoothstep(0.14, 0.40, slope)` to `smoothstep(0.14, 0.24,
+slope)`, taking full reprojection weight from 53.1 degrees down to 40.5 - the
+inverse of the original proposal and following the ablation's empirical
+direction rather than a model. `pw` was deliberately **not** sharpened in the
+same render, because `pw` acts on all steep ground and would have destroyed the
+discriminating signature.
+
+**Result: the striations are essentially unchanged.** Not a fix. Reverted.
+
+### And the pre-registered prediction was badly designed again
+
+I predicted two disjoint byte-identical regions - flat ground below 31 degrees
+and the steepest faces above 53 - on the grounds that the gate leaves weight at
+exactly 0 and exactly 1 there. The diff came back at 22-68% of pixels in every
+horizontal band.
+
+That looks like a falsification and is not one. **Only 3% of far_320's sloped
+samples are above 53 degrees** - 154 of 5163, in my own table two sections
+above. So I predicted identity in a region that barely exists in the frame, and
+the prediction could not have discriminated anything. It is the *same* error as
+the severity ordering, committed immediately after diagnosing it: **confidence
+calibrated against a prediction that cannot fail.** The first time the
+prediction was true under every rival; this time it was untestable for want of
+sample. Both feel like corroboration and neither is.
+
+This is the same shape as the performance gate that had been calibrated against
+a contended machine and therefore certified contention as rest. A threshold, or
+a prediction, checked against something that cannot contradict it inherits
+whatever was wrong and launders it into everything downstream. Nothing below a
+bad gate can detect a bad gate.
+
+### Where the striations stand
+
+Three hypotheses, each with a render and each dead:
+
+1. **Reprojection is the stretcher** - falsified and *inverted*. Removing it makes
+   the combing much worse. It is load-bearing; do not remove it.
+2. **Rotated tangent frame** - real, measured at a mean 41.2 degrees off, fixed
+   correctly as `tsToWorldAx`, and visually null. Code recorded, not landed.
+3. **Reprojection under-applied** - this one. Full weight from 40.5 degrees
+   instead of 53.1 changes the frame substantially and the striations not at all.
+
+The remaining untried lever is the `pow(...,4)` sharpening of `pw` on its own,
+which is the only part of the reprojection path not yet varied. I have not run
+it: three failures is a complete answer for one afternoon and a fourth guess on
+a frozen tree is not worth the reshoot.
+
+**Recommendation: ship the mild combing.** The fallback - a slope-gated
+attenuation of `GRIT_N` - would work only by removing grain from exactly the
+faces the grit normal was added to serve, trading the far-field detail that took
+the last forty metres from the weakest part of the route to the most detailed.
+That is a worse frame, not a better one.
