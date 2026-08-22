@@ -276,6 +276,40 @@ console.log(`    the critic's ask                    ${WANT.map((x) => Math.roun
     `critic's ask ${WANT.map((x) => Math.round(x)).join(' ')})`);
 }
 
+/* ── how a photograph could read 90 without the transport being wrong ─────────
+ * The ask is 0.401 against a ceiling of 0.250, so no fill can reach it. But the ceiling
+ * is for a facet with *no direct sun at all*, and at 15 degrees of elevation that is a
+ * knife-edge condition: a facet tilted a few degrees off vertical toward the sun takes
+ * the beam at grazing incidence, and the beam is two orders of magnitude stronger than
+ * the fill. So the tilt at which a facet reaches 90 in red is worth knowing, because if
+ * it is small then "side face" is not a well-defined population and the critic's frame
+ * and ours may be reporting facets that differ by a few degrees of dip rather than by a
+ * missing term. Sweeping the tilt costs nothing and settles it. */
+{
+  const L = [SUN_DIR.x, SUN_DIR.y, SUN_DIR.z];
+  /* A slab has four sides and they are not equivalent. The one facing away from the sun
+     is what was measured above. The one facing *across* the sun's azimuth sits at
+     N.L = 0 exactly - on the terminator - and that is the one a few degrees of dip can
+     move. Sweep both, far enough to find where each crosses into sun. */
+  const nCross = unit([-L[2], 0.10, L[0]]);
+  for (const [label, n0] of [['facing away from the sun', nSide], ['facing across the sun', nCross]]) {
+    console.log(`\n  tilting a side facet toward the sun - ${label}`);
+    console.log('  tilt     N.L    direct/fill   side/top R   predicted red');
+    for (const deg of [0, 2, 5, 10, 20, 30, 40, 43, 46, 50]) {
+      const t = deg * Math.PI / 180;
+      const n = unit([0, 1, 2].map((k) => n0[k] * Math.cos(t) + L[k] * Math.sin(t)));
+      const ndl = Math.max(0, n[0] * L[0] + n[1] * L[1] + n[2] * L[2]);
+      const E = fillOn(A, n);
+      const tot = [0, 1, 2].map((k) => E[k] + A.sunRGB[k] * ndl);
+      const cv = cvAt([0, 1, 2].map((k) => tot[k] / Etop[k]));
+      console.log(`  ${String(deg).padStart(3)} deg  ${ndl.toFixed(3)}` +
+        `  ${(A.sunRGB[0] * ndl / Math.max(1e-9, E[0])).toFixed(1).padStart(8)}x` +
+        `      ${(tot[0] / Etop[0]).toFixed(3).padStart(6)}      ${String(cv[0]).padStart(4)} ${cv[1]} ${cv[2]}` +
+        (cv[0] >= 88 && cv[0] <= 112 ? "   <- the critic's 90 to 110" : ''));
+    }
+  }
+}
+
 console.log(`\n  read the model row against the physics rows, not against the frame. If the`);
 console.log('  model sits far under albedo_g/2 the ground term is being under-delivered at');
 console.log('  this geometry; if it sits at the ceiling the transport is right and the');
