@@ -5179,3 +5179,94 @@ builds, and the page still could not boot, because the fault was inside
 narrow the search; they do not replace loading the page.** Any future
 reorganisation that drops the browser leg to save forty seconds has removed the
 only leg that has ever caught anything on its own.
+
+## Two metrics on two different surfaces, and the floor gradient's local minimum
+
+The anisotropy mechanism was authorised as a correction rather than a
+compensation: `ground` under-detailed, `wash_mid` twenty per cent over, one
+amplitude applied to both because the shader never read its own footprint. The
+mechanism exists and the separation is real. It does not fix this, and the
+reason is worth more than the change would have been.
+
+**First, the target was not well posed, and neither was the number I reported
+it against.** `grad.mjs` and `hf.mjs` each carry their own per-view crops and
+for `ground` they do not overlap: `grad.mjs` measures the floor at y 0.32-0.58,
+mid-frame, and `hf.mjs`'s near band is y 0.80-0.98, at the camera's feet. Those
+are different distances, so different footprints, so different surfaces. Every
+"hold grad/L while hf9 climbs" statement made about `ground` was a statement
+about two places at once. `tools/_band2.mjs` reports both metrics plus `hf9/L`
+over one rectangle. It should be the tool for any two-sided target from here.
+
+Measured on identical bands, the picture is coherent for the first time, and it
+is not the picture the two-sided target described:
+
+| band | footG | grad/L (0.12-0.16) | hf9 | reference |
+|---|---|---|---|---|
+| `ground` near | 9.1 mm | 0.088 under | 0.0741 | 0.075-0.094 |
+| `ground` mid | 12.1 mm | 0.116 just under | 0.0896 | 0.115-0.137 |
+| `wash_mid` near | 17.9 mm | 0.168 over | 0.1130 | over |
+| `wash_mid` mid | 28.4 mm | 0.121 in | 0.0716 | short |
+
+`ground` is under-detailed at every distance, not balanced against a
+gradient ceiling. Note also that `hf9` is an unnormalised RMS: `wash_mid`'s near
+band is nineteen per cent brighter than `ground`'s, and some of the gap between
+0.1130 and 0.0741 is exposure rather than surface. `hf9/L` is printed beside it
+for the same reason `grad/L` is printed beside `grad`.
+
+**The footprint separates the framings.** Painted through the shader and read
+back — `footG` is the geometric mean of the footprint axes, so the linear scale
+of its area — the four bands are 9.1, 12.1, 17.9 and 28.4 mm, monotone, and the
+correction each needs runs along that axis. Instanced clasts are only fourteen
+per cent of `wash_mid`'s near band; the terrain is eighty-six. Filtering the
+paint on chromaticity is how that was separated, and it needs a tolerance of two
+code values because dithering runs after the paint and exact grey never
+survives.
+
+**The mechanism was built and it made both framings worse.** Amplitude
+`clamp(0.0120/footG, 0.85, 1.35)` on the bed's tilt and on the height difference
+the rake marches, so shadow and normal stay coherent. `ground` moved the way it
+should — grad/L 0.088 to 0.107, hf9 0.0741 to 0.0862, both toward reference. The
+wash floor was cut to 0.85 and its gradient went **up** sixteen per cent. On the
+stated criteria both fail: `ground` floor 0.151 to 0.168, `wash_mid` floor 0.160
+to 0.179, both out of band. Reverted.
+
+**The reason, and it is the third bound on this surface.** Pinning `gAmp` to 1.0
+reproduces the baseline exactly — grad/L 0.1680 against 0.1680, hf9 0.1130
+against 0.1130 — so the plumbing is a clean no-op and the gate itself did this.
+That gives three amplitudes at the same band:
+
+| bed amplitude, `wash_mid` near | grad/L |
+|---|---|
+| 0.85 | 0.196 |
+| 1.00 as shipped | 0.168 |
+| 1.50 | 0.205 |
+
+**The shipped setting is a local minimum.** The floor's luminance gradient rises
+whether relief is added or removed, so no scaling of bed amplitude reduces it in
+either direction, and the lever has no sign there rather than the wrong one. A
+grazing sun explains it: that bed is already rough enough to self-shadow into
+flat-lit and flat-dark, and flattening it walks the whole band back toward the
+terminator where sensitivity to tilt is greatest. It also explains why the
+earlier rebalance found `wash_mid` three times more responsive than `ground`.
+Whatever makes that floor read over-detailed, it is not the amount of relief.
+
+Two smaller negatives from the same session. The grit detail layer — `gritK`,
+the term that fades in as the dirt grain fades out — carries **none** of either
+near band: zeroing both its consumers leaves `wash_mid` near at 0.1130 and
+`ground` wholly unchanged, and moves only `wash_mid`'s mid band, by 3.8%. It was
+the obvious lever and it is not connected to the thing it looks connected to.
+And `dirtN` is a mix of two mip taps and is deliberately shorter than unit
+length; the lerp against flat below reads that length as strength. Normalising
+it while scaling raised both framings by more than the gate removed. Scale the
+tilt in place.
+
+The mid field stays short and is not chased. At 30 m the shading normal is
+0.0010 of tangent slope after the fade, so no texture change reaches it; that is
+the documented structural limit, not a failure of this change.
+
+Three directions now bound this surface: no global rebalance satisfies both
+framings, no relief amplitude does either, and the gradient is stationary in
+amplitude at the framing that needs it lowered. The mechanism is specified and
+the footprints are measured for whoever picks it up. The remaining candidate is
+not amplitude but *character* — spatial frequency or the albedo mottle rather
+than the normal field — and nothing in tonight's work has tested that.

@@ -1446,6 +1446,12 @@ gFoot = 1.0 - smoothstep(0.020, 0.075, foot);
  * reference; far, that grain is gone and this stands in for it. The two are
  * complementary halves of one surface, not a term and its distance fade. */
 float footG = sqrt(max(foot, 1e-5) * max(footMin, 1e-5));
+/* A footprint-keyed bed amplitude was tried here and reverted. footG does
+   separate the two floor framings cleanly — 9.1 mm at ground's near band
+   against 17.9 mm at the wash floor's — so the mechanism is available. It does
+   not help: the wash floor's gradient is at a local *minimum* in bed amplitude,
+   rising for both 0.85x and 1.5x, so no scaling of relief reduces it in either
+   direction. Numbers and the no-op check in CONTRACT.md. */
 float gLod = log2(max(footG, 2e-4) * 256.0 * 0.9);
 float gFl = floor(gLod), gTw = gLod - gFl;
 float gSc = exp2(-gFl);
