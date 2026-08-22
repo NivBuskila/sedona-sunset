@@ -177,7 +177,7 @@ console.log(POP === 1
     '  the brightest 40% where a window holds surfaces at a range of orientations and\n' +
     '  the target describes the sunlit part, the whole window where the window is\n' +
     '  uniform in illumination by construction and there is no sub-population to pick.');
-console.log('  ' + 'frame'.padEnd(24) + 'resolution '.padEnd(11) + 'sat   q25-q75      hue   q25-q75     B/G      V   maxcv  >=254  >=250');
+console.log('  ' + 'frame'.padEnd(29) + 'resolution '.padEnd(11) + 'sat   q25-q75      hue   q25-q75     B/G      V   maxcv  >=254  >=250');
 
 let refused = 0;
 for (const f of files) {
@@ -204,7 +204,7 @@ for (const f of files) {
     const spread = m.hueQ[1] - m.hueQ[0];
     const flag = (spread < 3 ? '  <-- SPREAD COLLAPSED, sample is probably not rock' : '') +
       (whole ? '  [whole window: uniform illumination by construction]' : '');
-    console.log('  ' + base.padEnd(24) + `${im.w}x${im.h}`.padEnd(11) +
+    console.log('  ' + base.padEnd(29) + `${im.w}x${im.h}`.padEnd(11) +
       m.sat.toFixed(3) + ' ' + `${m.satQ[0].toFixed(2)}-${m.satQ[1].toFixed(2)}`.padStart(11) +
       m.hue.toFixed(1).padStart(9) + ' ' + `${m.hueQ[0].toFixed(1)}-${m.hueQ[1].toFixed(1)}`.padStart(11) +
       m.bg.toFixed(3).padStart(8) + m.v.toFixed(3).padStart(7) +
