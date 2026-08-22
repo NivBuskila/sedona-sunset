@@ -1061,13 +1061,19 @@ ladder had only ever been walked by hand, one rung at a time, by the tool that w
 measuring it. `#adapt` opts back in explicitly, `tools/govern.mjs` is the only
 thing that sets it, and captures are untouched.
 
-### 11.1 The frame cost did not move. The machine did.
+### 11.1 The frame cost did not move. Why two tools disagree about it is unexplained.
 
-**This section said "the frame cost moved 39% under the measurement" and it was
-wrong.** The claim is left named in the heading rather than deleted, because it
-was written into `CONTRACT.md`, escalated as the most important open item in the
-project, and reported to the user — and the correction matters more than the
-tidiness. What follows is the bisect.
+**This section has now been wrong twice, in the same place, and both wrong versions
+are named here rather than tidied away.** It first said "the frame cost moved 39%
+under the measurement"; that was escalated as the most important open item in the
+project and reported to the user, and the bisect below disproves it. It then said
+the difference was the machine; the quiet-machine measurement further down
+disproves that too. What survives is the bisect and a gap nobody has explained.
+
+The pattern is worth more than either claim. Both wrong versions were plausible,
+both were arrived at honestly from real data, and both were killed by building an
+instrument that could distinguish rather than by arguing. That is the only method in
+this file that has a clean record tonight.
 
 `tools/bench.mjs` read `wash_mid` at **16.80 ms** at `fa8b9ec` around 05:00 and
 **24.48** at `2548d04` around 07:45. Two independent instruments agreed on the
@@ -1123,35 +1129,82 @@ Vegetation shows up in the counts — calls 64 → 70, triangles 3.96 M → 4.00
 not in the milliseconds, which is the same lesson §6 recorded about the triangle
 ceiling. Jointing likewise.
 
-**What actually changed is the machine.** Sampled with nothing of this
-investigation running, the GPU sits at a **66% utilisation floor** from processes
-that have nothing to do with the project — an animated Wallpaper Engine desktop,
-the NVIDIA overlay, the editor, and fourteen `chrome`/`node` processes belonging to
-the other agents working in this repo tonight. The 16.80 was taken around 05:00
-when fewer of those existed. 22.8 / 16.8 is 1.36, which is the shape of a scene
-being given roughly two thirds of a GPU instead of all of it.
+**What actually changed is not known.** The first version of this paragraph said it
+was the machine, and that has since been tested and is wrong.
 
-Three things follow, and the third is the one that matters for delivery:
+The theory was reasonable. Sampled with nothing of this investigation running, the
+GPU sat at a **66% utilisation floor** from processes with nothing to do with the
+project — an animated Wallpaper Engine desktop, the vendor overlay, the editor, and
+fourteen `chrome`/`node` processes belonging to the other agents working in this
+repo — and the 16.80 was taken around 05:00 when fewer of those existed. 22.8/16.8
+is 1.36, which looked like the shape of a scene being given two thirds of a GPU.
 
-- **Every absolute number in §11 is a contended number**, including §11.2's table
-  and the `moving` column that went into the delivery note. They are self-
-  consistent and the *ratios* in them are sound — they were all taken in the same
-  session under the same load — but they are a floor on the user's experience and
-  not an estimate of it.
-- **The 16.80-era figures are not obviously the honest ones either.** They were
-  taken with fewer agents running, not with none. Neither end of this is a
-  measurement of a machine doing nothing but running the scene, and this project
-  does not currently have a way to take one: the render lock serialises captures
-  against each other but nothing serialises them against a desktop wallpaper.
-- **`bench.mjs` should record the machine, not just the frame.** A tool that
-  writes a millisecond into a contract without recording GPU utilisation and clock
-  alongside it produces figures that cannot be compared with each other across a
-  night, which is exactly what happened. `_regress.mjs` samples the frame's
-  luminance for the white-desert trap; the same argument applies to load, and it
-  is the cheaper of the two checks.
+Then the machine was made quiet and the same cell was measured again, gated on a
+pre-launch load sample that had to report the card at its resting floor before the
+run was allowed to start:
 
-The one honest way to state the result is as a range with its condition attached,
-and that is how the delivery note now states it.
+| `wash_mid`, rung 0, 2560×1440 | held | moving |
+|---|---|---|
+| foreign load 90–100% | 23.30 | 25.21 |
+| foreign load 63%, memory 12% | **23.06** | **26.81** |
+
+**Identical.** The foreign load was not costing six milliseconds, or anything
+measurable. So the gap between `bench.mjs`'s 16.80 and this tool's 23.06 on the
+same commit is **unexplained**, and it is recorded as unexplained rather than
+re-attributed, because the last two confident causal stories about this number —
+that it was the indirect-light fix, and that it was contention — were both
+reasonable and both failed the first test that could distinguish them.
+
+**What the bisect still says, unaffected.** Fourteen commits measured through one
+instrument, with the endpoints interleaved three times each and landing 0.18 ms
+apart, says the code did not change. That is a within-instrument comparison and
+nothing above touches it. The regression does not exist. What has collapsed is only
+the explanation for why two *different* instruments disagree.
+
+**Confounds already checked, so the next person does not redo them.** All four were
+candidates and all four are eliminated:
+
+- **Station.** `bench.mjs`'s `wash_mid` is `{ d: 46, yaw: 0, pitch: 0 }`. That is
+  the same station this tool measures, to the degree. Station choice is worth up to
+  9 ms across the walk, so this was the leading candidate and it is not the answer.
+- **Timing method.** Both take `performance.now()` around n `renderOnce` calls and
+  both fence with a one-pixel `readPixels`. Neither uses the GPU timer for the
+  figure it prints.
+- **Commit.** 16.80 and 22.91 are both `fa8b9ec`, the second from a detached
+  worktree with `node_modules` resolved from the main tree so the three version is
+  pinned.
+- **Machine state.** The table above.
+
+**One hypothesis, labelled as a hypothesis, with its test.** §13 of this file
+records a real warm-up defect found in `_regress.mjs`: a fixed sixty-frame warm-up
+produced a ladder with rung 1 slower than rung 0 and rung 4 faster moving than
+held, because a tier change alters the atmosphere's sample counts, which is a new
+shader variant and an ANGLE compile landing inside the timed blocks. **A fixed
+warm-up can read low as well as high** — if a rung's timed blocks catch the tail of
+a cheaper configuration mid-transition, the number comes out under the truth rather
+than over it. `bench.mjs` walks the ladder through `setTier()` with the same shape
+of warm-up. That is a mechanism which would produce exactly this disagreement in
+exactly this direction, and it is untested. The test is to give `bench.mjs` the
+warm-until-two-short-runs-agree loop and re-run `wash_mid` at rung 0 on a quiet
+machine; if 16.80 becomes 23, the tool was reading a transient.
+
+Two things follow that hold regardless of which way that test goes:
+
+- **`bench.mjs` should record the machine, not just the frame.** A tool that writes
+  a millisecond into a contract without GPU utilisation beside it produces figures
+  that cannot be compared with each other across a night, which is what happened.
+  `_regress.mjs` samples the frame's luminance for the white-desert trap and the
+  card's utilisation for this; the second is the cheaper of the two checks. Note
+  that `utilization.gpu` is the wrong field on its own — it reports the fraction of
+  sampled time in which *any* kernel was resident, so an animated wallpaper drawing
+  at 60 fps reads 65% while consuming almost nothing. This machine's resting floor
+  is gpu 63–66% at memory 12%; another agent's capture is gpu 88–100% at memory
+  16–19%; the game the user later started is gpu 100% at memory 34%. The memory
+  controller is what separates them.
+- **An unexplained six milliseconds recorded as unexplained is worth more than a
+  plausible attribution**, because the next person will actually look. Both of
+  tonight's plausible attributions cost hours and neither survived contact with an
+  instrument built to distinguish.
 ### 11.2 A walking player pays a cascade redraw that no bench ever measured
 
 *(Absolute figures in this section are contended — see §11.1. The `held` against

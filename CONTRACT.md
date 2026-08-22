@@ -4134,14 +4134,16 @@ The frame is **30.5 ms → 15.7–16.9 ms at 2560×1440 on the top tier** and th
 ladder reaches 120 fps at rung 4 and 182 fps at its floor. Full account in `PERF.md` §9;
 what belongs here is the method and the two instrument failures, because both recur.
 
-*(Both figures in that sentence were measured with the camera held, on a machine that was much
-quieter than the one every later number in this file was taken on, and neither is what a walking
-player gets. On a contended machine the same cell is 22.6 ms held and 24.9 moving, and no rung
-reaches 120 fps moving. The frame did not grow — a fourteen-commit bisect puts it flat to within
-0.83 ms — so the difference between 16.8 and 22.6 is the GPU, not the scene. See "The ladder as a
-player walks it" below, which adds two more instrument failures to the two this section names, both
-of the same kind: an instrument that could not be pointed at the thing being measured, and a
-measurement recorded without the conditions it was taken under.)*
+*(Both figures in that sentence were measured with the camera held, and neither is what a walking
+player gets. On a machine gated quiet the same cell is **23.06 ms held and 26.81 moving**, and no
+rung reaches 120 fps moving. The frame did not grow — a fourteen-commit bisect puts it flat to
+within 0.83 ms, endpoints interleaved and 0.18 apart — so the difference between 16.8 and 23.06 is
+not the scene. **It is also not the machine**, which was the next theory and was tested: the quiet
+figures above are the same as the contended ones. It is unexplained, and item 1 of "The ladder as a
+player walks it" records which confounds have already been eliminated. That section adds two more
+instrument failures to the two this section names, both of the same kind: an instrument that could
+not be pointed at the thing being measured, and a measurement recorded without the conditions it
+was taken under.)*
 
 **An object ablation cannot price a shader.** Every ablation `bench.mjs` had hides a *mesh*,
 which is the wrong instrument twice over: hiding the terrain does not price the terrain
@@ -4307,10 +4309,15 @@ do not touch the same pixels — which is the cleanest possible answer to "is th
 | `sun_gap` | 16.82 | 12.15 | 4.67 |
 
 25% of the top-tier frame, the largest single identified item in it. Stated as a ladder cost
-instead: **the penumbra moves the 120 fps rung by one step** — 8.33 ms is reached at rung 4
+instead: **the penumbra moves the 8.33 ms rung by one step** — that budget is reached at rung 4
 (low / 0.78) with it and rung 3 (medium / 0.78) without, at the same 1997×1123. So a
 terminator that rises over 27 px instead of 3 costs one quality tier at the target framerate
 and no resolution. Recorded as a trade, not a recommendation: it is a picture decision.
+
+*(Said "the 120 fps rung" until the delivery run. 8.33 ms is reached at rung 4 only with the camera
+held; moving, rung 4 is 15.85 ms and nothing on the ladder reaches the budget. The one-step
+conclusion is unaffected — it is a difference between two columns of the same table — but the rung
+does not carry that name.)*
 
 ### Instrument failure the twelfth: a working ablation that printed its own failure warning
 

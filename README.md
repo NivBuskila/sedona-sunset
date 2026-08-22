@@ -57,21 +57,44 @@ There is no crosshair, no HUD and no menu, on purpose.
 
 ## How it will run
 
-On a machine like the one this was built for — an RTX 4060 at 2560×1440 — it holds
-**120 frames a second or better**, and that is what it aims for.
+On a computer that isn't doing anything else, the walk runs at about **37 frames a second
+at the full 2560×1440 setting** on an RTX 4060, and the game quietly lowers the resolution
+and detail to hold a **smooth 60** rather than letting the motion stutter.
 
-It gets there by adjusting itself. The scene is expensive to draw at full resolution, so
-the game renders into a somewhat smaller buffer and lets the screen scale it back up, and
-it chooses how much smaller by watching how long frames are actually taking. Left alone it
-settles on an upscaled buffer somewhere around 1741×979 to 1997×1123, which on a 1440p
-monitor is hard to tell from native and is roughly twice as fast.
+That is the honest number and it is a measured one, not a target. The scene is expensive
+to draw at full resolution, so the game renders into a somewhat smaller buffer and lets
+the screen scale it back up, choosing how much smaller by watching how long frames are
+actually taking. Left alone it settles around 1997×1123, which on a 1440p monitor is hard
+to tell from native and is nearly twice as fast.
 
 **Give it a couple of seconds to find its level.** It starts at full 2560×1440 and steps
 down to the setting it settles on within about two and a half seconds of the first frame.
 You will probably not notice it happen.
 
-If you would rather have the sharpest possible image and do not mind about 59 fps, load
-`http://localhost:8099/#high`, which pins it at full 1440p and turns the automatic
+The whole range it can choose from, measured on an RTX 4060 at 2560×1440 with nothing else
+running on the machine. *Walking* is the column that matters, because walking is what you
+do — standing still is cheaper, since the sun's shadow maps only have to be redrawn when
+you move:
+
+| what it renders | standing still | **walking** |
+|---|---|---|
+| 2560×1440 — full, no scaling | 43 fps | **37 fps** |
+| 2253×1267 | 49 fps | **42 fps** |
+| 2253×1267, fewer atmosphere samples | 56 fps | **48 fps** |
+| 1997×1123 | 62 fps | **52 fps** |
+| 1997×1123, lighter effects | 76 fps | **63 fps** |
+| 1741×979 | 85 fps | **72 fps** |
+| 1741×979, no bloom or depth of field | 99 fps | **74 fps** |
+| 1485×835 | 112 fps | **84 fps** |
+| 1280×720 | 126 fps | **89 fps** |
+
+So it will not give you 120 frames a second while you are walking, at any setting, on this
+card — the bottom of that list is 89. If your monitor runs at 200 Hz you will not saturate
+it, and the sixty you get in the middle of the list is a steady sixty rather than a number
+that collapses when you turn to face the wall.
+
+If you would rather have the sharpest possible image and do not mind the high thirties,
+load `http://localhost:8099/#high`, which pins it at full 1440p and turns the automatic
 adjustment off. The address has to be loaded fresh — typing `#high` onto the end of a page
 that is already open does nothing, because the setting is only read once at startup.
 
