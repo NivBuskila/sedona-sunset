@@ -38,7 +38,11 @@ import { settle } from './settle.mjs';
 
 const DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tag = process.argv[2] || 'w2';
-const W = 1600, H = 900;
+/* Size is an argument because the relative-contrast metric is a per-pixel
+   Laplacian and therefore scales with resolution: a figure taken at 1600x900 is
+   not comparable with one taken at 2560x1440. Ratios *between stations of one
+   run* are, which is how the head-slope reading is compared. */
+const W = +(process.argv[3] || 1600), H = +(process.argv[4] || 900);
 
 /* Forward down the wash every twenty metres, then every six over the last
    forty, which is the stretch the first walkthrough called the worst of it and

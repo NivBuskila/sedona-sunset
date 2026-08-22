@@ -6849,3 +6849,47 @@ against 1.7%. **Rank that column, not RMS, when the sun is grazing.**
   distinguish "gate leaking into the near field" from "gate working as specified
   in the far strip" — on a floor framing, **bands are distances**, and a
   distance-gated change can only be verified per band.
+
+## The third walk: the two worst things are fixed, and the clock moved
+
+Walked end to end at 2560x1440 on the delivery build, 32 stations, plus the
+corridor simulation and a boot probe. Both defects called out on the first walk
+are gone, one measurement moved that nobody was watching, and the ending is now
+the most detailed part of the route rather than the weakest.
+
+**The mid-distance waxiness and the weak head were one defect and it is fixed.**
+The first walk measured relative contrast on the head slopes at 0.16 against
+0.38-0.40 elsewhere — a ratio of 0.41 against the route. The same station now
+reads 0.2525 against a strip mean of 0.409, a ratio of **0.62**. Half the deficit
+closed. Visually the change is not subtle: the combed vertical fibres on the head
+slopes are replaced by discrete lit clasts, and the mid-distance channel floor
+that read as wax now reads as gravel. The stated limit is honest and visible —
+broad tonal sweeps from mesh undulation under a low sun remain on the mid-distance
+floor, and they read as softness even though the grain is now there. That is a
+smaller complaint than the one it replaced, and it is geometry.
+
+**The last forty metres now carries the highest wall detail on the route**: 0.46
+to 0.52 from 292 m to 328 m against 0.31 to 0.39 across the first hundred. The
+route used to fall off a cliff at the end and now rises into it.
+
+Note when comparing these figures: **relative contrast is a per-pixel Laplacian
+and scales with resolution**, so a number taken at 1600x900 cannot be set beside
+one taken at 2560x1440. `tools/_walk2.mjs` now takes width and height as
+arguments for that reason. What survives the resolution change is the *ratio
+between stations of one run*, which is what both readings above are.
+
+**Boot has grown from 41.3s to 49.0s and nobody noticed.** An hour after the
+loading message was set to "about forty seconds" on six measurements of 39-44s,
+the same probe reads 49.0s: `Raising the canyon walls` 14.0s (was 11.4) and
+`Scattering the stones` 12.5s, exactly the two areas that were being worked. The
+message and README now say **under a minute**, because a point estimate the build
+can outgrow between commits is worse than a bound — under-promising leaves the
+reader watching an apparently-stuck screen for the overrun, which is the failure
+the loading screen exists to prevent. **A bound holds while a point estimate
+rots.** This is the same lesson as the 11-degree comment: a figure in prose cannot
+notice the thing it describes moving. The difference is that the sun bound could
+be handed to the gate and this one cannot cheaply, so it was made vague instead.
+
+Corridor unchanged after terrain moved under it again: 4.2 minutes of wandering
+walk, 0 frames touched laterally, closest approach 4.05 m of clearance, and the
+head of the wash still the only place it is felt.

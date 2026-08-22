@@ -130,13 +130,15 @@ const loading = (() => {
   };
 })();
 
-/* "About forty seconds" and not "about a minute", because the README says forty
-   and the two disagreeing is the sort of thing that gets noticed and then
-   arbitrated by guesswork. Forty is the measured one: six page loads today, all
-   of them after the texture phase was split into seven, ran 39 to 44 seconds
-   from navigation to `__game`. If this figure is ever revised, revise it from a
-   measurement and change both places. */
-await loading.note('Sedona Sunset — drawing the desert. About forty seconds.');
+/* "Under a minute" rather than a figure, and that is a deliberate retreat from
+   precision. This said "about forty seconds" for an hour on good evidence — six
+   loads ran 39 to 44s. Two hours of terrain and rock work later the same probe
+   reads 49.0s, the growth all in `Cutting the wash` and `Scattering the stones`.
+   A promise the build can outgrow between commits is worse than a vaguer one,
+   because under-promising leaves the reader watching an apparently-stuck screen
+   for the overrun. A bound holds while a point estimate rots. Revise from a
+   measurement (`tools/_bootpaint.mjs`) and change the README with it. */
+await loading.note('Sedona Sunset — drawing the desert. Under a minute.');
 
 /* ── renderer ──────────────────────────────────────────────────────────── */
 

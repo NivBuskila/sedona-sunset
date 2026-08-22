@@ -18,13 +18,14 @@ pnpm dev
 
 Then open **http://localhost:8099/** in Chrome or Edge.
 
-**The first load takes about forty seconds.** It tells you so, and it tells you what it is
+**The first load takes under a minute** — around fifty seconds on a desktop GPU. It tells you
+so as it starts, and it tells you what it is
 doing: a dark screen comes up immediately and names each stage as it goes — the wash floor,
 the sandstone, cutting the wash, raising the canyon walls, scattering the stones, the
 juniper, the sky. Everything you are about to look at is being drawn pixel by pixel in code
 before the first frame can be shown, and that is what the wait buys.
 
-A couple of those stages take ten seconds on their own, so the message will sit still for a
+Two of those stages take twelve to fourteen seconds on their own, so the message will sit still for a
 while and the tab will ignore a click while it does. That is the work happening, not a
 hang. Reloading starts the wait over from the beginning, so it is worth sitting through.
 
