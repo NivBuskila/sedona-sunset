@@ -16,7 +16,8 @@ with a breached apron, a pour-off notch and distant land visible *through* it, w
 ago it read as "the trail ran out" — and it reads without the player thinking to look up,
 because the view eases up twelve degrees over the last forty-five metres out of a budget it
 cannot exceed. **The last forty metres now carries the highest wall detail on the route**
-rather than the lowest, which is a reversal from two days ago. Colour is measured against real
+— 0.46–0.52 against 0.31–0.39 across the first hundred — where the previous walk measured it
+as the softest thing on the route. Colour is measured against real
 photographs rather than asserted, and lit rock sits inside its bands on hue, value and B/G. The
 `shade_far` station carries the only paired window in the project — the same dirt in sun and in
 fill — and the 2.4° of cooling it measures is the best colour evidence in the handoff. The sound
