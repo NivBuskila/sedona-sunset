@@ -3171,9 +3171,7 @@ side of it is the difference between plum and brown.
 
 `skylineSin` and `coverAt` put a 45 degree rock skyline at every bearing except a window
 toward the sun. **A wash is open up-canyon as well as down.** `tools/_skydist.mjs` bisects the
-skyline at 24 bearings from four points on the traverse and finds the bearing directly astern
-standing at 12 to 26 degrees at three of them, against 40 to 55 on the flanks; only at 40 m
-in, inside the narrow part, does it close to 50.
+skyline at 24 bearings and finds the bearing directly astern wide open over most of the walk.
 
 That is the worst bearing to get wrong. The away-from-sun hemisphere is what every shaded face
 in this corridor is turned toward, so it is the lobe that lights all the shade — and it was
@@ -3182,36 +3180,91 @@ at B/G 0.462**, leaving the far wall at hue 17 and saturation 0.805. The lobe li
 shadow in the project was arriving at **hue 10**, warmer than the sunlit rock it is supposed to
 contrast with. That is the entire complaint, and it was one missing window.
 
-| canyon probe, illuminant | before | after |
+### It is not a constant, and shipping it as one would have been a cheat
+
+The first fix put a single 20 degree window astern, justified from `_skydist`'s default sweep at
+40/100/160/220 m. That sweep is the mistake: three of those four points are past `sun_gap` at
+120 m and **none of them is a viewpoint**. Re-run at the distances the standard views actually
+sit at, the astern skyline is a strong function of position, because what is behind you is the
+corridor you have already walked and it lengthens as you go:
+
+| walk | 8 | 30 | 46 | 62 | 92 | 120 | 160 | 220 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| astern skyline, deg | 79.9 | 57.3 | 45.7 | 37.4 | 27.3 | 22.0 | 17.0 | 17.8 |
+
+So any single value is wrong nearly everywhere. 20 degrees is right past 120 m and absurd at 8,
+and the **mean over the eight standard viewpoints is 45 — which is what `SKYLINE` already was.**
+Shipping the constant would have bought cool shade by opening a window that geometry says is
+shut at five of the eight views. It measured well for the same reason it was wrong.
+
+It becomes the second axis of aperture instead. A third probe carries the open-astern
+environment and `sky.js` blends toward it by world Z. Nine measured points sit within two
+degrees of `17 + 63·exp(-(d-8)/45)`, and world Z stands in for arc length because the wash is
+straight — x holds inside 9 m over 332 m, so `d = 8 - z` to 1.4%. The mix is taken on sin² of
+the skyline rather than on the angle, because what the two probes differ by is cosine-weighted
+solid angle, which is sin² of its elevation; against the angle it would be six points of mix
+out at the middle of the walk. Passing `SKYLINE` to the shared skyline function reproduces the
+old model exactly rather than approximately, which is what makes the pair a clean ablation.
+
+This also explains why `skyview.mjs` concluded aperture is a function of height alone: it
+sampled 18 through 120 m and saw little change, which is true over that stretch and is the flat
+end of a curve that runs to 332. **Both sweeps were right about where they looked.**
+
+| open-astern probe, illuminant | before | after |
 | --- | --- | --- |
-| away from sun, hue | 10 | **333** |
-| away from sun, B/G | 0.855 | **1.148** |
-| up-facing, B/G | 1.362 | **1.477** |
-| shaded rock, up-facing, saturation | 0.492 | **0.404** |
-| shaded bank at 45°, saturation | 0.692 | **0.505** |
+| away from sun, hue | 10 | **317** |
+| away from sun, B/G | 0.855 | **1.190** |
+| up-facing, B/G | 1.362 | **1.486** |
+| shaded rock, up-facing, saturation | 0.492 | **0.394** |
+| shaded bank at 45°, saturation | 0.692 | **0.483** |
 | shaded bank at 45° | brown | **plum** |
 
-Measured in the render, same build, paired session:
+The mix is 0.00 at `wash_low` and `ground`, 0.04 at the three views at 46 m, 0.37 at `juniper`,
+0.72 at `bend`, 0.86 at `sun_gap`. So `wall_shade` keeps the warm bounce the critic named as one
+of the good things in the set, while dirt far up-canyon cools even when the camera is near —
+which is the population the critique was actually looking at, shaded dirt at 300 m.
 
-| fill-only | before | after |
+In the render, ablated inside one build with `#noastern`:
+
+| fill-only | astern off | astern on |
 | --- | --- | --- |
-| wash floor, hue | 2.6 | **0.0** |
-| wash floor, B/G mean | 0.953 | **1.028** |
-| wash floor, saturation | 0.606 | **0.523** |
-| shaded wall, B/G | 0.824 | **0.857** |
-| shaded wall, saturation | 0.723 | **0.689** |
+| `wash_mid` floor near, B/G | 0.953 | **0.964** |
+| `wash_mid` floor near, saturation | 0.606 | **0.595** |
+| `wash_mid` floor mid, B/G | 0.897 | **0.917** |
+| `bend` sand, B/G | 0.934 | **0.989** |
+| `bend` sand, saturation | 0.644 | **0.586** |
+| `bend` shaded wall, B/G | 0.790 | **0.839** |
 
-Guardrails held: lit rock 0.620 to **0.616** saturation at hue **21.0** unchanged, gate 0.211
-to **0.213**, floor L 0.370 to 0.369.
+### The first reading of that was false twice over, and both traps are cheap
 
-That 0.616 sits a thousandth off the bottom of the band, which is too close to an edge to leave
-attributed to whichever change happened to be in flight. `tools/_litguard.mjs` settles it on the
-CPU without a capture, because the doorway is reachable through `computeAtmosphere`'s override
-argument — setting the astern window to the flank skyline reproduces the old single-doorway model
-exactly rather than approximately. On a face square to the sun the fill is **4.5% of the light**,
-and the doorway moves that face's saturation by **+0.0002** with its hue unchanged to a tenth.
-**The 0.004 of drift is not the fill's**, and it should be read against the six commits that
-landed between the two captures rather than against this one.
+It said the floor went to hue 254 at B/G 1.31 with its fill level nearly doubled. That would
+have been a large win. It was two separate errors, either of which alone was enough.
+
+It **compared two sessions two and a half hours apart.** The fill-only frames sit at V 0.11 to
+0.24, far enough down the toe that any tone work landing in between moves the hue by more than
+this term does — and System 7 shipped a highlight shoulder and a silhouette gate inside that
+window. A term whose own delta is 1.02x in luminance cannot double a level, and noticing that
+arithmetic is what prompted the check.
+
+And the **capture was corrupt**. Looking at the frame — which is the insurance System 5
+recommended after producing a self-consistent set of wrong numbers the same way — the wash floor
+renders as pale lavender with its ground texture gone and red debug stripes across it, from
+another agent's uncommitted edit to `terrain.js` or `rock.js`. Nothing in the metrics flagged
+it, because the saturation of a lavender floor is a perfectly well-defined number. `#noastern`
+now reproduces the pre-change figures to three decimals, so the pair is an ablation rather than
+a comparison, and every figure above is same-build.
+
+Guardrails, on `sys4t` against `sys4r` from before any of this: lit rock saturation 0.620 to
+**0.619** at hue **21.0** unchanged, gate 0.211 to **0.211**, floor `grad/L` 0.141 and L 0.368
+both unmoved. The positional form is close to free on all three, which the constant was not —
+it cost 0.004 of lit saturation, because it was opening a window at 46 m where the geometry
+has none.
+
+`tools/_litguard.mjs` explains why it can be free, on the CPU and without a capture: on a face
+square to the sun the fill is **4.5% of the light**, and the astern window moves that face's
+saturation by **+0.0002** with its hue unchanged to a tenth. Any lit-rock drift larger than
+that across these captures belongs to something else — and six commits from other systems
+landed between `sys4r` and `sys4s` alone.
 
 ### Two hypotheses measured and declined, so they are not retried
 
@@ -3234,14 +3287,22 @@ optical depth in by itself — stays closed, and nothing here reopens it.
 
 ### What is left, and it is honest rather than fixable before midday
 
-The shaded wall in `wall_shade` is still warm at saturation 0.746, and that is **correct for
-its geometry**: it faces away from the sun across a corridor whose opposite wall is in full sun
-at tens of metres, so warm bounce genuinely dominates its fill, and the critic named that
-wall's warmth as one of the good things in the set. The residual warmth on the flanks is the
-45 degree escarpment, which is measured geometry. The floor is now marginally plum rather than
-violet-grey; closing the rest of that gap means either lowering the flank skyline below what
-`skyview.mjs` measured, or an aperture that varies with position and not only with height,
-which the probe height lerp cannot express.
+The shaded wall in `wall_shade` is still warm, and that is **correct for its geometry**: it sits
+46 m along, where the astern skyline is 45.7 degrees and the mix is 0.04, and it faces away from
+the sun across a corridor whose opposite wall is in full sun at tens of metres. Warm bounce
+genuinely dominates its fill, and the critic named that wall's warmth as one of the good things
+in the set. The residual warmth on the flanks is the 45 degree escarpment, which is measured
+geometry.
+
+**The honest limit is composition, and it is the coordinator's call rather than System 4's.**
+Cool shade is available in this scene, but it is a property of the outer walk: the astern skyline
+falls past 22 degrees only beyond 120 m, and `sun_gap` at 120 m is the furthest view in the set.
+Five of the eight views sit at 46 m or nearer, inside a corridor whose walls fill 45 to 80
+degrees of their sky with sunlit red rock, and warm shade there is what correct light transport
+gives. If the brief's violet shadows are wanted as a headline rather than as distance, the cheap
+way to get them is to **put a viewpoint at 150 to 220 m**, where the mix is 0.95 to 0.99 and the
+fill arrives at hue 317. That is a framing decision and it is not one this system should take
+unilaterally.
 
 **Not claimed:** floor `grad/L` reads 0.141 against 0.089 across this window and is now inside
 its 0.12–0.16 band, but six commits landed between the two captures and `0885589` is explicitly
