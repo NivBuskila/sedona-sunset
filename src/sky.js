@@ -36,7 +36,11 @@ export const SUN_DIR = ATMOS_SUN_DIR;
 /* `decompose` builds the sky / escarpment / ground-bounce probes alongside the three
    aperture probes, which s4AoTint needs to tell a cool illuminant from a warm one.
    Measured at about 5 ms on a 90 to 130 ms startup computation, once. */
-const A = computeAtmosphere({ decompose: true });
+/* Declared here rather than beside the other hash flags below because the atmosphere is
+   solved on this line and the flag has to exist before it. See NO_BAND's comment there. */
+const NO_BAND = /(^|[#&,])noband(\b|$|[&,])/.test(
+  (typeof location !== 'undefined' ? location.hash || '' : '').toLowerCase());
+const A = computeAtmosphere({ decompose: true, groundBand: !NO_BAND });
 
 /* ── scene radiance scale ──────────────────────────────────────────────────
  *
@@ -533,6 +537,12 @@ const NO_ASTERN = /(^|[#&,])noastern(\b|$|[&,])/.test(
   (typeof location !== 'undefined' ? location.hash || '' : '').toLowerCase());
 const HARD_SHADOW = /(^|[#&])hardshadow(\b|$|&)/.test(
   (typeof location !== 'undefined' ? location.hash || '' : '').toLowerCase());
+/* `#noband` collapses the lower hemisphere back to the single self-shadowed radiance it
+   was before the two-zone ground landed, so the pair that measures that term comes out of
+   one tree in one minute. Same reason as #noastern above: the frames this correction is
+   judged against straddle post's local lift and terrain's varnish fix, and a before/after
+   across those measures three edits and can convict any of them. It is read at the top of
+   this file, next to the computeAtmosphere call it has to reach. */
 /* The grazing bias in s4AoTint: how much faster the horizon band closes than the
    zenith as local relief occludes a surface. `#aok=1` is a true ablation, because at
    an exponent of 1 the split degenerates to the uniform scalar it replaces and the

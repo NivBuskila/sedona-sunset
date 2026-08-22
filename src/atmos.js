@@ -742,15 +742,58 @@ export function computeAtmosphere(over = {}) {
      for the chroma. And it barely touches intensity: the fill's luminance on a
      vertical moves 0.0366 to 0.0335, so the shadow-to-sunlit ratio is the sky
      and escarpment terms' business, not this one's. */
+  /* That reasoning is right about solid angle and wrong about irradiance, and the
+     difference is the whole of this term. Irradiance is *cosine-weighted* solid angle,
+     and on a near-vertical facet the cosine weight peaks at the horizon and falls to
+     zero looking straight down - which is the opposite of where the self-shadowed near
+     floor lives. The shadow line of any long occluder sits at a depression equal to the
+     sun's elevation, so the sunlit floor occupies depression 0 to 15 degrees: a thin
+     band, carrying almost no raw solid angle, and carrying the most heavily weighted
+     directions a vertical facet has. Integrating cos^2 over that band against the
+     hemisphere's own pi/4 gives 0.326 - so a third of a vertical facet's downward
+     irradiance comes from beyond the shadow line, times the wash's own measured 0.70
+     sunlit fraction, or 0.228. Against 0.05. The first estimate in the comment above,
+     "roughly a third", was closer than the correction that replaced it.
+     What that means is that neither number was ever the right *shape* of answer, because
+     the correct value depends on the normal: 0.228 for a vertical, near zero for an
+     underside that looks straight down into its own shadow, and undefined for an up
+     normal that sees no ground at all. A single constant applied to the entire lower
+     hemisphere cannot express that and will be wrong for two of the three whatever it is
+     set to - the same failure as the corridor modelled with one doorway.
+     So model the two zones the lower hemisphere actually has and let the SH projection
+     work out the normal dependence, which is what it is for. Below the shadow line the
+     floor is the near, self-shadowed kind at the old 0.05; above it the open wash at its
+     measured 0.70. An underside then keeps the warm dark bounce it had, a vertical picks
+     up the horizon band, and no constant has to serve both. */
   const FLOOR_SUNLIT = over.floorSunlit ?? 0.05;
-  const localGround = groundSpec.length ? [0, 0, 0] : [0, 0, 0];
+  const FLOOR_OPEN = over.floorOpen ?? 0.70;      // fillprobe.mjs --floor, this sun
+  /* The band edge is sharp for a long straight occluder and this wash is neither, so a
+     few degrees of softness. It is not a tuning knob: the band's weight is set by the
+     sun elevation, and smoothing a step at 15 degrees by +-4 moves the integral by well
+     under a percent. It is here so the terminator is not a visible ring on undersides. */
+  const BAND_SOFT = (over.bandSoftDeg ?? 4) * DEG;
+  const GROUND_BAND = over.groundBand !== false;
+  const localGround = [0, 0, 0], openGround = [0, 0, 0];
   {
-    const shaded = new Float64Array(NLAM);
-    for (let k = 0; k < NLAM; k++) {
-      shaded[k] = albedoAt(LAM[k]) * (FLOOR_SUNLIT * SUN_SPEC[k] * sy + irrH[k]) / Math.PI;
-    }
-    specToRGB(shaded, localGround);
+    const mk = (frac, out) => {
+      const s = new Float64Array(NLAM);
+      for (let k = 0; k < NLAM; k++) {
+        s[k] = albedoAt(LAM[k]) * (frac * SUN_SPEC[k] * sy + irrH[k]) / Math.PI;
+      }
+      specToRGB(s, out);
+    };
+    mk(FLOOR_SUNLIT, localGround);
+    mk(GROUND_BAND ? FLOOR_OPEN : FLOOR_SUNLIT, openGround);
   }
+  /* Ground radiance for a downward direction: which side of the shadow line it falls on.
+     dy is the direction's y component, negative below the horizon, so the depression
+     angle is asin(-dy) and the line sits at the sun's own elevation. */
+  const groundAt = (dy, out) => {
+    const dep = Math.asin(Math.min(1, -dy));
+    const t = Math.max(0, Math.min(1, (dep - (SUN_EL - BAND_SOFT)) / (2 * BAND_SOFT)));
+    const w = t * t * (3 - 2 * t);                       // 0 in the lit band, 1 below
+    for (let k = 0; k < 3; k++) out[k] = openGround[k] + (localGround[k] - openGround[k]) * w;
+  };
   /* How much of the sky a surface down in the wash cannot see. The first
      estimate was 0.30 up to fifteen degrees, on the reasoning that this is a
      broad wash and not a slot canyon, and it was far too generous: from the
@@ -949,6 +992,7 @@ export function computeAtmosphere(over = {}) {
   const basis = [0, 0, 0, 0, 0, 0, 0, 0, 0];
   const dir = new THREE.Vector3();
   const d3 = [0, 0, 0], env = [0, 0, 0], envA = [0, 0, 0], wall = [0, 0, 0];
+  const gnd = [0, 0, 0];
   const eH = [0, 0, 0], eVsun = [0, 0, 0], eVanti = [0, 0, 0];
   const eSkyH = [0, 0, 0];
 
@@ -977,9 +1021,13 @@ export function computeAtmosphere(over = {}) {
         /* The environment for one astern skyline. Called twice, and the only
            thing that differs between the two calls is how much of the up-canyon
            bearing is rock rather than sky. */
+        /* One evaluation of the two-zone ground per direction, shared by every probe
+           below, because they all see the same floor. */
+        if (d3[1] < 0) groundAt(d3[1], gnd);
+
         const envFor = (astern, out) => {
           const cov = coverAt(d3, astern);
-          if (d3[1] < 0) { out[0] = localGround[0]; out[1] = localGround[1]; out[2] = localGround[2]; }
+          if (d3[1] < 0) { out[0] = gnd[0]; out[1] = gnd[1]; out[2] = gnd[2]; }
           else if (cov > 0) {
             wallRadiance(d3, wall, astern);
             out[0] = sky0 + (wall[0] - sky0) * cov;
@@ -1000,9 +1048,9 @@ export function computeAtmosphere(over = {}) {
           shAstern.coefficients[k].y += basis[k] * envA[1] * dw;
           shAstern.coefficients[k].z += basis[k] * envA[2] * dw;
         }
-        const op0 = d3[1] < 0 ? localGround[0] : sky0;
-        const op1 = d3[1] < 0 ? localGround[1] : sky1;
-        const op2 = d3[1] < 0 ? localGround[2] : sky2;
+        const op0 = d3[1] < 0 ? gnd[0] : sky0;
+        const op1 = d3[1] < 0 ? gnd[1] : sky1;
+        const op2 = d3[1] < 0 ? gnd[2] : sky2;
         for (let k = 0; k < 9; k++) {
           shOpen.coefficients[k].x += basis[k] * op0 * dw;
           shOpen.coefficients[k].y += basis[k] * op1 * dw;
@@ -1013,7 +1061,7 @@ export function computeAtmosphere(over = {}) {
           let sk0 = 0, sk1 = 0, sk2 = 0, wl0 = 0, wl1 = 0, wl2 = 0;
           let gr0 = 0, gr1 = 0, gr2 = 0;
           if (d3[1] < 0) {
-            gr0 = localGround[0]; gr1 = localGround[1]; gr2 = localGround[2];
+            gr0 = gnd[0]; gr1 = gnd[1]; gr2 = gnd[2];
           } else {
             const cov = coverAt(d3, SKYLINE);
             if (cov > 0) {
