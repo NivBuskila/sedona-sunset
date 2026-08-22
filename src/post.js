@@ -630,6 +630,11 @@ export function createPost({ renderer, camera, atmo, sun }) {
      the claim that the ceiling is an identity on the present frame gets tested
      rather than asserted: capture with and without and diff the files. */
   P.flareKnee = num('fknee', P.flareKnee);
+  /* Ghost gain on its own, separate from `#flare` which scales the veil and the
+     streak with it. Those two are load-bearing for the backlit framings and were
+     praised as they stand, so tuning the discs against them requires moving one
+     without the others. `#ghost=0` is the control arm for attributing anything. */
+  P.ghostGain = num('ghost', P.ghostGain);
   /* The shadow toe is a trade between the shadow-to-sunlit gate and structure on
      the lit side, and it has to be re-tuned whenever the fill moves, so both
      ends of it are sweepable from the URL without a rebuild. `#toe=0` restores
