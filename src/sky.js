@@ -720,7 +720,7 @@ export function patchShadowChunk() {
     float search = 0.5 * maxPen, sum = 0.0, cnt = 0.0;
     for ( int i = 0; i < 12; i ++ ) {
       vec2 o = sunSpiral( i, 12, rot ) * search * uvPerM;
-      float d = unpackRGBAToDepth( texture2D( map, p.xy + o ) );
+      float d = unpackRGBAToDepth( texture2DLodEXT( map, p.xy + o, 0.0 ) );
       if ( d < p.z + bias + sunSlope( g, o, mapSize ) ) { sum += d; cnt += 1.0; }
     }
     if ( cnt < 0.5 ) return 1.0;
@@ -752,10 +752,30 @@ export function patchShadowChunk() {
       float r = 0.5 * pen;
       int n = int( clamp( r / texelM * 1.2, 8.0, 28.0 ) );
       float s = 0.0;
+      /* texture2DLodEXT, not texture2D, and it is the reason X3595 was fired
+         thirteen times: "gradient instruction used in a loop with varying
+         iteration; partial derivatives may have undefined value". This loop's
+         trip count is per-pixel - n comes off the penumbra width and the break
+         makes the iteration count vary within a quad - while texture2D asks for
+         derivatives so it can pick a mip. **There is no mip to pick.** three
+         allocates the shadow map with minFilter and magFilter NearestFilter for
+         every type but VSM (WebGLShadowMap.js:152) and WebGLRenderTarget leaves
+         generateMipmaps off, so level zero is the only level there is: the
+         derivative was computed, found undefined, and discarded. Asking for level
+         zero explicitly samples the identical texel and skips the computation,
+         which is why the frame hash is unchanged either side of this edit.
+         The define is three's own - WebGLProgram.js:881 maps texture2DLodEXT to
+         textureLod - so this is not an extension this project is reaching for;
+         terrain.js already leans on the sibling texture2DGradEXT.
+         Worth carrying the performance agent's caveat: this is a derivative whose
+         value is *discarded*, not one whose value is unbounded, so it is not the
+         class of bug that produced the grazing lattice. Nothing was rendering
+         wrong. It was paying for a derivative on every tap of every shadowed
+         pixel and throwing it away. */
       for ( int i = 0; i < 28; i ++ ) {
         if ( i >= n ) break;
         vec2 o = sunSpiral( i, n, rot ) * r * uvPerM;
-        float d = unpackRGBAToDepth( texture2D( map, p.xy + o ) );
+        float d = unpackRGBAToDepth( texture2DLodEXT( map, p.xy + o, 0.0 ) );
         s += step( p.z + bias + sunSlope( g, o, mapSize ), d );
       }
       sWide = mix( 1.0, s / float( n ), intensity );
