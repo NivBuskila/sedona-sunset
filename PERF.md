@@ -647,9 +647,18 @@ whole frame, so a small movement in any window may be theirs rather than mine.
 
 ## 9. The frame was 160 shadow comparisons per ground pixel
 
+> **Frame-rate figures in §9 and §10 are superseded.** They are held-camera readings, and the
+> 16.80/15.7 ms family of numbers is not reproduced by a second instrument on the same commit
+> — see §11.1, which records that gap as **unexplained** after both the code-regression and the
+> machine-contention explanations were tested and failed. The delivery figures are **37 fps
+> walking at native 2560×1440**, 60 at the governor's 1997×1123, and the ladder floor at 89;
+> the one table to quote is "The delivery table" in `CONTRACT.md`. The *attributions* in §9 and
+> §10 — what fraction of the frame each term is — are within-session comparisons and are
+> unaffected.
+
 Written after the second pass, with the GPU numbers §6 asked for. The short
-version: the frame went **30.5 ms to 15.7 ms at 2560×1440 on the top tier**, the
-governor's ladder now reaches 120 fps at rung 4 and 188 fps at its floor, and
+version: the frame went **30.5 ms to 15.7 ms at 2560×1440 on the top tier**, ~~the
+governor's ladder now reaches 120 fps at rung 4 and 188 fps at its floor~~, and
 **none of it was where §3 said it would be.** Everything §3 predicted was
 reasoned from a static fetch count, and the static fetch count was measuring the
 wrong thing by a factor of ten.
@@ -984,11 +993,15 @@ three's fixed kernel at shader-build time.
 | `sun_gap` | 16.82 | 12.15 | 4.67 |
 
 25% of the top-tier frame, and it is the single largest identified item in it.
-Stated as a ladder cost rather than a millisecond count: **the penumbra moves the
+Stated as a ladder cost rather than a millisecond count: ~~**the penumbra moves the
 120 fps rung by one step.** With it, 8.33 ms is rung 4, low / 0.78 / 1997×1123;
-without it, rung 3, medium / 0.78 at the same resolution. So the price of a
-terminator that rises over 27 px instead of 3 is one quality tier at the target
-framerate, at identical pixel count. That is the trade, and on a frame whose worst
+without it, rung 3, medium / 0.78 at the same resolution.~~ **The ladder step is the
+durable part of that; the rung labels are not — there is no 120 fps rung. No rung on
+this ladder reaches 120 fps with the camera moving** (delivery run: rung 4 is 63 fps
+moving, the floor is 89). Read it as: the penumbra costs **one rung**, wherever the
+governor happens to be sitting. So the price of a
+terminator that rises over 27 px instead of 3 is one quality tier at the settling
+point, at identical pixel count. That is the trade, and on a frame whose worst
 critique was a hard-edged parallelogram pasted on rock it looks like the right way
 round — but it is a picture decision, not a perf one.
 
@@ -1207,8 +1220,11 @@ Two things follow that hold regardless of which way that test goes:
   instrument built to distinguish.
 ### 11.2 A walking player pays a cascade redraw that no bench ever measured
 
-*(Absolute figures in this section are contended — see §11.1. The `held` against
-`moving` difference is a within-session comparison and is unaffected.)*
+*(~~Absolute figures in this section are contended~~ — **withdrawn; foreign load was measured at
+0.24 ms, not 6. See §11.1.** Absolute figures here are held-camera readings from an instrument
+whose disagreement with `_regress.mjs` is unexplained, which is a different caveat and the one
+that applies. The `held` against `moving` difference is a within-session comparison and is
+unaffected either way, which is why it is the figure this section rests on.)*
 
 The two shadow cascades are redrawn only when the rig moves. `bench.mjs` holds the
 camera still, so it has never once paid for them. Measured at every rung, camera
@@ -1256,8 +1272,9 @@ Measured on `govern.mjs`, cold load, 2560×1440:
 | first rung change | 8.5 s | **1.3 s** |
 | settled | 17.0 s | **2.5 s** |
 
-The playthrough saw forty seconds of it, which is this bug on a machine that was
-also contended. The governor now keeps its own clock in wall milliseconds and the
+The playthrough saw forty seconds of it, which is this bug ~~on a machine that was
+also contended~~ — the contention half of that is withdrawn (§11.1: foreign load
+measured 0.24 ms), so the units bug accounts for it on its own. The governor now keeps its own clock in wall milliseconds and the
 loop's `dt` is used only for what `dt` is for. Note what this makes unnecessary:
 an optimistic start. The reason to start low and climb is to avoid a long
 sluggish opening, and the opening is now two and a half seconds — so starting low
