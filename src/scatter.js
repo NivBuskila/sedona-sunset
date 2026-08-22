@@ -857,6 +857,50 @@ export function buildScatter(terrain, tex) {
         vec3 gWc = normalize(nWc + tT * g2.x + tB * g2.y);
         normal = normalize(normal + (viewMatrix * vec4(gWc - nWc, 0.0)).xyz);
 
+        /* ---- the layer between grain and facet, which was missing entirely ---
+         * The grain tap above is footprint-locked to about one texel per pixel,
+         * so it is always a millimetre or two whatever the distance. That is the
+         * right scale for texture and the wrong one for shape: the eye groups a
+         * surface into faces by normal direction over a patch, and noise finer
+         * than the patch averages out inside it. Grain cannot change a face.
+         *
+         * Above the grain there was nothing until the hull's own facets, and a
+         * clast is 0.14 to 0.38 m across. The centimetre band in between - spall
+         * scars, conchoidal steps, the relief of the bedding a fragment split
+         * along - was simply absent, and that absence is what let a cobble
+         * present one uniform lid.
+         *
+         * The size of the requirement is set by a measurement rather than by
+         * taste. Facet statistics merged planes at a dot of 0.9995, about 1.8
+         * degrees, which is a geometric test; under one dominant sun the eye
+         * merges anything inside roughly ten. Measured at ten degrees over the
+         * stones that cover screen area, the largest single perceived face was
+         * 57% of a cobble's visible cap. A field carrying an RMS tangent slope
+         * of 0.24 at this scale takes that to 25%, which is what the geometry
+         * route bought before it was abandoned for costing 15% of clast
+         * coverage. This costs no vertex, no extent and no census figure.
+         *
+         * 0.24 is also comfortably clear of the binary-field trap at 0.8 RMS:
+         * the share of surface driven past the terminator at a 15 degree sun
+         * goes 15.8% to 20.5%, a modulation rather than a switch. Amplitude is
+         * not structure, and the way to stay on the right side of that is to
+         * ask for the least slope that moves the perceptual number.
+         *
+         * Two properties of the UV are load-bearing and neither is decoration.
+         * The scale is fixed in world space rather than footprint-locked,
+         * because this is meant to be relief on a stone and relief does not
+         * change size when you walk towards it. And it is 0.625 rather than a
+         * round number for two reasons at once: 0.625 * 256 is an integer, so
+         * the layer stays seamless across the 256 m wrap the position is folded
+         * into, and 0.625 is not a power of two, so it can never coincide with
+         * the grain tap's scale, which is always exp2 of an integer. Two taps of
+         * one map at power-of-two-related scales is the coincidence lattice this
+         * project has already been bitten by. */
+        vec2 mUVc = gUVc * 0.625 + vec2(11.9, 3.1);
+        vec2 m2 = (texture2D(uGrit, mUVc).gb - 0.5) * (1.86 * (1.0 - vFarN));
+        vec3 mWc = normalize(nWc + tT * m2.x + tB * m2.y);
+        normal = normalize(normal + (viewMatrix * vec4(mWc - nWc, 0.0)).xyz);
+
         /* ---- dust, on the sky-facing facets only ----
          * The last thing that separates a big clast from the bed it lies in, and
          * the one that is a mechanism rather than a colour choice. A slab that
