@@ -2718,8 +2718,19 @@ export function makeRockMaterial(tex, detail = 1.0) {
       vec3 aoC1 =  2.0404 * aoA - 0.3324;
       vec3 aoC2 = -4.7951 * aoA + 0.6417;
       vec3 aoC3 =  2.7552 * aoA + 0.6903;
+      /* And the second half of the same correction, which the note above named:
+         "if blue is still short after it, the remaining lever is the sky-visibility
+         floor in tAO rather than the bounce". It was short - measured 0.638
+         saturation on shaded rock against 0.635 predicted, so the illuminant mix and
+         not the encoder decides this - and the lever is that one scalar is scaling
+         three illuminants of very different colour and very different visibility.
+         s4AoTint returns the per-channel correction; the physics, the measurements
+         and the #aok= ablation are all in src/sky.js beside it. It is vec3(1) at
+         tAO = 1 and it preserves luminance, so neither the 0.618 nor the shadow gate
+         can move. Same expression as terrain.js's matching line - change both. */
       reflectedLight.indirectDiffuse *=
-        clamp(tAO * (aoC1 * tAO * tAO + aoC2 * tAO + aoC3), vec3(tAO), vec3(1.0));
+        clamp(tAO * (aoC1 * tAO * tAO + aoC2 * tAO + aoC3), vec3(tAO), vec3(1.0))
+        * s4AoTint(tNrmW, tAO);
       /* The additive Rayleigh shadow airlight that used to sit here is gone;
          see the long note at the same
          point in terrain.js. Short version: it was sized against a fill with no

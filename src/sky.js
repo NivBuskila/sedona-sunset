@@ -33,7 +33,10 @@ export const SUN_AZ = ATMOS_SUN_AZ;
 export const SUN_EL = ATMOS_SUN_EL;
 export const SUN_DIR = ATMOS_SUN_DIR;
 
-const A = computeAtmosphere();
+/* `decompose` builds the sky / escarpment / ground-bounce probes alongside the three
+   aperture probes, which s4AoTint needs to tell a cool illuminant from a warm one.
+   Measured at about 5 ms on a 90 to 130 ms startup computation, once. */
+const A = computeAtmosphere({ decompose: true });
 
 /* ── scene radiance scale ──────────────────────────────────────────────────
  *
@@ -530,6 +533,24 @@ const NO_ASTERN = /(^|[#&,])noastern(\b|$|[&,])/.test(
   (typeof location !== 'undefined' ? location.hash || '' : '').toLowerCase());
 const HARD_SHADOW = /(^|[#&])hardshadow(\b|$|&)/.test(
   (typeof location !== 'undefined' ? location.hash || '' : '').toLowerCase());
+/* The grazing bias in s4AoTint: how much faster the horizon band closes than the
+   zenith as local relief occludes a surface. `#aok=1` is a true ablation, because at
+   an exponent of 1 the split degenerates to the uniform scalar it replaces and the
+   returned gain is vec3(1) at every depth. */
+const AO_K = (() => {
+  const m = /(^|[#&])aok=([0-9.]+)/.exec(
+    (typeof location !== 'undefined' ? location.hash || '' : '').toLowerCase());
+  /* 2 ships. #aok=1 is an exact algebraic identity - the solve gives vWall = vSky = ao
+     and the gain is vec3(1) at every depth - which makes it a true ablation and is how
+     the exchange rate below was measured. That control is worth the paragraph: running
+     it showed lit rock at 0.617 with the term provably inert, against 0.621 in a
+     capture ninety minutes earlier, so 0.004 of what looked like this term's cost was
+     an in-flight textures.js drift and the real price of aok=2 is 0.003 of lit
+     saturation for 0.018 of shaded. Without the identity capture that would have been
+     filed as a bad trade and abandoned. */
+  const v = m ? Number(m[2]) : 2.0;
+  return Number.isFinite(v) && v >= 1 && v <= 6 ? v : 2.0;
+})();
 
 let patched = false;
 export function patchShadowChunk() {
@@ -889,6 +910,27 @@ function installProbeHeightLerp(A) {
     return `vec3(${((o.x - s.x) * f).toFixed(7)},${((o.y - s.y) * f).toFixed(7)},` +
       `${((o.z - s.z) * f).toFixed(7)})`;
   };
+  /* Absolute rather than a difference, because s4AoTint needs the two illuminants'
+     own magnitudes and not their separation from anything. */
+  const abso = (sh) => (k) => {
+    const c = sh.coefficients[k], f = SCALE * K[k];
+    return `vec3(${(c.x * f).toFixed(7)},${(c.y * f).toFixed(7)},${(c.z * f).toFixed(7)})`;
+  };
+  const sky9 = abso(A.shSky);
+  const bnc = (() => {
+    /* Escarpment and ground bounce together: both are red rock lit mostly by the
+       sun, both sit near or below the horizon, and nothing downstream needs them
+       apart. One probe instead of two halves the evaluation. */
+    const s = { coefficients: A.shWall.coefficients.map((w, k) => ({
+      x: w.x + A.shGround.coefficients[k].x,
+      y: w.y + A.shGround.coefficients[k].y,
+      z: w.z + A.shGround.coefficients[k].z })) };
+    return abso(s);
+  })();
+  const SH9 = (f) => `${f(0)} + ${f(1)} * y + ${f(2)} * z + ${f(3)} * x` +
+    ` + ${f(4)} * ( x * y ) + ${f(5)} * ( y * z )` +
+    ` + ${f(6)} * ( 0.743125 * z * z - 0.247708 )` +
+    ` + ${f(7)} * ( x * z ) + ${f(8)} * ( x * x - y * y )`;
   /* Fitted in tools/probefit.mjs against the raycast table. The two ramps exist
      because the thing that differs between normals is not the level but the
      rate: an up-facing surface is already half open at the floor and saturates
@@ -930,6 +972,64 @@ function installProbeHeightLerp(A) {
     float s = sin( el );
     return clamp( ( 0.5 - s * s ) * 2.412545, 0.0, 1.0 );
   }
+  /* ---- occlusion is one number and it scales three illuminants ----
+     The fill on a shaded surface here is 48% sky, 25% escarpment and 27% ground
+     bounce by luminance on a lateral face (tools/_probesplit.mjs, exact
+     decomposition). Reflected off the rock albedo those are hue -23.9 at 0.252
+     saturation, hue 8.6 at 0.920, and hue 10.8 at 0.728. **The sky is already the
+     largest of the three by luminance and still loses the chroma fight**, because
+     the two warm terms are nearly three times as saturated as it is, and the mix
+     lands at hue 5.9 and 0.635 - which is the 0.638 the render measures, so this
+     is where shade's colour is decided and not in the encoder.
+
+     Downstream, rock.js and terrain.js multiply the whole sum by one occlusion
+     scalar. That preserves the ratio of the three at every depth, so an occluded
+     crevice gets less light of exactly the same colour. Real relief does not work
+     that way: **a pit's own rim cuts the grazing directions long before it cuts the
+     zenith**, and the two warm terms live at and below the horizon while the sky
+     lives overhead. So one scalar systematically over-occludes the cool illuminant
+     and under-occludes the warm one, and deep shade comes out warmer than it is.
+
+     This returns the per-channel correction for that, built to be unable to cost
+     anything already earned. **It is exactly vec3(1) at ao = 1**, so no fully
+     visible pixel moves and lit rock's 0.618 cannot drift. And it **preserves
+     luminance**: vSky is solved for whatever restores the luminance uniform ao
+     would have delivered, so the shadow gate, which is a luminance ratio, cannot
+     move either. What is left is chroma alone.
+
+     The one modelled quantity is the grazing bias, the rate at which the horizon
+     band closes relative to the zenith, here ao^2. A power is the right shape - at
+     ao = 1 nothing is occluded and the bias must vanish - but the exponent is a
+     model and not a measurement, so #aok= sweeps it and 1.0 reproduces today's
+     behaviour exactly for an ablation.
+
+     Two honest limits. The gain is computed from the base probe while the
+     irradiance it multiplies also carries the height and astern lerps, so above
+     the rim and far up-canyon it is approximate - both of those open the
+     escarpment away anyway, which is the direction that makes the correction
+     smaller, so the error is toward doing nothing. And when the luminance solve
+     wants vSky above 1 it is capped and vWall re-solved instead, which keeps the
+     luminance exact rather than letting the term invent sky that is not there. */
+  vec3 s4SkyIrr( vec3 n ) {
+    float x = n.x, y = n.y, z = n.z;
+    return ${SH9(sky9)};
+  }
+  vec3 s4BounceIrr( vec3 n ) {
+    float x = n.x, y = n.y, z = n.z;
+    return ${SH9(bnc)};
+  }
+  vec3 s4AoTint( vec3 n, float ao ) {
+    vec3 Es = max( s4SkyIrr( n ), vec3( 0.0 ) );
+    vec3 Eb = max( s4BounceIrr( n ), vec3( 0.0 ) );
+    float ls = dot( Es, vec3( 0.2126, 0.7152, 0.0722 ) );
+    float lb = dot( Eb, vec3( 0.2126, 0.7152, 0.0722 ) );
+    float lt = ao * ( ls + lb );
+    float vW = pow( ao, ${AO_K.toFixed(3)} );
+    float vS = ( lt - vW * lb ) / max( ls, 1e-6 );
+    if ( vS > 1.0 ) { vS = 1.0; vW = ( lt - ls ) / max( lb, 1e-6 ); }
+    vS = clamp( vS, 0.0, 1.0 ); vW = clamp( vW, 0.0, 1.0 );
+    return ( vS * Es + vW * Eb ) / max( ao * ( Es + Eb ), vec3( 1e-6 ) );
+  }
   float s4ProbeOpen( float wy, float ny ) {
     /* The free-exponent fit wanted 1.46 and 1.12; pinning them to 1.5 and 1.125
        gives the same residual to three decimals (0.045 and 0.029), so the two
@@ -940,6 +1040,11 @@ function installProbeHeightLerp(A) {
     float tu = b * sqrt( sqrt( sqrt( b ) ) );
     return mix( tl, tu, clamp( ny, 0.0, 1.0 ) );
   }
+#else
+  /* So a caller in another file does not have to know which materials got probes.
+     Any material compiled without them has no fill for this to correct, and a
+     gain of one is the honest answer rather than a compile error. */
+  vec3 s4AoTint( vec3 n, float ao ) { return vec3( 1.0 ); }
 #endif
 `;
   /* Rebuild from the pristine chunks every time rather than appending to

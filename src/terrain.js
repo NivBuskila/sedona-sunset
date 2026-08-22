@@ -2762,8 +2762,18 @@ export function makeTerrainMaterial(tex) {
       vec3 aoC1 =  2.0404 * aoA - 0.3324;
       vec3 aoC2 = -4.7951 * aoA + 0.6417;
       vec3 aoC3 =  2.7552 * aoA + 0.6903;
+      /* And the second half of the same correction. The note above is right that
+         tAO answers "how much of the sky can this point see" - the defect is that it
+         is then applied to the escarpment bounce and the ground bounce as well, which
+         do not live in the same part of the hemisphere as the sky and are not
+         occluded by the same amount by the same relief. s4AoTint returns the
+         per-channel correction; the physics, the measurements and the #aok= ablation
+         are in src/sky.js beside it. It is vec3(1) at tAO = 1 and it preserves
+         luminance, so neither open sunlit ground nor the shadow gate can move. Same
+         expression as rock.js's matching line - change both. */
       reflectedLight.indirectDiffuse *=
-        clamp(tAO * (aoC1 * tAO * tAO + aoC2 * tAO + aoC3), vec3(tAO), vec3(1.0));
+        clamp(tAO * (aoC1 * tAO * tAO + aoC2 * tAO + aoC3), vec3(tAO), vec3(1.0))
+        * s4AoTint(tNrmW, tAO);
 
       /* ---- there used to be an additive shadow airlight here; System 4 ----
          System 1 added it, and its reasoning was sound at the time: measured on
