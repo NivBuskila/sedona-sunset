@@ -7809,3 +7809,112 @@ because coherence *across* stones is what makes a weave read as manufactured, an
 it costs no density on any one stone. Note this test does not bear on it: the
 measurement is on a single instance, so it says nothing about inter-instance
 coherence either way. That needs its own framing and its own test.
+
+---
+
+## far_320 striations: diagnosed from source and geometry, two defects, no render
+
+The grit normal exposed a defect that was always in the mapping, as System 7
+suspected. It is **two** defects, both in the reprojection I added, and both are
+measurable offline. `tools/_dipaniso.mjs` measures them on the real height field.
+
+### 1. The reprojection gate straddles the crossover, and engages on the wrong side
+
+A planar projection on a tilted surface is undistorted along strike and
+stretched along **dip** by one over the cosine of the angle between surface and
+projection plane. For a slope at theta:
+
+- XZ projection (the default): stretch `1/cos(theta)`
+- the vertical pair: at best `1/sin(theta)`
+
+**These cross at exactly 45 degrees.** Below it the XZ projection is the *less*
+stretched one. But the gate is
+
+```glsl
+float steep = smoothstep(0.14, 0.40, 1.0 - gN.y);   // 30.7 deg to 53.1 deg
+```
+
+so it begins at 31 degrees and is already at 0.36 average weight in the 38-45
+band - blending **toward the more stretched projection, along the dip line**,
+which is the direction the striations run.
+
+Measured over far_320's headwall:
+
+| slope | n | mean `steep` | XZ stretch | vertical | delivered | |
+|---|---|---|---|---|---|---|
+| 31-38 | 779 | 0.07 | 1.22 | 2.67 | **1.30** | harmful |
+| 38-45 | 957 | 0.36 | 1.33 | 2.26 | **1.66** | harmful |
+| 45-53 | 459 | 0.78 | 1.48 | 2.19 | **2.00** | harmful |
+| 53-90 | 154 | 1.00 | 1.84 | 2.00 | **2.00** | harmful |
+
+**The reprojection increases the stretch on every sloped band it touches.** At
+38-45 degrees it delivers 1.66 where doing nothing would deliver 1.33.
+
+It is harmful even above 45, and that is a second-order bug worth naming: `pw =
+ax/(ax+az)` blends the two vertical projections **linearly**, so a slope facing
+diagonally gets the average of two bad projections rather than the better one.
+`triW` two lines above already uses `pow(abs(gN), 4.0)` for exactly this reason
+and the grit branch does not use it.
+
+**This predicts the reported severity ordering before being told it:** 36.0% of
+far_320's sloped samples are in the harmful regime against **23.7%** of
+far_270's, and far_270 is reported mild while far_320 bites.
+
+### 2. The tangent frame does not know which projection supplied the sample
+
+`gr.gb` is a tangent-space normal in the **texture's own u,v**. Under ZY those
+are world Z and Y; under XY, world X and Y. But:
+
+```glsl
+vec3 tsToWorld(vec3 n, vec3 N){
+  vec3 ax = abs(N.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0);
+  ...
+```
+
+builds its frame from world X regardless, so nothing carries the projection's
+axis choice into the interpretation. Measured angle between the axis the texture
+means by u and the axis it is applied along, over the reprojected surface:
+**mean 41.2 degrees, max 90.0.**
+
+The frame is orthonormal, so this is a rotation and not a stretch - which is why
+"stretched tangent frame" was close but not quite it. The consequence is worse
+than a stretch: combined with defect 1 the features are elongated along dip
+*and* the shading gradient is rotated to run along the fibre rather than across
+it. Long, fine, parallel, softly-lit - which is what silk is.
+
+### Why the fix still looked right this morning
+
+It did help, and the record is not wrong: the headwall went from glassy to
+faceted. That gain came from **reading the normal at all**, which was the actual
+absence. The reprojection shipped alongside it as a correction to the UV
+stretch, and it is the part that is wrong - it addressed the right problem in
+the wrong direction and its damage was hidden under the much larger gain.
+
+### The candidate fix, and why it is a fix rather than an attenuation
+
+Two lines, both principled, neither a tuned onset:
+
+1. Gate the grit reprojection at the **crossover** rather than across it -
+   engage above 45 degrees (`slope > 0.293`) instead of from 31.
+2. Sharpen the vertical blend with the `pow(...,4)` weighting `triW` already
+   uses, so a diagonal slope gets the better projection rather than the mean of
+   two worse ones.
+
+Defect 2 needs the frame to be derived from the projection actually used. That
+is a change to `tsToWorld`'s contract and is the larger of the two.
+
+**Slope-gated attenuation remains the fallback and would be a compromise, not a
+fix** - it would trade the striations back for the glassiness on exactly the
+faces the grit normal was added to serve.
+
+### Pre-registered diagnostic, one render, not yet run
+
+Ablate the grit reprojection only - keep XZ on steep ground, changing nothing
+else. **Prediction: the striations reduce markedly on far_320**, because by the
+table above the ablation lowers delivered stretch from 1.66-2.00 back to
+1.33-1.84 on the bands that dominate the frame. If they do not reduce, defect 1
+is not the driver and defect 2 carries it alone, which changes which fix to
+take first.
+
+Held: performance has four measurements that need an idle machine and has not
+reported.
