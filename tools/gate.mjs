@@ -459,6 +459,33 @@ const INJURIES = [
     d.id = '__hurt_hud'; d.textContent = 'fps 137';
     document.body.appendChild(d);
   }, () => { const d = document.getElementById('__hurt_hud'); if (d) d.remove(); }],
+
+  /* Failure #1, reproduced by its cause rather than its symptom: an identifier
+     the shader never declares, injected into a wall material and recompiled.
+     Asked from `lit`, a wall face, so a miss could not hide behind a frame that
+     still looked right.
+     **Last on purpose, and it is the only one that is.** Restoring
+     `onBeforeCompile` and setting `needsUpdate` compiles a good program but the
+     failed one stays in `renderer.info.programs`, so `programs` kept firing on
+     whichever injury ran after it — a false positive in this table, reported
+     against an injury that had nothing to do with shaders. Nothing that follows
+     it can be trusted, so nothing follows it. */
+  ['undeclared uniform', 'lit', 'programs / page errors', () => {
+    const g = window.__game;
+    let t = null;
+    g._scene.traverse((o) => { if (!t && o.isMesh && /^wall/.test(o.name || '')) t = o; });
+    if (!t) return 'no wall mesh found';
+    window.__hurt = { m: t.material, obc: t.material.onBeforeCompile };
+    t.material.onBeforeCompile = (s) => {
+      s.fragmentShader = s.fragmentShader.replace(/void main\(\s*\)\s*\{/,
+        'void main() {\n  float _hurt = uThisWasNeverDeclared;');
+    };
+    t.material.needsUpdate = true;
+    return `${t.name} fragment shader`;
+  }, () => {
+    const h = window.__hurt;
+    h.m.onBeforeCompile = h.obc; h.m.needsUpdate = true;
+  }],
 ];
 
 /* ── run ───────────────────────────────────────────────────────────────────*/
@@ -473,6 +500,9 @@ if (!ref && !BLESS) {
 
 const measured = {};
 let injuries = [];
+/* How many page errors the build itself produced, fixed before any injury is
+   allowed to add one. */
+let errsBefore = Infinity;
 
 await run({ width: W, height: H, waitReady: false, hash: HASH }, async ({ page, errs }) => {
   const t0 = Date.now();
@@ -521,6 +551,11 @@ await run({ width: W, height: H, waitReady: false, hash: HASH }, async ({ page, 
 
   if (INJURE) {
     console.log('\ninjuries — each must be refused by the check named\n');
+    /* Some injuries are meant to log. Everything the page said *before* this
+       point is the build's own, and only that counts toward the verdict —
+       otherwise `--injure` could never report anything but failure and the mode
+       would be useless for the thing it is for. */
+    errsBefore = errs.length;
     for (const [name, viewName, expect, apply, revert] of INJURIES) {
       const v = VIEWS.find((x) => x.name === viewName);
       await page.evaluate(([d, y, p]) => {
@@ -529,7 +564,9 @@ await run({ width: W, height: H, waitReady: false, hash: HASH }, async ({ page, 
       await settle(page, { minFrames: 60, maxMs: 8000 });
       const note = await page.evaluate(apply);
       await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const errsAt = errs.length;
       const m = await page.evaluate(MEASURE);
+      m.newErrs = errs.slice(errsAt);
       await page.evaluate(revert);
       await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
       injuries.push({ name, view: viewName, expect, note, m, base: measured[viewName] });
@@ -537,7 +574,7 @@ await run({ width: W, height: H, waitReady: false, hash: HASH }, async ({ page, 
   }
 
   measured._page = {
-    errs: [...new Set(errs)],
+    errs: [...new Set(errs.slice(0, errsBefore))],
     bootS,
     body: await page.evaluate(() => [...document.body.children].map((e) => e.tagName)),
   };
@@ -654,6 +691,7 @@ if (INJURE) {
     if (m.probe.skyAvg > 1) c('skyOverGround', m.probe.skyAvg / Math.max(1, m.probe.groundAvg), FLOOR.skyOverGround);
     if (m.nan.length) probe.push('nan');
     if (m.unlinked.length) probe.push('programs');
+    if ((m.newErrs || []).length) probe.push('page errors');
     if (!m.rockMeshes) probe.push('rockMeshes');
     if (!(m.body.length === 2 && m.body[0] === 'SCRIPT' && m.body[1] === 'CANVAS')) probe.push('body');
     fails.length = saved[0]; blanks.length = saved[1];

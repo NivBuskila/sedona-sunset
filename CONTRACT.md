@@ -5430,3 +5430,33 @@ Guardrails: `far_270` grad/L 0.094 → 0.095, sat mean 0.486 → 0.487, V 0.480 
 moves ground out from under the inner toes of the head aprons. At the shipped
 width nothing shows, but their seating was computed against the old surface, so
 if the breach is ever deepened those toes want re-seating rather than clamping.
+
+### The injury that reproduced the trap exactly
+
+`--injure`'s sixth breakage is failure #1 by its cause rather than its symptom:
+`uThisWasNeverDeclared` injected into `wallR`'s fragment shader via
+`onBeforeCompile`. Three.js logs `VALIDATE_STATUS false`, the program does not
+link, and the wall stops drawing. What it measured is worth writing down, because
+it is the trap in one line:
+
+```
+undeclared uniform @lit   gnd 90.0 (was 50.2)   R/G 1.781 (was 1.781)
+```
+
+**The chroma is identical to four decimal places.** With the wall gone the probe
+is measuring the sky standing behind the hole, and the sky is warm at golden hour,
+so every colour-based check reports a perfectly plausible number about a frame
+with a hole in it — which is precisely what happened for real, at hue -147 with a
+one-degree spread. `floorRG`, the check that catches a white ground with no
+reference and no console error, is *blind* to this one. Two things caught it:
+`gl.getProgramParameter(LINK_STATUS)`, asked of the driver directly, and
+`skyOverGround` falling to 1.7 because the ground average had been contaminated
+upward by sky. **The lesson is not that one check is better. It is that a colour
+probe cannot tell you whether the thing you aimed it at is there**, so something
+in the gate has to ask a question that is not about colour.
+
+That injury runs last, and it is the only one whose position is fixed. Restoring
+`onBeforeCompile` compiles a good program but the failed one stays in
+`renderer.info.programs`, so `programs` kept firing against whichever injury ran
+after it. An injury table that blames the wrong breakage is worse than a short
+one.
