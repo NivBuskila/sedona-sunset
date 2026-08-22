@@ -1039,3 +1039,230 @@ Two observations, no work done on either:
   measured-good protected work whose replacement they deliberately reverted. It
   should land as a correctness change with its own verification, not smuggled in
   under a perf commit.
+
+## 11. The governor was the one system no instrument could see
+
+Everything in §§6–10 was measured with `tools/bench.mjs`, which pauses the render
+loop, holds the camera still, and drives `renderOnce` by hand through each rung.
+That is the right instrument for *pricing* a rung and the ladder in §10 is
+correctly tuned against it. It cannot answer three questions, and a real-browser
+playthrough answered all three unfavourably:
+
+1. which rung does the governor **choose**, with a live loop and a moving camera;
+2. how long does it take to get there from a cold load;
+3. once it has gone down, can it come **back up**.
+
+The reason none of that was visible here is structural and worth stating plainly.
+`src/perf.js` pins the top tier and switches adaptation off whenever
+`navigator.webdriver` is set — which is right, because a governor reacting to
+incidental timing is the last thing that should be live while two page loads are
+compared pixel for pixel. But every probe in `tools/` sets that flag. So the
+ladder had only ever been walked by hand, one rung at a time, by the tool that was
+measuring it. `#adapt` opts back in explicitly, `tools/govern.mjs` is the only
+thing that sets it, and captures are untouched.
+
+### 11.1 The frame cost moved 39% under the measurement
+
+Before anything about the governor: `tools/bench.mjs` on the tree at `2548d04`
+reports `wash_mid` at **24.48 ms**, against **16.80** two hours earlier at
+`fa8b9ec`. Both numbers are the same tool, the same machine, the same seven blocks
+of thirty. `govern.mjs --probe`, which is a different instrument in a different
+page, independently reads 23.34 at the same station and rung — so the regression
+is real and is not either tool's.
+
+| | `fa8b9ec` | `2548d04` |
+|---|---|---|
+| `wash_mid`, rung 0 | 16.80 | 24.48 |
+| rung 4 | 8.21 | 13.23 |
+| rung 7 | 5.44 | 9.78 |
+| draw calls | 51–65 | 62–70 |
+| triangles | 3.97 M | 4.01 M |
+
+Not attributed, and deliberately not attributed here: three systems were landing
+concurrently — an indirect-light fix in both `rock.js` and `terrain.js`, cliff
+jointing, and vegetation — and `rock.js`, `sky.js` and `vegetation.js` were all
+dirty in the working tree while this ran. Anyone bisecting it should start with
+the indirect-light change, because it lands on the two heaviest fragment shaders
+in the scene. **Every number below is on `2548d04`**, and none of it should be
+compared with §10 without reading this paragraph first.
+
+### 11.2 A walking player pays a cascade redraw that no bench ever measured
+
+The two shadow cascades are redrawn only when the rig moves. `bench.mjs` holds the
+camera still, so it has never once paid for them. Measured at every rung, camera
+held against rig creeping 5 cm a frame, at `wash_low`:
+
+| rung | tier / scale | buffer | held | moving | Δ |
+|---|---|---|---|---|---|
+| 0 | high / 1.00 | 2560×1440 | 23.3 | 26.9 | +3.6 |
+| 4 | low / 0.78 | 1997×1123 | 13.8 | 16.7 | +2.9 |
+| 7 | potato / 0.58 | 1485×835 | 9.9 | 13.5 | +3.6 |
+| 8 | potato / 0.50 | 1280×720 | 9.2 | 12.7 | +3.5 |
+
+It is flat, at about **+3.4 ms**, and it does not shrink as the tier drops the map
+sizes from 4096/2048 to 1024/512 — which says it is the terrain and rock redraw
+rather than the depth fill. So the honest figure for a walking player is the
+`moving` column, and on this tree **no rung reaches 8.33 ms at any station with
+the camera moving.** The bottom rung is 11.4–12.7 ms, which is 79–88 fps.
+
+The stations matter as much as the rungs, and this is the second instrument gap.
+`bench.mjs` measures `wash_mid`, `wall_lit` and `sun_gap`, all at 46 m or beyond.
+None is where a player boots, and the spread between stations is larger than four
+rungs of the ladder: at rung 0, `ground` is 13.9 ms and `wash_mid` is 23.3. A
+ladder tuned on three framings from the middle of the range cannot say what the
+walk costs.
+
+One cell in that table is contaminated and is left in rather than smoothed: rung 5
+at `wash_mid` reads 21.66 held and 26.27 moving, against 16.48 at rung 3 and 10.78
+at rung 6 either side of it. A rung cannot cost more than two rungs above it; the
+block caught something else on the machine. Everything around it is monotone.
+
+### 11.3 The 45-second cold start was a units bug
+
+`main.js` computes `dt` as `Math.min(0.05, ...)`. The clamp is correct for `step()`
+— a physics integrator handed a one-second frame must not teleport the player —
+and the governor was accumulating its `clock` and decrementing its `hold` from the
+same clamped value. During the compile-heavy first frames a 170 ms frame therefore
+advanced the governor's clock by 50 ms, so `clock < 2.5` gated on fifty frames
+rather than on two and a half seconds, and every `hold` after it stretched the
+same way.
+
+Measured on `govern.mjs`, cold load, 2560×1440:
+
+| | before | after |
+|---|---|---|
+| first rung change | 8.5 s | **1.3 s** |
+| settled | 17.0 s | **2.5 s** |
+
+The playthrough saw forty seconds of it, which is this bug on a machine that was
+also contended. The governor now keeps its own clock in wall milliseconds and the
+loop's `dt` is used only for what `dt` is for. Note what this makes unnecessary:
+an optimistic start. The reason to start low and climb is to avoid a long
+sluggish opening, and the opening is now two and a half seconds — so starting low
+would cost a fast machine a climb it does not need, to fix something that is no
+longer there.
+
+### 11.4 The ratchet, and why widening the band was the wrong fix
+
+The old rule descended above `t * 1.15` and climbed below `t * 0.62` — 9.58 ms and
+5.17 ms against a 120 fps target. The measured cost of every rung below 4 sits
+*between* those, so the governor could descend and then never satisfy the
+condition to return. A background download degraded the picture for the rest of
+the session. The baseline trace has it exactly: it sat at rung 7 for 134 of 150
+seconds, and it stayed there through samples reading **4.68 and 4.77 ms** — under
+the 5.17 threshold — because `floorI` had been set to the rung it had just
+descended *to*, so a climb needed twelve seconds of sustained sub-5.17 before it
+would even lower the bound by one.
+
+Widening the gate is not the fix, because the gate asks the wrong question.
+`cost < t * 0.62` asks "is this rung very cheap". What decides a climb is "would
+the next rung up fit", and a rung step is worth 6% to 20% here — so a fixed 38%
+headroom requirement is between two and six times the size of the step it gates,
+and at the bottom of the ladder it is unsatisfiable by construction.
+
+So the governor remembers the price instead of guessing it:
+
+- `seen[i]` is what rung *i* has cost on this machine, blended at 0.25. A climb
+  needs the rung above to be known cheap enough (`< t * 1.02`) or not known at all.
+- `seen[i]` **expires after 8 s**, because what a rung costs depends on where the
+  player is standing and the player is walking. The first version had no expiry and
+  reproduced the ratchet in a new place: descending through rung 5 recorded its
+  price at the mouth of the wash, the walk reached the cheap far end where the
+  frame ran at a third of that, and the governor still would not climb past 6
+  because a fifty-second-old estimate said 5 would not fit.
+- A climb is a **probe**: short hold, 900 ms, and if it overruns it goes back
+  exactly where it came from and that rung gets a cooldown of 15 s, then 30, then
+  60. A cooldown expiring clears the remembered price, so nothing is ever closed
+  off permanently — a rung that keeps failing is retried rarely, not never.
+- The revert is a single step rather than the ratio-derived multi-step drop. A
+  probe fails on one reading and that reading is sometimes a viewpoint rather than
+  a rung: one probe failed as the walk entered the wash mouth, and the ratio would
+  have sent it three rungs *past* the floor it had just left.
+- The GPU timer is flushed on every rung change. It reports a median over 31
+  samples, so for the first thirty-one frames after a change it was a median of two
+  different settings — and a 900 ms probe cannot be judged on that. An empty median
+  now returns "no measurement" rather than falling through to `cpuMs`, which is
+  *submit* time and would read as enormous headroom one frame after a rung change.
+
+Verified by putting the ladder at the floor at t=30 s — the state a transient
+leaves behind, reached without a transient to confound the reading — and watching:
+
+| t/s | rung | what happened |
+|---|---|---|
+| 1.3 | 0 → 2 | cold start, first move |
+| 2.5 | 2 → 4 | settled |
+| 31.3 | 5 → 8 | pushed to the floor |
+| 59.3 | 8 → 7 | climb probe, held |
+| 63.3 | 7 → 6 | held |
+| 67.0 | 6 → 5 | back where it was, 37 s after the push |
+| 71.0 | 5 → 4 | |
+| 75.0 | 4 → 3 | |
+| 80.8 | 3 → 2 | |
+| 105.0 | 2 → 1 | settled |
+
+No oscillation anywhere in the trace, and every climb was a probe that held. Run
+at `#target=60` on purpose: with nothing on the current tree reaching 8.33 ms the
+governor correctly pins at the floor and there is no climb to observe, which would
+make a fixed ratchet indistinguishable from a broken one.
+
+The first version of the recovery test ground a second WebGL context to contend
+for the device. It worked far too well — the queued draws took four minutes to
+drain, the GPU timer went permanently disjoint, and the trace measured the
+injection. Recorded rather than quietly replaced, because "the instrument was the
+loudest thing in the room" is this project's most repeated failure.
+
+### 11.5 One more rung, and it buys a millisecond
+
+`RSCALE` gains 0.50, so the ladder has a rung 8 at potato / 1280×720. Said
+plainly: it is worth **0.6–0.8 ms**. When the ladder was tuned, halving the pixels
+took a third off the frame and resolution was by far the strongest lever
+available; it is not any more. `bench.mjs`'s `@0.7res` column takes `wash_mid`
+from 24.48 to 17.95, so 49% of the pixels save 27% of the frame, and the remaining
+17.95 is vertex work, the two cascades, the resolve and the post chain in an order
+nobody has yet attributed. The rung exists because a governor whose bottom step is
+over budget has nowhere to put a struggling machine, not because it closes the gap.
+
+### 11.6 The thirteen shader warnings are one loop
+
+`X3595: gradient instruction used in a loop with varying iteration`. Attributed by
+ablation rather than by matching line numbers, because the numbers in those
+messages are into ANGLE's generated HLSL and not into any file in `src/`:
+
+| boot | distinct warnings | X3595 |
+|---|---|---|
+| `#adapt` | 8 | **8** |
+| `#adapt&hardshadow` | 0 | **0** |
+
+Every one of them is `src/sky.js:734–739`, System 4's variable-width penumbra
+spiral:
+
+    int n = int( clamp( r / texelM * 1.2, 8.0, 28.0 ) );
+    for ( int i = 0; i < 28; i ++ ) {
+      if ( i >= n ) break;
+      vec2 o = sunSpiral( i, n, rot ) * r * uvPerM;
+      float d = unpackRGBAToDepth( texture2D( map, p.xy + o ) );
+
+`n` is per-pixel, so the trip count diverges across a quad, and `texture2D` needs
+derivatives to pick a mip level. The count varies with how many programs have
+compiled — the playthrough saw 13, a fresh boot here sees 8 — but it is one
+construct in one shared chunk, included by every program that receives a shadow.
+
+**The fix is one token and provably identical, and it is not mine to commit.** The
+shadow map is `NearestFilter` with `generateMipmaps` off, so there is no mip level
+to select and the derivative is computed and discarded:
+
+    float d = unpackRGBAToDepth( texture2DLodEXT( map, p.xy + o, 0.0 ) );
+
+`three.module.js:6454` defines `texture2DLodEXT` as `textureLod` in the GLSL3
+prelude, and `terrain.js` already relies on the sibling `texture2DGradEXT` define
+at 6457, so the mechanism is in use in this project today. Left to System 4
+because `src/sky.js` was dirty with their in-flight work throughout this pass, and
+staging a hunk into a file someone else is editing is how `sky.js` got destroyed
+once already.
+
+Two things this is *not*. It is not the bug class that produced the grazing
+lattice — that was a derivative whose **value** was unbounded; this is a
+derivative whose value is discarded. And it is not `fwidth` of a phase
+under-reporting, which is §10's note and still open. Nothing here is a correctness
+risk today: it is eight lines of console noise standing on a real one-token
+improvement.
