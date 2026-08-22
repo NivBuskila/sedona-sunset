@@ -7388,3 +7388,109 @@ the pattern were any footprint-keyed texture layer, its world-space period would
 **step by powers of two with distance**, because `gScC = exp2(-floor(gLod))`. A
 joint azimuth grid has a period fixed in world space and independent of distance.
 One crop at two distances separates them without a new render.
+
+---
+
+## The octave crossfade: the identity is provable, the fix is a translation
+
+**Status: not landed. `src/` untouched.** The continuity property System 2 asks
+about is real and provable by reading. The efficacy is not, and I can show by
+substitution why.
+
+### The identity holds
+
+For `mix(tex(uv*s + k*n), tex(uv*s*0.5 + k*(n+1)), frac)` with `n = gFlC` and
+`s = exp2(-n)`, at a level boundary `gLodC -> m`:
+
+- from below, `gFlC = m-1` and `frac -> 1`, giving the coarse tap
+  `uv*2^-m + k*m`;
+- from above, `gFlC = m` and `frac -> 0`, giving the fine tap `uv*2^-m + k*m`.
+
+Identical. Level continuity stays an identity rather than a tuned onset, exactly
+as claimed. One correction to the rationale: a *constant* offset added to both
+taps would also preserve continuity - it just would not do anything, because it
+translates both taps equally. What breaks continuity is an offset applied to one
+tap only. The level-accumulating form is needed for efficacy, not for seamlessness.
+
+### But it cannot decorrelate the pair, and that is algebra
+
+Put `A(p) = f(s*p + c1)`, `B(p) = f(s*p/2 + c2)` and substitute `q = s*p + c1`:
+
+    A = f(q),    B = f(q/2 + (c2 - c1/2))
+
+**For any pair of constants, B remains a half-scale copy of A displaced by one
+constant.** The proposed offset changes that constant from 0 to
+`kPhase*(gFlC/2 + 1)`. It moves where the two octaves coincide; it does not stop
+them coinciding. A translation commutes with the scaling relationship, so it
+cannot break it.
+
+Measured, sweeping a one-texel window along a lattice cell (`tools/_octnode.mjs`):
+
+| variant | peak local tap correlation | at |
+|---|---|---|
+| as shipped | 0.827 | 0.066 m |
+| translation, kPhase 0.618034 | 0.788 | **0.331 m** |
+| rotation, 90 deg per level | 0.751 | 0.405 m |
+
+The peak moves and does not shrink. That is the signature of a phase change.
+
+### And the mechanism is not measurable offline at all
+
+`tools/_octphase.mjs`, on the real map at two realistic footprints:
+
+- **Global tap correlation 0.008.** The two octaves are uncorrelated.
+- **The coincidence is a point, not a patch.** `A = B` requires
+  `p == 2(c2-c1)/s (mod 2/s)` in *both* axes at once, so the nodes are isolated;
+  and because A traverses the map at twice B's rate they decorrelate within about
+  one fine texel, which at `gScC = 4` is **0.98 mm on a 500 mm lattice**. There is
+  no finite region where the two taps agree.
+- **The one strong periodic term is not the pair.** Autocorrelation 0.287 at
+  exactly 250 mm is tap A's own tile repeat: the predicted value for a mix of a
+  tile-periodic and a non-periodic tap at `frac = 0.62` is
+  `(1-w)^2/((1-w)^2+w^2) = 0.27`. Its visibility is bounded by the map's
+  low-frequency energy, measured this morning at **0.15%**, about one code value.
+- At `gScC = 2, frac = 0.5` the offset makes both measured structure metrics
+  slightly **worse** (contrast CoV 0.090 -> 0.108, peak AC 0.013 -> 0.025).
+
+### Why I have not landed it
+
+The standard set was "land it if the identity is provable by reading". The
+identity is provable; the efficacy is disprovable, and that outranks. Landing a
+change to a frozen tree that costs a reshoot, when substitution says it relocates
+rather than removes and no measurement shows a benefit, is the same call as the
+slope gate reverted as *measurably worthless rather than measurably risky*.
+
+**None of this touches System 2's observation.** The 13 px and 20 px families in
+the frame are real, their frustum enumeration stands, and their 2.35 m lattice is
+correctly excluded at fifty times too coarse. What is not established is the
+mechanism, and the defect is unattributed again.
+
+### The cheap decisive test, for when a frame is free
+
+The claim is that the artefact needs *both* octaves contributing, which is why it
+is worst where `frac ~ 0.7`. That is a one-line ablation: force `frac` to 0.0 and
+then 1.0 and shoot the frame. A single octave cannot be in registration with
+itself. **If the quilt survives either ablation the pair is exonerated in one
+render**, and if it vanishes at both endpoints and returns in the middle the
+mechanism is confirmed and worth fixing properly. That is the same shape as the
+triplanar-weight paint that cleared the blend weight earlier.
+
+### And if it is confirmed, the fix wants an operation that does not commute
+
+A rotation applied per level preserves the identity for the same reason the
+offset does - the coarse tap at level `n` is transformed by `R^(n+1)`, which is
+what the fine tap at level `n+1` is transformed by - while breaking the scaling
+relationship rather than its phase. A 90 degree, two-cycle rotation is a
+component swap and a negate, no transcendentals:
+
+    vec2 rA = mod(gFlC, 2.0) < 0.5 ? gUVc : vec2(-gUVc.y, gUVc.x);
+
+Offered as the corrected form, not as something to land unseen.
+
+### Note for the other two sites
+
+The same expression exists at **`rock.js:1961`** and at **`terrain.js:1500`** -
+three instances, not two. `terrain.js`'s is now load-bearing in a way it was not
+this morning: `3dbeefa` began reading `gr.gb` as a normal on far ground, so if
+this mechanism is ever confirmed, the terrain instance carries it into the
+shading normal and not only into tone and cavity.
