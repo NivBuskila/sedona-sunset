@@ -2102,13 +2102,67 @@ float jw = max(foot * 1.6, 0.022);
    displacement is shared, all four sets wander together as one rock mass rather
    than sliding against each other. */
 vec2 jp = vWPos.xz + vec2(sin(y * 0.37 + 1.3), cos(y * 0.29 + 2.1)) * 0.55;
+
+/* ---- the joint block, and why the bedding needs to know about it ----
+   The final critique's first and most valuable finding was that the walls carry
+   "perfectly parallel horizontal lines running continuously across the entire
+   face with no vertical joint sets, no blocky spall, no cross-fracture", and read
+   as sliced plywood. Every surface instrument this project owns is isotropic and
+   scored the wall fine, so tools/_aniso.mjs was written to split the gradient by
+   direction and to isolate *coherent line* energy from grain. It found two
+   things. First, that the vertical/horizontal line ratio at the lit midwall is
+   0.79, so the imbalance is real but mild. Second, and this is the number that
+   matters: ablating the entire vertical joint system through uJointK moves that
+   ratio from 0.77 to 0.75. Four joint sets, four fetches, and the whole system
+   contributes three per cent of the wall's structure. The joints were not too
+   weak or lost to distance — jointRes passes all four sets at full strength at
+   this footprint — they were being switched off by the termination gate for most
+   of the wall, in horizontal bands.
+
+   Fixing the gate makes the verticals legible. It does not by itself fix
+   "continuously across the entire face", because that is a statement about the
+   *horizontal* lines: a bed contact here runs the full length of the wash at
+   constant strength, and no real cliff does that. A joint is a free face, so the
+   slab on either side of it weathers back independently — one block keeps a sharp
+   lip at a contact, its neighbour has retreated and rounded the same contact off,
+   and the bed trace steps or dies at every joint it crosses. That differential is
+   what turns a striped sheet into stacked masonry-sized blocks, and it is also
+   what makes the joints themselves read, because a fracture is legible from the
+   disagreement across it more than from its own dark line.
+
+   So: a piecewise-constant index per fracture-bounded block, off the two coarse
+   joint azimuths and the same wandering plan coordinate the traces use, so blocks
+   and traces are the same fracture system rather than two that nearly agree. The
+   bedding terms below are then scaled by it. Cost is two dots and two floors, no
+   fetch, on a frame that is fill-bound on texture reads. */
+float blk1 = floor(dot(jp, vec2(0.9397, 0.3420)) / 4.10);
+float blk2 = floor(dot(jp, vec2(-0.2588, 0.9659)) / 2.35);
+float blkH = hash11(blk1 * 37.0 + blk2 * 101.0);
+/* How far this block has weathered back relative to its neighbours, signed.
+   Biased so most blocks sit near the middle and a minority stand well proud or
+   well recessed — a cliff is not a checkerboard of alternating slabs, it is a
+   mostly-even face with occasional blocks that have gone. */
+float blkR = (blkH - 0.5) * 2.0;
+blkR = blkR * abs(blkR);
 /* Joints terminate at bedding contacts; the previous form ranged 0.10 to 1.0 and
    so never terminated at all, it only got fainter. Two incommensurate periods
    through a smoothstep with a real zero gives runs of wall with no joint in them,
-   which is what makes the remainder read as fracture rather than as ruling. */
-float jvA = 0.5 + 0.5 * sin(y * 1.9 + aS * 0.07);
-float jvB = 0.5 + 0.5 * sin(y * 0.53 + aS * 0.031 + 2.2);
-float jVert = smoothstep(0.22, 0.68, jvA * 0.65 + jvB * 0.35);
+   which is what makes the remainder read as fracture rather than as ruling.
+   Both periods were functions of y with only a very slow along-wall term —
+   aS * 0.07 turns over once in ninety metres — so at any given height the gate
+   held the same value across the whole of a twenty-to-forty metre hero framing.
+   That did two things at once, and they are the two halves of the final
+   critique's first finding: it cut every vertical into dashes about a metre and a
+   half tall, too short to read as a fracture at all, and because the dashes
+   started and stopped at the same height everywhere it laid *another horizontal
+   band* over a wall already accused of being nothing but horizontal bands. A
+   termination has to vary along strike or it is not a termination, it is a
+   course of brickwork. Phase now comes off the block index below, so the joint
+   on this slab dies at a different height from the joint on the next, and the
+   vertical period is long enough that what survives spans several beds. */
+float jvA = 0.5 + 0.5 * sin(y * 0.62 + blkH * 9.4);
+float jvB = 0.5 + 0.5 * sin(y * 0.27 + blkH * 4.1 + 2.2);
+float jVert = smoothstep(0.16, 0.55, jvA * 0.65 + jvB * 0.35);
 vec2 jt2 = jointTrace(jp, vec2(0.9397, 0.3420), 4.10, 3.0, jw * 2.4, 0.55) * (1.00 * jointRes(4.10, foot))
          + jointTrace(jp, vec2(0.9397, 0.3420), 1.35, 7.0, jw * 1.2, 0.60) * (0.80 * jointRes(1.35, foot))
          + jointTrace(jp, vec2(-0.2588, 0.9659), 2.35, 17.0, jw, 0.66) * (0.75 * jointRes(2.35, foot))
@@ -2127,6 +2181,19 @@ float joint = clamp(jt, 0.0, 1.0) * jFace * jVert * (0.55 + 0.45 * (1.0 - lPale 
 float jLip = clamp(jt2.y, 0.0, 1.0) * jFace * jVert;
 albedo *= 1.0 - joint * 0.46;
 albedo *= 1.0 + jLip * 0.13 * sTerm;
+/* The block itself, which is the "no blocky spall" half of the same finding. A
+   block that has spalled out sits back from the face, so it is shaded by its own
+   surround and holds more of the varnish that runs over it; one that still stands
+   proud catches the low sun across its whole width. Applied on faces only and
+   scaled by the joints' own visibility, so a block edge never appears where there
+   is no fracture to bound it.
+   Deliberately a single scalar on all three channels: HSV saturation and hue are
+   invariant under a positive scalar, so this cannot move the measured colour that
+   System 7 is holding at 0.618 and 20.9 degrees. Kept to nine per cent, which is
+   about a stop and a half less than the bedding contrast it sits beside — a block
+   read wants to be at the threshold of noticing, and the failure mode on the other
+   side of it is a chequerboard. */
+albedo *= 1.0 + blkR * 0.09 * jFace * jVert;
 /* ---- and the joint is an aperture, not a scribed line ----
    Darkening the albedo along a crack gives a dark pen line of constant width on a
    flat face, which is what these were. A joint is an *opening*: it has width, it
@@ -2395,7 +2462,19 @@ float ledgeShade = (1.0 - smoothstep(0.0, 1.6, y - lBot)) * (1.0 - lVert) * 0.55
    geometry a second time. */
 float sbUp = bedResist(sbI + 1.0, lIdx);
 float sbLip = smoothstep(0.80, 1.0, sbT) * smoothstep(0.54, 0.74, sbUp);
-tAO = clamp(rkAO * (0.72 + 0.34 * (1.0 - cav)) - ledgeShade * 0.5 - sbLip * 0.30
+/* The bed trace, cut by the joint blocks. A contact is a sharp shaded lip on a
+   block that still stands at the face and a rounded, half-buried nothing on the
+   block beside it that has retreated a hand's width, so the trace steps in
+   strength at every joint it crosses instead of ruling the whole wall at one
+   value. This is the term that answers "continuously across the entire face":
+   the lines are still there and still level — bedding *is* level, and faking a
+   wobble into it is a failure this file has already made once — but they are no
+   longer the same line for four hundred metres. Ranges 0.35 to 1.55 of the old
+   strength, so the strongest traces are stronger than before and a minority of
+   blocks lose theirs altogether. */
+float bedBlk = clamp(1.0 + blkR * 0.62, 0.35, 1.55);
+tAO = clamp(rkAO * (0.72 + 0.34 * (1.0 - cav)) - ledgeShade * 0.5 * bedBlk
+            - sbLip * 0.30 * bedBlk
             - joint * 0.42 - ironBase * 0.22, 0.18, 1.0);
 /* The grit's crevice occlusion, unfiltered by distance: it is a tone, it is
    scale-locked to the footprint, and it is what keeps the material present at
@@ -2520,7 +2599,51 @@ export function makeRockMaterial(tex, detail = 1.0) {
       .replace('#include <normal_fragment_maps>',
         'normal = normalize((viewMatrix * vec4(tNrmW, 0.0)).xyz);')
       .replace('#include <aomap_fragment>', /* glsl */`
-      reflectedLight.indirectDiffuse *= tAO;
+      /* ---- occlusion is not a multiply toward black; System 4 ----
+         This was reflectedLight.indirectDiffuse *= tAO, and a geometric occlusion
+         term taken as a straight multiply says an occluded crevice receives
+         nothing. It receives less *sky*, which is what tAO legitimately models,
+         but it also receives light bounced off its own walls, and for red
+         sandstone that bounce is warm and it is the only illuminant a deep
+         crevice has. Multiplying it away is what took 40.8 per cent of
+         wall_shade to a minimum channel under ten code values with 6.0 per cent
+         black on every channel: shaded sandstone is hue 4.5 degrees at 0.47
+         saturation and needs blue near twenty code values to exist at all, and it
+         had six, so the chroma was not wrong — there was nowhere to put it. That
+         is the "muddy rather than dark" the critique named, and the floating slab
+         in the same frame is the same fault: the ledge is correctly lit and the
+         wall around it carries no tone, so a real bedding surface reads as an
+         object hanging in a void.
+
+         The curve is Jimenez et al.'s multi-bounce fit (GDC 2016), which solves
+         the interreflection inside a closed environment of a given albedo as a
+         cubic in the occlusion factor. Two properties earn it its place here over
+         anything hand-tuned. It is exactly unity at tAO = 1, so an open sunlit
+         face is untouched to the last bit and the defended 0.618 saturation at
+         hue 20.9 cannot move. And the max() against tAO makes it one-sided: it
+         can only lift, so no pixel anywhere gets darker than it was and nothing
+         already in band can be pushed out of it.
+
+         Note what it does not do, because System 4 verifies this and should not
+         have to derive it: the lift is albedo-weighted, so at the tAO floor of
+         0.18 the red channel rises about 37 per cent and the blue about two. That
+         is the correct physics — a red crevice has little blue light to bounce —
+         but it means this alone will not carry blue from six code values to
+         twenty. What it fixes is the crush and the tint of the crush. If blue is
+         still short after it, the remaining lever is the sky-visibility floor in
+         tAO rather than the bounce, and that is a separate measured decision.
+
+         No fetch, half a dozen multiplies, on a frame that is fill-bound on
+         texture reads. This is deliberately the *same expression*, character for
+         character, as the one at terrain.js's matching line — 2548d04 — so the two
+         surfaces cannot drift apart under separate tuning. If you change one,
+         change both. */
+      vec3 aoA = material.diffuseColor;
+      vec3 aoC1 =  2.0404 * aoA - 0.3324;
+      vec3 aoC2 = -4.7951 * aoA + 0.6417;
+      vec3 aoC3 =  2.7552 * aoA + 0.6903;
+      reflectedLight.indirectDiffuse *=
+        clamp(tAO * (aoC1 * tAO * tAO + aoC2 * tAO + aoC3), vec3(tAO), vec3(1.0));
       /* The additive Rayleigh shadow airlight that used to sit here is gone;
          see the long note at the same
          point in terrain.js. Short version: it was sized against a fill with no
