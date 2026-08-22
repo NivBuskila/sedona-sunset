@@ -9059,3 +9059,150 @@ bed under a stone is one triangle - exactly planar, hence a dead-straight
 contact. That is a property of the bed, not of thousands of instances, and it
 feeds both "floating slabs with no contact shadow" and "unweathered extruded
 prisms".
+
+## Ground bounce on a near-vertical facet at clast scale (System 4)
+
+The finding was that near-black verticals sit in open ground, that this is the
+signature of one light with weak bounce, and that a real Sedona photograph carries
+enough orange off the lit floor to put such a facet at **90-110 in red** against our
+measured 37. Terrain had already shown the render is faithful to the prediction and
+that deleting the whole clast occlusion chain moves the pixel only to about (13,9,7),
+so the question was narrowed correctly: **the render draws what the atmosphere tells
+it, and the open question is whether what it is told is right.**
+
+Both halves of the answer turned out to be true. There was a missing term, and the
+target is beyond what transport can deliver.
+
+### The instrument, and why it is a ratio
+
+`tools/_clastbounce.mjs` reports the **side/top irradiance ratio**, never an absolute
+code value, and that is the whole design. `sky.js` multiplies both the sun and the SH
+probe by `SCALE = 19`, and post applies a grade this file does not model. In a side/top
+ratio SCALE cancels exactly, and so does albedo, **because the top and the side of one
+slab are the same material.**
+
+Solving the slab's albedo from the measured top face as a check recovered 17.1x the
+known rock albedo against a pipeline SCALE of 19x - a 10% agreement on a chain that was
+never calibrated, which is the reason to trust the ratios below and *not* to quote a
+code value from them without anchoring on a measured pixel first.
+
+### The missing term: irradiance is cosine-weighted and the constant was not
+
+`FLOOR_SUNLIT` admitted **0.05** of the floor's sunlit fraction to the entire lower
+hemisphere. The comment above it reasons that a rock face's downward view is dominated
+by the near floor, which sits in that face's own shadow, and concludes that the open
+wash's measured 0.70 does not belong there. It also records that an earlier estimate of
+"roughly a third" was revised *down* to 0.05 on that argument.
+
+The argument is right about solid angle and wrong about irradiance. **Irradiance is
+cosine-weighted solid angle**, and on a near-vertical facet the cosine weight peaks at
+the horizon and falls to zero looking straight down - the opposite of where the
+self-shadowed near floor lives. The shadow line of any long occluder sits at a
+depression equal to the sun's elevation, so the sunlit floor occupies depression 0 to
+15 degrees: a thin band carrying almost no raw solid angle and carrying the most heavily
+weighted directions a vertical facet has. Integrating cos^2 over that band against the
+hemisphere's own pi/4 gives **0.326**, or **0.228** after the wash's own measured 0.70
+sunlit fraction. Against 0.05. The estimate that was discarded was closer than the
+correction that replaced it.
+
+Neither number was ever the right *shape* of answer, because the correct value depends
+on the normal - 0.228 for a vertical, near zero for an underside looking into its own
+shadow, undefined for an up normal that sees no ground. One constant over the whole
+lower hemisphere is wrong for two of the three whatever it is set to, which is the same
+failure as the corridor modelled with one doorway.
+
+So the lower hemisphere is now the two zones it actually has, and the band is delivered
+**analytically** rather than through the probe: within each zone the radiance is uniform,
+so on any normal the exact contribution is `bandExcess * F(ny)`, with `F` the band's
+cosine-weighted geometric factor, integrated and fitted in `tools/_bandfit.mjs` to 0.59%
+of peak. `F(0) = 0.5113` against the hand-derived `pi/2 * 0.326 = 0.512`, which is the
+derivation and the integral agreeing independently.
+
+`F` is **structurally zero on an up normal** - it is `(1 - ny)` times a polynomial - so
+no sunlit floor or lit rock pixel can move. That is the property lit rock's guardrail
+sits behind, and it is the reason to prefer the analytic form: routed through the SH
+probe the same term lifted up-facing normals by 2%, and an up-facing normal is every
+sunlit floor pixel in the frame.
+
+### Retraction: the 63% SH loss did not exist
+
+Commit `0b4f84d` claimed, as measured fact in a source comment, that an order-2 SH probe
+loses **63%** of the band - x2.06 delivered against x5.59 exact - and moved the term out
+of the probe for that reason. **That figure was wrong.** The probe tracks the exact answer
+to **1.0%** on a vertical and 4.8% on an underside.
+
+The 63% came from a brute-force integral that used the two zones' *sunlit fractions*,
+0.70 against 0.05, as their radiances. Radiance is `albedo * (frac * sun * sin(el) +
+skyIrradiance) / pi`, and that additive sky term does not scale with the fraction at all,
+so the true ratio between the zones is **3.3, not 14**. The instrument inflated the band
+fourfold and the "loss" was the gap between a correctly delivered value and a target it
+had invented.
+
+The mechanism was seductive because it is true in general - order-2 SH genuinely cannot
+hold a thin annulus - and because a prior check had appeared to confirm the projection
+was fine on a *uniform* hemisphere, so the story "I validated it on the wrong signal"
+fitted perfectly. **A mechanism that explains a number is not evidence that the number is
+real, and this is the second time in this file that a compelling mechanism arrived with a
+figure produced by a toy model.** The rule already in this document - an aphorism that
+explains the observation is not evidence for it - applies to one's own instruments first.
+
+### Delivered, on paired same-build captures at 1600x900
+
+Both halves from one tree in one minute via the `#noband` ablation, with identical
+triangle counts, which matters because the tree also carried post's local lift and two
+live agents.
+
+| | ablated | landed |
+|---|---|---|
+| lit rock saturation / hue | 0.615 / 20.7 | **0.617 / 20.7** (guardrail 0.614, holds) |
+| shadow gate | 0.213 | **0.234** (ceiling 0.25) |
+| `wall_shade` crush, lum < 10 | 16.7% | **11.2%** (-5.5 points) |
+| `wall_shade` crush, min < 10 | 41.8% | **38.6%** (-3.2 points) |
+| dark facets in open sun, mean red | 46.7 | **47.7** |
+| ... share under 40 red | 24.7% | **20.3%** (-4.4 points) |
+| `wall_shade` dark facets, median red | 31 | **34** |
+
+The dark-facet population is selected the way the finding describes it rather than by a
+window average: **dark pixels whose surroundings are bright**, at full resolution
+(`tools/_facetlift.mjs`). A window average is the wrong instrument here because the frame
+is mostly floor and averaging the floor in buries the population being complained about.
+
+Honest size of it: **+1 to +3 code values on the facets, and a fifth of the sub-40
+population gone.** Real, visible in the crush figures, and much smaller than the analytic
++9 predicted for a bare facet - because the darkest facets are also the most occluded,
+and the occlusion chain scales the band down with everything else. Correctly so: the band
+is what an *exposed* facet sees.
+
+It cost 0.021 of the shadow gate, which had 0.037 of headroom.
+
+### The target is 1.6x beyond correct transport, and is already in the frame
+
+For a facet with **no direct sun at all**, the hard ceiling is a fully sunlit infinite
+floor filling its lower hemisphere plus this corridor's warm upper one: **side/top 0.250**,
+which is `albedo_g / 2` plus the sky and escarpment terms, and needs no model to state.
+The critic's 90-110 in red implies **0.401**. So no ground bounce of any strength reaches
+it, and the remaining gap after this correction is not a missing term.
+
+But "side face" is four different populations, and at 15 degrees of elevation the beam is
+seventeen times the fill, which makes the terminator a cliff rather than a gradient.
+Sweeping the dip:
+
+- **facing away from the sun** - holds 46 in red out to 43 degrees of tilt, then jumps to
+  177 at 46. There is no dip at which it reads 90-110.
+- **facing across the sun's azimuth** - sits on the terminator at 64, and **two degrees of
+  dip toward the sun puts it at 91.**
+
+So **90-110 is not unreachable; it is what this render already delivers to a cross-sun
+facet with a couple of degrees of dip.** The most likely reading of the disagreement is
+that the photograph's "vertical carrying orange bounce" is a near-terminator facet
+catching grazing beam, and ours is an anti-sun facet lit by bounce alone. Those are two
+different surfaces and no transport change reconciles them.
+
+### The tension worth surfacing
+
+The finding says the dynamic range should be *compressed* and that shadows are the
+brightest part of the story. The contract caps shadow-to-sunlit at **0.25**, which is a
+cap on exactly that. This correction spent 0.021 of the 0.037 that was available. A real
+Boynton frame twenty minutes before the sun leaves the rim plausibly sits above 0.25, so
+**further progress on this finding is a decision about the gate ceiling rather than a
+transport bug**, and that is not System 4's call to make.
