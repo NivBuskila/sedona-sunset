@@ -619,12 +619,19 @@ export function createPost({ renderer, camera, atmo, sun }) {
      corner without shooting the whole chain term by term. */
   P.vignette = num('vig', P.vignette);
   P.gradeAmount = num('grade', P.gradeAmount);
-  /* A multiplier on the three flare gains, for one specific job: the sun in
-     this scene is below the butte skyline from every standard viewpoint, so it
-     is always partly or wholly occluded and the ghosts correctly never fire.
-     That is the effect working, and it is also indistinguishable from the
-     effect being broken. `#flare=8` makes the geometry visible so it can be
-     checked once, rather than shipping a path nothing has ever exercised. */
+  /* A multiplier on the three flare gains. `#flare=8` makes the geometry visible
+     for checking.
+     This comment used to claim the sun is below the butte skyline from every
+     standard viewpoint, so the ghosts never fire, and that claim was false.
+     Measured at 1280x720 by ablation against `#ghost=0`, the ghost path changes
+     4.92% of pixels in `juniper`, 4.89% in `bend`, 4.71% in `sun_gap` and 4.32%
+     in `wash_mid`, and exactly 0 in `wall_shade` and `ground`. The occlusion
+     logic is doing precisely the right thing — dead where the sun is behind rock,
+     live in the four framings that see sky. The discs are merely inaudible: the
+     source ceiling is 4.0 and `ghostGain` 0.0014, which puts their peak near
+     0.004 in scene-linear where lit rock sits at 0.36, three orders down.
+     Left in the corrected form rather than deleted because a comment asserting
+     that a feature never fires is how a working system gets removed later. */
   P.flareScale = num('flare', 1);
   /* `#fknee=100000` lifts the flare-source ceiling out of reach, which is how
      the claim that the ceiling is an identity on the present frame gets tested
