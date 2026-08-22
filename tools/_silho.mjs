@@ -45,7 +45,7 @@ function clast(seed, flat, bevel, bandFrac, yMin) {
       ((i & 4) ? 1 : -1) * az * (0.52 + rand() * 0.58)));
   }
   for (let i = 0; i < bevel; i++) {
-    const wantBand = rand() < bandFrac;
+    const wantBand = bandFrac > 0 && rand() < bandFrac;   // guarded: see _topbias
     let p = null;
     for (let tryN = 0; tryN < 24; tryN++) {
       let dx = rand() * 2 - 1, dy = rand() * 2 - 1, dz = rand() * 2 - 1;

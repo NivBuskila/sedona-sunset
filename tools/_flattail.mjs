@@ -13,7 +13,7 @@ function clast(seed,flat,bevel,bias,capMin){
   const rand=rng(seed);const pts=[];const ax=1.0,ay=flat,az=0.78+rand()*0.42;
   for(let i=0;i<8;i++)pts.push(new THREE.Vector3(((i&1)?1:-1)*ax*(0.52+rand()*0.58),((i&2)?1:-1)*ay*(0.52+rand()*0.58),((i&4)?1:-1)*az*(0.52+rand()*0.58)));
   for(let i=0;i<bevel;i++){let dx=rand()*2-1,dy=rand()*2-1,dz=rand()*2-1;
-    if(rand()<bias)dy=capMin+Math.abs(dy)*(1-capMin);
+    if(bias>0&&rand()<bias)dy=capMin+Math.abs(dy)*(1-capMin);  // guarded: unguarded it drew at bias 0 and the baseline was not the shipped hull
     const L=Math.hypot(dx,dy,dz)||1;dx/=L;dy/=L;dz/=L;
     const t=1/Math.max(Math.abs(dx)/ax,Math.abs(dy)/ay,Math.abs(dz)/az);
     const j=t*(0.99+rand()*0.24);pts.push(new THREE.Vector3(dx*j,dy*j,dz*j));}

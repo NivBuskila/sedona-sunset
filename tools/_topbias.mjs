@@ -42,7 +42,12 @@ function angularClast(seed, flat, bevel, bias, capMin) {
   }
   for (let i = 0; i < bevel; i++) {
     let dx = rand() * 2 - 1, dy = rand() * 2 - 1, dz = rand() * 2 - 1;
-    if (rand() < bias) dy = capMin + Math.abs(dy) * (1 - capMin);
+    /* Guarded, and that guard is a bug fix rather than a tidy-up. Written as an
+       unconditional `rand() < bias` it drew a random number even at bias 0, so
+       the baseline row consumed a different stream from angularClast and was
+       NOT the shipped hull - 8 of 32 points matched, every bevel point moved.
+       A baseline that is not the shipped thing makes every delta meaningless. */
+    if (bias > 0 && rand() < bias) dy = capMin + Math.abs(dy) * (1 - capMin);
     const L = Math.hypot(dx, dy, dz) || 1;
     dx /= L; dy /= L; dz /= L;
     const t = 1 / Math.max(Math.abs(dx) / ax, Math.abs(dy) / ay, Math.abs(dz) / az);

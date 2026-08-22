@@ -8916,3 +8916,146 @@ the candidates are:
 Option 1 is the only one that attacks the measured cause, and it is a
 population-level change that wants a render and a critic, not a blind landing
 while a set is being judged.
+
+---
+
+# Breaking the clast top face: the mechanism found, the fix measured, and why it cannot ship
+
+**Vertical bumpiness is the only thing that breaks the lid, and vertical extent
+is what burial measures thickness against. You cannot buy one without spending
+the other. Third closed door, with the trade quantified.**
+
+## The instrument was wrong, and that is the finding worth keeping
+
+Every facet statistic I ran yesterday and today merged triangles into a plane
+when their normals agreed to a dot product of 0.9995 - about 1.8 degrees. That
+is a geometric test, and the complaint is perceptual. Under one dominant sun a
+patch spanning less than about ten degrees of normal shades within a couple of
+code values and reads as one flat lid. A top made of six facets two degrees
+apart scores as six planes at ten percent each and *looks* like a paving slab.
+
+Measured at ten degrees instead of two, over the stones that actually cover
+screen area (`tools/_perceface.mjs`):
+
+| merge tolerance | 1.8 deg (geometric) | 10 deg (perceptual) |
+|---|---|---|
+| cobble, largest face | 32% | **57%** |
+| cobble, share over 55% | 1% | **59%** |
+| pavement | 32% / 2% | 56% / 46% |
+| boulder | 30% / 0% | 48% / 25% |
+
+**A majority of the large near-field stones present one visually flat face
+covering more than half of what you see of them.** That is the brick, it is
+real, and it was invisible to every tool I built because they all merged at two
+degrees. "The shape measures fine" and "the crop shows paving slabs" were both
+true statements about different measurements.
+
+## The general rule, now with four instances
+
+The coordinator asked for the visible-area correction to be stated generally.
+It is broader than shape, and today produced four of the same error:
+
+1. **Whole hull instead of the visible cap.** Burial leaves a fifth of the
+   height above the bed; largest facet 6.5-9.3% became 27.8-34.1%. Wrong by 4x.
+2. **Whole population instead of the stones that cover pixels.** The >55% tail
+   turned out to be 87% deeply buried slivers at mean sink 0.85 - one facet
+   because there is no room for two - while the largest screen-area quartile
+   had **0.0%**. (`tools/_tailwho.mjs`)
+3. **Exact normals instead of perceived ones.** 32% became 57%, above.
+4. **Bounding extent instead of projected area.** I held half-height to +0.0%
+   and horizontal radius to 1.5%, rendered, and the stones were visibly
+   smaller - one plate lost 22% of its pixels, and projected area was down
+   12-21% across every class. (`tools/_projarea.mjs`, now a standing check)
+
+**A statistic must be taken in the space the viewer occupies.** Not the whole
+object but the visible part, not the whole population but the part that covers
+pixels, not exact normals but perceived ones, not bounding extents but
+projected area. Each of these cleared something that was wrong.
+
+## Correcting the numbers I reported this afternoon
+
+`tools/_flattail.mjs` had a bug: `if (rand() < bias)` drew a random number even
+at bias 0, so the baseline row consumed a different stream from `angularClast`
+and **was not the shipped hull** - 8 of 32 points matched, every bevel point
+moved. `_topbias.mjs` and `_silho.mjs` had the same fault. All three are now
+guarded with `bias > 0 &&`.
+
+Corrected, and it inverts the report:
+
+| | I reported | actually |
+|---|---|---|
+| shipped >55% tail | 3.4% | **0.8%** |
+| with the bevel bias | 3.6% | 3.6% |
+
+The bias does not "leave the tail alone" - it makes it **4.4x worse**. Two
+independently written tools now agree on 0.8-0.9% for shipped. **I withdraw the
+"120 stones against the critic's forty-plus" cross-check**; it was built on the
+wrong number, and the tail it counted was slivers nobody can see.
+
+## The lever that works
+
+Not the corners. Widening the corner y-jitter at constant mean does almost
+nothing (56% -> 53-57%), because the four top corners are not what forms the
+top. Bevel points sit at `t * (0.99 to 1.23)` of the box surface, so for any
+direction near +y they land at a height of `ay * (0.99 to 1.23)` - **a band
+twelve percent wide spread across the whole horizontal area of the lid.** Points
+at nearly constant height over an area *are* a plane. The bevel points were not
+breaking the lid, they were building it.
+
+Widening that band to `0.86 + rand()*0.50` and rescaling the hull back to the
+shipped half-height (`tools/_bevall.mjs`):
+
+| class | >55% perceived face | tris |
+|---|---|---|
+| cobble | 54% -> **27%** | 39 -> 34 |
+| block | 61% -> **21%** | 45 -> 37 |
+| pavement | 37% -> **17%** | 42 -> 37 |
+| boulder | 23% -> **10%** | 53 -> 46 |
+| slab | 57% -> 49% | 50 -> 42 |
+| granule / gravel | 39->41%, 20->24% | slightly worse |
+
+Total triangles **down 13.9%**, half-height +0.0%, horizontal radius within
+1.5%, spike ratio up 3-4%.
+
+## And the reason it cannot ship
+
+Widening costs size, unavoidably: a hull takes the maximum, and widening a
+distribution about a fixed mean raises its expected maximum. Giving it back has
+exactly two options and they are mutually exclusive.
+
+- **Rescale all three axes.** Extents hold, and **projected area falls 12-21%** -
+  fifteen percent off the near field's clast coverage, toward a barer bed. The
+  render confirmed it by eye: the worst plate lost 22% of its pixels.
+- **Rescale y alone.** Projected area holds to within 0.6-4.9% and half-height
+  is exact, so burial is untouched - and **the fix disappears**. Cobble returns
+  to 60% with 62% over 55%, which is the shipped baseline. Squashing y flattens
+  the very bumps that created the angular spread.
+
+**The bumps are in y, and y is what `hTrue` and therefore burial, dust and the
+shadow gate are measured against.** There is no version that breaks the lid
+without either shrinking the stones or moving the burial.
+
+The render was made and looked at (`shots/bevfix_ground.png`, uniform version).
+It is honest about both halves: the dead-straight mitred edges are visibly
+broken and the outline is irregular where it was a clean pentagon - a real
+improvement - **and the top is still one flat lid**, and the stone is smaller.
+A partial fix, bought with a regression on a verified figure, landed blind while
+a critic is judging, is the trade declined four times today. Reverted; `src/` is
+untouched.
+
+## What is actually left
+
+The cap needs vertical relief, and geometry cannot supply it without paying
+burial or coverage. That leaves the option this whole thread has not touched:
+**supply the relief in shading rather than in geometry.** A normal map or
+detail-normal on the clast top with a few degrees of variation at centimetre
+scale would break the perceived face without moving one vertex, one extent, or
+one census figure. Whether the clast material already has a usable tangent frame
+for that is a different investigation from this one.
+
+Also still open and cheaper than the hull: the straight waterline. The
+near-field terrain grid is 0.20 x 0.42 m against a 0.14-0.38 m cobble, so the
+bed under a stone is one triangle - exactly planar, hence a dead-straight
+contact. That is a property of the bed, not of thousands of instances, and it
+feeds both "floating slabs with no contact shadow" and "unweathered extruded
+prisms".
