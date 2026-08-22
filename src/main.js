@@ -334,6 +334,8 @@ const player = {
   vx: 0, vz: 0,
   vy: 0,         // only ever non-zero while airborne; see jump
   air: false,
+  settle: 0,     // metres the eye is lowered by the landing; see arrest
+  settleV: 0,
   yaw: 0,        // absolute world yaw, radians; 0 = looking straight down -Z
   pitch: 0,
   bob: 0,
@@ -360,6 +362,7 @@ function placeAt(d) {
   player.z = p.z;
   player.vx = 0; player.vz = 0; player.bob = 0;
   player.vy = 0; player.air = false;
+  player.settle = 0; player.settleV = 0;
   player.y = groundAt(player.x, player.z);
   /* A teleport is a fresh approach, so the arrival lift's budget refills. It
      spends nothing here — only walking does — so this cannot move a capture. */
@@ -367,7 +370,7 @@ function placeAt(d) {
 }
 
 function syncCamera() {
-  camera.position.set(player.x, player.y + EYE + player.bob, player.z);
+  camera.position.set(player.x, player.y + EYE + player.bob - player.settle, player.z);
   camera.rotation.set(player.pitch, -player.yaw, 0, 'YXZ');
 }
 
@@ -631,6 +634,52 @@ function jump(ax, az) {
   player.vz = az / l * v;
 }
 
+/* ── the landing settle ────────────────────────────────────────────────────
+ *
+ * A jump that arrests dead is correct and does not feel like a body: you arrive
+ * at three metres a second and nothing happens. This is the knee bend.
+ *
+ * It is on **height and not pitch**, deliberately. The arrival lift spends a
+ * bounded budget of pitch over the last forty-five metres and never pushes back
+ * once spent; a settle that also wrote pitch would be drawing on a different
+ * pocket of the same quantity, and the two would compose into something neither
+ * of them describes. Nothing here touches `player.pitch`.
+ *
+ * It is a critically damped spring given an initial *velocity* rather than a
+ * displacement, which is both the physical model — the impact hands the camera
+ * downward speed and the legs arrest it — and the reason there is no pop. A
+ * displacement would drop the eye instantly on the landing frame. The spring
+ * takes 1/w to reach its lowest point, so the dip has a rise time.
+ *
+ * The amplitude therefore scales with how hard you land, for free and without a
+ * curve to tune: peak dip is about 0.37 * v0 / w. A 3.4 m/s arrival on the flat
+ * dips 3.9 cm, the 1.8 m/s clip off the cut bank dips 2.0 cm. A settle identical
+ * either way is the thing that reads as an animation instead of a body.
+ *
+ * Critical damping means no overshoot, so the eye returns to level and does not
+ * bounce past it. w = 8 puts the recovery at about 0.37 s, which is a knee. */
+const SETTLE_W = 8;
+const SETTLE_TRANSFER = 0.25;   // fraction of impact speed the eye takes on
+const SETTLE_VMAX = 1.5;        // m/s, so no fall can dip more than about 7 cm
+
+function arrest(impact) {
+  if (impact <= 0) return;
+  player.settleV += Math.min(impact, SETTLE_VMAX / SETTLE_TRANSFER) * SETTLE_TRANSFER;
+}
+
+function settleStep(dt) {
+  if (!player.settle && !player.settleV) return;      // exactly inert at rest
+  const a = -SETTLE_W * SETTLE_W * player.settle - 2 * SETTLE_W * player.settleV;
+  player.settleV += a * dt;
+  player.settle += player.settleV * dt;
+  /* Snapped to zero rather than left to approach it, for the same reason the
+     walking velocity is: a decaying exponential never arrives, and a camera that
+     never comes to rest breaks pixel-identical recapture. */
+  if (Math.abs(player.settle) < 1e-4 && Math.abs(player.settleV) < 1e-4) {
+    player.settle = 0; player.settleV = 0;
+  }
+}
+
 function step(dt) {
   const f = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
   const r = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
@@ -696,12 +745,14 @@ function step(dt) {
     player.y += player.vy * dt;
     if (player.y <= g0) {
       player.y = g0;
-      player.vy = 0;
       player.air = false;
+      arrest(-player.vy);
+      player.vy = 0;
     }
   } else {
     player.y = g0;
   }
+  settleStep(dt);
 
   /* No headbob in the air — a body in flight is not taking steps. */
   const sp = player.air ? 0 : Math.hypot(player.vx, player.vz);

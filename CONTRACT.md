@@ -10637,9 +10637,52 @@ the question was asked of the state instead of a proxy.
 
 Same family as the banded means and `hf/lf`: the measurement window not matching
 the question. The lesson that generalises is narrower than "be careful" — **when
-the code already holds the state you are trying to measure, measure the state.**
+the code already holds the state you want, measure the state.**
 
 Also: `_jump.mjs` waited its full 420 s boot timeout on a page that had thrown,
 and reported a timeout rather than the exception. The gate learned to race the
 wait against the error list hours earlier; the newer tool did not inherit it.
 Both now do.
+
+## The landing settle: a spring on height, and why not on pitch
+
+A jump that arrests dead is correct and does not feel like a body. The settle is
+the knee bend, and three choices in it are load-bearing.
+
+**It is on height, not pitch.** The arrival lift spends a bounded budget of pitch
+over the last forty-five metres and never pushes back once spent. A settle that
+also wrote pitch would be drawing on a different pocket of the same quantity and
+the two would compose into something neither describes. Nothing in `arrest` or
+`settleStep` touches `player.pitch`.
+
+**It is a spring given an initial velocity, not a displacement**, which is both
+the physical model — the impact hands the eye downward speed and the legs arrest
+it — and the reason there is no pop. A displacement drops the eye on the landing
+frame; a velocity takes 1/w to reach its lowest point, so the dip has a rise
+time. Critical damping means it returns to level without bouncing past it.
+
+**The amplitude therefore scales with the landing for free**, with no curve to
+tune: peak dip is about 0.37 v0 / w. Measured across seven stations it runs
+1.5 cm off the cut bank at 1.6 m/s to 2.5 cm on the flat at 2.8 m/s. A settle
+identical either way is the thing that reads as an animation instead of a body.
+
+Judged against what the walk already has: peak dip 2.5 cm against a head bob of
+3.2 cm that has always been there and has never been complained about. It is
+smaller than the motion already present, reaches its lowest point in about 0.13 s
+and is perceptually done inside half a second. The `recover` column in
+`tools/_jump.mjs` reads 0.8–1.0 s because it measures the tail down to 0.1 mm,
+which is orders of magnitude below a pixel — do not read that as the felt time.
+
+Two capture properties, both checked rather than argued. `settleStep` returns
+immediately when both terms are zero, so a still camera is bit-exactly still, and
+the offset is snapped to zero rather than left to approach it for the same reason
+the walking velocity is. And `placeAt` clears it, so **a teleport taken in
+mid-flight lands grounded with no residue** — verified from the worst case, a
+`walkTo` issued while airborne with a settle about to be handed a velocity:
+`air=false vy=0 settle=0`, and the thirteen framings bit-identical after.
+
+One reading to interpret correctly: the pitch-drift column is 0.0000° at every
+station except the talus and the wash head, which are the two inside the arrival
+lift's forty-five metre window. That is the lift spending its budget, not the
+settle, and the five stations outside the window are the ones that speak to the
+settle.

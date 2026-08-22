@@ -92,7 +92,8 @@ const startTrace = () => page.evaluate(() => {
     const g = window.__game, p = g._player;
     const q = g._path.atZ(p.z, {});
     const gnd = g._terrain.heightAtQ(p.x, p.z, q);
-    window.__jt.push([performance.now() - t0, p.y - gnd, p.air ? 1 : 0, p.vy]);
+    window.__jt.push([performance.now() - t0, p.y - gnd, p.air ? 1 : 0, p.vy,
+                      p.settle, p.pitch]);
     if (window.__jtOn) requestAnimationFrame(tick);
   };
   window.__jtOn = true; requestAnimationFrame(tick);
@@ -113,7 +114,8 @@ const STATIONS = [
 ];
 
 console.log(`\n  jump: g 9.81, apex 0.45 m by construction — measured at ${W}x${H}\n`);
-console.log('  station            ground→apex   airtime   land Δ    peak fall speed');
+console.log('  station            ground→apex   airtime   land Δ  fall speed'
+  + '   settle  recover   pitch drift');
 
 const rows = [];
 for (const st of STATIONS) {
@@ -149,9 +151,26 @@ for (const st of STATIONS) {
     const q = g._path.atZ(p.z, {});
     return p.y - g._terrain.heightAtQ(p.x, p.z, q);
   });
-  rows.push({ st, rise, airtime, landed, vmax });
+  /* The settle, measured after touchdown: how deep the eye dips and how long it
+     takes to come back to level. And whether pitch moved at all, which it must
+     not — the settle is on height precisely so it cannot draw on the arrival
+     lift's budget. */
+  let landIdx = -1;
+  for (let i = 1; i < tr.length; i++) if (tr[i - 1][2] === 1 && tr[i][2] === 0) { landIdx = i; break; }
+  let dip = 0, back = 0, pitchDrift = 0;
+  if (landIdx >= 0) {
+    const p0 = tr[landIdx][5];
+    for (let i = landIdx; i < tr.length; i++) {
+      if (tr[i][4] > dip) dip = tr[i][4];
+      if (tr[i][4] > 1e-4) back = (tr[i][0] - tr[landIdx][0]) / 1000;
+      pitchDrift = Math.max(pitchDrift, Math.abs(tr[i][5] - p0));
+    }
+  }
+  rows.push({ st, rise, airtime, landed, vmax, dip, back, pitchDrift });
   console.log(`  ${st.name.padEnd(18)} ${rise.toFixed(3).padStart(8)} m ${airtime.toFixed(2).padStart(8)} s`
-    + ` ${landed.toFixed(4).padStart(9)} ${vmax.toFixed(2).padStart(12)} m/s`);
+    + ` ${landed.toFixed(4).padStart(9)} ${vmax.toFixed(2).padStart(9)} m/s`
+    + ` ${(dip * 100).toFixed(1).padStart(7)} cm ${back.toFixed(2).padStart(7)} s`
+    + ` ${(pitchDrift * 180 / Math.PI).toFixed(4).padStart(9)}°`);
 }
 
 /* One frame at the top of a jump, and one just after landing, to look at. */
@@ -184,6 +203,31 @@ const held = await stopTrace();
   console.log(`  holding Space for three seconds: ${peaks} jump${peaks === 1 ? '' : 's'}`
     + (peaks === 1 ? '' : '   ← should be 1'));
   if (peaks !== 1) errs.push(`held Space produced ${peaks} jumps`);
+}
+
+/* The settle must be zero on any teleport, or a capture taken shortly after a
+   walkTo would be shot through a dipping camera. Checked directly rather than
+   inferred from the matrices, so a failure says which thing broke. */
+{
+  await page.evaluate(() => { window.__game.walkTo(46); window.__game.lookAt(0, 0); });
+  await page.waitForTimeout(300);
+  await page.keyboard.down('w'); await page.waitForTimeout(300);
+  await page.keyboard.down('Space'); await page.waitForTimeout(80);
+  await page.keyboard.up('Space'); await page.keyboard.up('w');
+  /* Teleport mid-flight, which is the worst case: airborne, with a settle about
+     to be handed a velocity. */
+  await page.waitForTimeout(150);
+  const mid = await page.evaluate(() => {
+    const g = window.__game;
+    const wasAir = g._player.air;
+    g.walkTo(120); g.lookAt(0, 2);
+    const p = g._player;
+    return { wasAir, air: p.air, vy: p.vy, settle: p.settle, settleV: p.settleV };
+  });
+  const clean = mid.air === false && mid.vy === 0 && mid.settle === 0 && mid.settleV === 0;
+  console.log(`  teleport while airborne (${mid.wasAir ? 'was in flight' : 'was grounded'}):`
+    + ` air=${mid.air} vy=${mid.vy} settle=${mid.settle} — ${clean ? 'clean' : 'DIRTY'}`);
+  if (!clean) errs.push('walkTo left jump or settle state behind');
 }
 
 const after = await readSpots();
