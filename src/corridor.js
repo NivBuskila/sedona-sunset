@@ -88,6 +88,17 @@ const SMOOTH = 3;
 /* Width of the soft zone, in metres. Walk into it and the outward half of your
    velocity is bled off across it, reaching zero at the limit itself. */
 export const BAND = 1.6;
+/* Tried and rejected: a wider band while airborne, on the reasoning that a
+   player in flight cannot steer away and so the band has to do its whole job
+   against a fixed velocity. It works as arithmetic — the closest approach on a
+   route jumped end to end goes from 1.63 m to 3.11 m — and it is wrong as
+   design. Bleeding velocity 4 m out means jumping anywhere near a wall curves
+   your arc, and the walker felt it on 1940 frames where it had felt nothing at
+   all before. It also put the limit permanently out of reach, stopping the
+   turbo tests 1.5 m short. Trading "3 cm from a threshold" for "the corridor
+   now steers you in mid-air" is the wrong way round: the first is a thin margin
+   on a benign outcome, the second is the exact intrusion this file exists to
+   avoid. The margin was addressed in the test instead. */
 /* How fast the player is returned if they are somehow already outside — the
    corridor narrowing ahead of them as they walk up-wash is the ordinary way
    that happens. Slow enough to read as being eased back rather than shoved. */

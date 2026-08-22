@@ -49,6 +49,7 @@ quiet, so give it more volume than you would expect.
 | `W` `A` `S` `D` | walk, at 1.55 m/s |
 | `Shift` | jog |
 | `Shift` + `Ctrl` | run, for covering ground quickly |
+| `Space` | jump, about 45 cm |
 | `0` – `9` | teleport along the wash |
 | `Esc` | release the pointer |
 | `F3` | frame-rate readout |
@@ -58,6 +59,11 @@ the bend, 5 the sun gap, 6 past the second bend, 7 the long straight, 8 the uppe
 wash, 9 the head of the wash. The walk is meant to be taken on foot at 1.55 m/s,
 a real walking pace, and runs about three and a half minutes end to end; the
 number keys are for going back to something.
+
+The jump is a person's jump and not a game's — 45 cm and just over half a second
+in the air, enough to hop a rill or get up onto a bank, and not enough to get
+anywhere the walk could not take you. You keep the speed you left the ground
+with, so there is no steering in mid-air.
 
 The wash is a corridor between canyon walls and is built like one. Walk hard at a
 cliff and the ground stops giving over the last stride or so rather than stopping

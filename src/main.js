@@ -332,6 +332,8 @@ const corridor = buildCorridor(path, terrain);
 const player = {
   x: 0, y: 0, z: 0,
   vx: 0, vz: 0,
+  vy: 0,         // only ever non-zero while airborne; see jump
+  air: false,
   yaw: 0,        // absolute world yaw, radians; 0 = looking straight down -Z
   pitch: 0,
   bob: 0,
@@ -357,6 +359,7 @@ function placeAt(d) {
   player.x = p.x;
   player.z = p.z;
   player.vx = 0; player.vz = 0; player.bob = 0;
+  player.vy = 0; player.air = false;
   player.y = groundAt(player.x, player.z);
   /* A teleport is a fresh approach, so the arrival lift's budget refills. It
      spends nothing here — only walking does — so this cannot move a capture. */
@@ -482,8 +485,16 @@ const perf = createPerf({
 /* ── first-person controls (human only; never touched by walkTo) ───────── */
 
 const keys = Object.create(null);
-addEventListener('keydown', e => { keys[e.code] = true; });
-addEventListener('keyup', e => { keys[e.code] = false; });
+addEventListener('keydown', e => {
+  keys[e.code] = true;
+  /* Space scrolls a document by default, and while the body is only a script
+     and a canvas today that is a property of the page, not a promise. */
+  if (e.code === 'Space') e.preventDefault();
+});
+addEventListener('keyup', e => {
+  keys[e.code] = false;
+  if (e.code === 'Space') jumpArmed = true;
+});
 canvas.addEventListener('click', () => canvas.requestPointerLock());
 
 /* Number keys jump to the eight framings the capture harness shoots, which are
@@ -567,6 +578,59 @@ function arrivalLift(dt, forward) {
   player.pitch = Math.min(1.45, player.pitch + give);
 }
 
+/* ── jump ──────────────────────────────────────────────────────────────── */
+
+/* A person's standing jump, and deliberately nothing more. Real gravity and a
+   45 cm apex put the whole thing at 0.61 s in the air, which is about what it
+   costs to hop a rill. Anything higher immediately reads as a platformer and
+   fights the tone of a walk you are supposed to take slowly.
+ *
+ * v0 = sqrt(2 g h). Stated that way rather than as a tuned number so that
+ * changing the apex cannot silently desynchronise it from gravity. */
+const G = 9.81;
+const JUMP_H = 0.45;
+const JUMP_V = Math.sqrt(2 * G * JUMP_H);
+
+/* The single most important property of this feature is what it does *not*
+   touch: **the airborne state is entered only by pressing Space.** Terrain
+   never puts you in the air. Walking off a cut bank or down the talus keeps the
+   hard ground clamp that has always been there, so the walk is unchanged to the
+   last bit and only an explicit jump adds a ballistic arc. Letting the ground
+   fall away into flight would have been more "correct" and would have made
+   every undulation in a 330 m wash faintly bouncy. */
+let jumpArmed = true;
+
+/* The push-off, which is the part that makes a jump with no air steering
+   playable at all.
+ *
+ * Without it, jumping from a standstill while holding forward leaves the ground
+ * at whatever velocity one frame of acceleration had built — about 0.15 m/s —
+ * and since there is no steering in the air you land having gone nowhere. Tap
+ * Space repeatedly and you are pinned to the spot. The walker simulation found
+ * this immediately by covering 0.0 m in 6.7 minutes and 667 jumps.
+ *
+ * The fix is not air control. A person standing still who jumps forward is not
+ * steering mid-flight; they are choosing a takeoff velocity with their legs. So
+ * the takeoff is allowed to reach walking pace in the direction being held, and
+ * nothing beyond it: `max` with the speed already carried means this can only
+ * ever raise a standstill to a walk and never add to a jog or a sprint. */
+function jump(ax, az) {
+  /* Rearmed on *keyup*, which is the whole of the anti-bunny-hop. Rearming on
+     landing instead reads like the obvious choice and is wrong: the key is still
+     down at the moment you touch the ground, so the next frame jumps again and
+     holding Space turns the walk into a pogo stick. */
+  if (!jumpArmed || player.air) return;
+  jumpArmed = false;
+  player.air = true;
+  player.vy = JUMP_V;
+
+  const l = Math.hypot(ax, az);
+  if (!l) return;                                   // a jump in place, on purpose
+  const v = Math.max(Math.hypot(player.vx, player.vz), 1.55);
+  player.vx = ax / l * v;
+  player.vz = az / l * v;
+}
+
 function step(dt) {
   const f = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
   const r = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
@@ -590,11 +654,22 @@ function step(dt) {
 
   /* Critically damped approach to the target velocity, then an absolute snap
      to zero — a decaying exponential never actually reaches rest, and a
-     never-resting player breaks pixel-identical recapture. */
-  const k = 1 - Math.exp(-12 * dt);
-  player.vx += (ax - player.vx) * k;
-  player.vz += (az - player.vz) * k;
-  if (!f && !r && Math.hypot(player.vx, player.vz) < 0.004) { player.vx = 0; player.vz = 0; }
+     never-resting player breaks pixel-identical recapture.
+
+     Skipped entirely while airborne: you keep the velocity you left the ground
+     with. That is both what a body does and the reason a jump cannot be used to
+     reach anywhere walking could not — no air steering means no using the arc to
+     round the corridor. */
+  if (!player.air) {
+    const k = 1 - Math.exp(-12 * dt);
+    player.vx += (ax - player.vx) * k;
+    player.vz += (az - player.vz) * k;
+    if (!f && !r && Math.hypot(player.vx, player.vz) < 0.004) { player.vx = 0; player.vz = 0; }
+  }
+
+  /* After the ground acceleration, so the takeoff carries the velocity this
+     frame built rather than last frame's. */
+  if (keys.Space) jump(ax, az);
 
   /* Confinement acts on the velocity, before it is integrated, so it is not a
      position fixup that can accumulate and so it is identically inert at rest —
@@ -605,9 +680,31 @@ function step(dt) {
 
   player.x += player.vx * dt;
   player.z += player.vz * dt;
-  player.y = groundAt(player.x, player.z);
 
-  const sp = Math.hypot(player.vx, player.vz);
+  /* The ground clamp, which is the oldest solid thing in this file, is kept
+     exactly as it was for the grounded case. Airborne is the new branch and it
+     lands by the same clamp, so there is one definition of "on the ground" and
+     no way for the two to disagree.
+
+     The landing test is against the height *under where you now are*, not where
+     you took off, so an arc that carries you onto a rising talus lands early on
+     the slope and one over a cut bank falls the extra distance. Both reseat on
+     the field itself; neither needs a special case. */
+  const g0 = groundAt(player.x, player.z);
+  if (player.air) {
+    player.vy -= G * dt;
+    player.y += player.vy * dt;
+    if (player.y <= g0) {
+      player.y = g0;
+      player.vy = 0;
+      player.air = false;
+    }
+  } else {
+    player.y = g0;
+  }
+
+  /* No headbob in the air — a body in flight is not taking steps. */
+  const sp = player.air ? 0 : Math.hypot(player.vx, player.vz);
   if (sp < 0.004) player.bob = 0;
   else player.bob = Math.sin((player.bob0 = (player.bob0 || 0) + dt * sp * 5.4)) * 0.032;
 }
@@ -816,6 +913,13 @@ const api = {
      tools/sundisc.mjs. A dynamic `import('three')` inside an evaluate context is
      not an alternative: it hangs rather than throwing. */
   _three: THREE,
+  /* The player state itself, so a probe can ask whether it is airborne instead
+     of inferring it from camera height. Two tools in a row got that inference
+     wrong — first against absolute height, which made walking uphill read as
+     permanent flight, then against height over ground, which reads the 3.2 cm
+     head bob as a 1.6 s hop because the bob is bigger than the threshold. The
+     state is not a proxy and cannot be fooled by either. */
+  _player: player,
   _scene: scene, _camera: camera, _terrain: terrain, _path: path, _atmo: atmo,
   _post: post,
   /* When the loading message reached the screen, how long each generation phase

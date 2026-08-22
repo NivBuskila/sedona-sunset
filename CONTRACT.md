@@ -10577,3 +10577,69 @@ worthless.
 
 **Then judged by eye at full resolution before it is final.** If two discs at 0.03 read
 as a graphic rather than an accident of the glass, drop to one.
+
+## Jump, and three attempts to measure it
+
+Space jumps: real gravity, a 45 cm apex, `v0 = sqrt(2 g h)` so the two cannot
+drift apart. Measured in the page across six stations, airtime lands between
+0.47 and 0.63 s against a design value of 0.61, apex between 0.30 and 0.50 m, and
+the landing offset is **exactly zero at every station**. Impact speed 1.8–3.4 m/s
+against a predicted 2.97. Jumping into rising ground correctly cuts the arc short
+rather than extending it.
+
+**The airborne state is entered only by pressing Space.** Terrain never puts you
+in the air, so walking off a cut bank keeps the hard ground clamp it always had
+and the walk is unchanged to the bit. Letting the ground fall away into flight
+would be more "correct" and would make every undulation in 330 m faintly bouncy.
+
+**The push-off is the one place the "no air control" instruction was bent, and
+the simulation is why.** With no horizontal authority at all, the takeoff frame
+ran before the ground acceleration and left the ground at about 0.15 m/s: the
+walker covered **0.0 m in 6.7 minutes over 667 jumps**, pinned to the spot. The
+fix is not air steering. A person jumping forward from standing chooses that
+velocity with their legs, so the takeoff may reach walking pace in the direction
+held, capped by `max` against the speed already carried — it can only raise a
+standstill to a walk and never adds to a jog or a sprint. It is honestly an
+instantaneous velocity change, which is the mechanical signature of sliding; at
+1.55 m/s and simultaneous with the impulse it reads as pushing off, but that is
+the thing to look at first if it ever feels wrong.
+
+### The 3 cm margin was a measurement artefact
+
+Jumping the route end to end closed to 1.63 m of a 1.60 m soft band, where
+walking clears it by four metres, and a 3 cm margin is one terrain change from
+going red. **A wider band while airborne fixes the number and is the wrong
+design**: it takes the closest approach to 3.11 m, and it also bleeds velocity
+four metres out, so jumping anywhere near a wall curves your arc — the walker
+felt the corridor on 1940 frames where it had felt nothing, and the limit went
+permanently out of reach, stopping the turbo tests 1.5 m short. Trading a thin
+margin on a benign outcome for the corridor steering you in mid-air is the wrong
+way round. It is reverted, with the reasoning kept in `corridor.js`.
+
+The margin was in the measurement. Splitting the claim in two: **through the body
+of the wash the closest approach is 5.80 m**, three and a half band widths, and
+at the head it is 1.63 m — and the head is where the walk ends and where being
+felt has always been sanctioned, exactly as the longitudinal check has always
+exempted it. Measuring across the head was measuring the exception.
+
+### Three tools in a row inferred airborne from a height
+
+Worth recording as a run, because the shape repeats and the fix only arrived when
+the question was asked of the state instead of a proxy.
+
+1. Height above where the jump started. Walk uphill and you never come down:
+   1.9 s airtimes against 0.61, and a 34 m/s "fall" that was one long frame
+   across a step in the ground.
+2. Height above the ground beneath the camera. Better, and still wrong — the
+   **3.2 cm head bob is larger than the 2 cm threshold**, so ordinary walking
+   registered as a 1.6 s hop.
+3. `player.air`, now exposed as `__game._player`. Not a proxy, cannot be fooled.
+
+Same family as the banded means and `hf/lf`: the measurement window not matching
+the question. The lesson that generalises is narrower than "be careful" — **when
+the code already holds the state you are trying to measure, measure the state.**
+
+Also: `_jump.mjs` waited its full 420 s boot timeout on a page that had thrown,
+and reported a timeout rather than the exception. The gate learned to race the
+wait against the error list hours earlier; the newer tool did not inherit it.
+Both now do.
