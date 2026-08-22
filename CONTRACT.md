@@ -2967,6 +2967,35 @@ So the margin **widens from about 3× to about 5×** between capture and deliver
 the pass matters more where it ships than where it was tuned. Any future judgement of the
 dither should be made at 1997×1123 or above.
 
+## The 400 ms settle is wall-clock, so determinism has to be checked under load
+
+`tools/shoot.mjs` waits `page.waitForTimeout(400)` between placing the camera and reading the
+buffer. That is a **wall-clock** wait, not a frame count, and the number of frames it covers is
+therefore a function of resolution and of machine load: roughly a hundred at 800×450, but only
+about thirteen to twenty-four at 2560×1440 where the frame costs 17–30 ms — and fewer still when
+another agent is capturing at the same time, which the render lock makes common.
+
+Two captures out of eight came back byte-different during the 1440p handoff, which looked like a
+seeding bug and is not one. The seeds are sound and both are worth knowing about:
+
+- **Grain is pinned by the walk.** `walkTo(d)` calls `post.setWalk(d)`, which freezes the phase
+  and derives it as a pure function of `d`. `shoot.mjs` calls `walkTo` for every view, so grain
+  is a closed form in the station, not in elapsed time.
+- **The quality governor is pinned for captures.** `perf.js` has an explicit harness clause —
+  `navigator.webdriver` or a software rasteriser forces the top tier with no adaptation — so the
+  ladder cannot introduce a rung change mid-capture.
+
+Repeating both cases with the machine quiet gave byte-identical output: three consecutive
+captures at 800×450 identical, and two at 2560×1440 identical to each other *and* to one of the
+two original disagreeing frames. So the mismatch is **something in the pipeline not having
+converged inside 400 ms under contention**, and the odd frame out is the early one.
+
+**So: a byte mismatch between repeat captures is not evidence of a seeding bug until it has been
+reproduced on a quiet machine.** Check the render lock and other agents' captures first, and
+prefer to verify determinism at the resolution and load you intend to quote. A frame-count or
+convergence-based settle would remove the class entirely and is the real fix; it is a harness
+change and belongs to whoever owns `shoot.mjs`.
+
 ## Triangles are not what this frame costs, and the frame costs 31 ms
 
 `tools/bench.mjs` on the real adapter, 2560×1440, top tier, median of seven blocks of thirty:
