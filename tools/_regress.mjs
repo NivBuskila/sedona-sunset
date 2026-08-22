@@ -155,8 +155,27 @@ const ABLATIONS = [
   ['s4.lod0-off', [['texture2DLodEXT( map, p.xy + o, 0.0 )', 'texture2D( map, p.xy + o )']]],
 ];
 
+/* Foreign GPU load, sampled *before* anything of ours launches.
+ *
+ * This is the column that proves the machine was quiet, and it has to be taken
+ * before the browser exists: once the scene is rendering, utilisation is 100% by
+ * design and says nothing about who else is on the card. The number that matters
+ * is what the GPU was doing while nobody was asking it to do anything. Tonight
+ * that floor was 65-75%, spiking to 100%, from an animated desktop wallpaper, the
+ * vendor overlay, the editor and fourteen agent browsers — which is the whole of
+ * the 39% "regression" that cost this project three hours. A run that does not
+ * report this figure cannot be compared with a run taken at another time. */
+const IDLE_SECS = Number(getf('idlesecs', 10));
+process.stderr.write(`  [${TAG}] sampling foreign GPU load for ${IDLE_SECS}s before boot\n`);
+const stopIdle = sampleGpu(500);
+await new Promise(r => setTimeout(r, IDLE_SECS * 1000));
+const idle = stopIdle();
+if (idle) process.stderr.write(`  [${TAG}] foreign load: mean ${idle.mean}%, ` +
+  `${idle.min}-${idle.max}% over ${idle.n} samples — ` +
+  `${idle.mean <= 12 ? 'MACHINE IS QUIET' : 'NOT QUIET, this run is contended'}\n`);
+
 const browser = await chromium.launch({ headless: true, args: LAUNCH_ARGS });
-const out = { tag: TAG, root: ROOT, w: W, h: H, rows: [] };
+const out = { tag: TAG, root: ROOT, w: W, h: H, rows: [], idle };
 let stopGpu = () => null;
 
 try {
@@ -185,23 +204,40 @@ try {
     return { L: +(sum / n).toFixed(2), hot: +(100 * hot / n).toFixed(2) };
   };
 
-  const measure = async (label, moving = has('moving')) => {
-    const r = await page.evaluate(async ([blocks, per, moving]) => {
+  const measure = async (label, moving = has('moving'), rung = -1) => {
+    const r = await page.evaluate(async ([blocks, per, moving, rung]) => {
       const g = window.__game, gl = g.renderer.getContext();
       const px = new Uint8Array(4);
       const sync = () => gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
       g.setPaused(true);
-      g.perf.setTier('high');
-      g.perf.setScale(1);
+      if (rung < 0) { g.perf.setTier('high'); g.perf.setScale(1); }
+      else g.perf.setRung(rung);
       g.walkTo(46); g.lookAt(0, 0);
-      /* Warm past every reallocation a tier or scale change causes before the
-         first block is timed. Six frames was not enough once and the row it
-         produced read 42 ms against a true 20. */
-      for (let i = 0; i < 60; i++) g.renderOnce();
+      for (let i = 0; i < 30; i++) g.renderOnce();
       sync();
+      /* Warm until the frame time stops falling, not for a fixed count.
+       *
+       * A fixed sixty was not enough and produced a table with rung 1 slower
+       * than rung 0 and rung 4 faster moving than held. A rung change reallocates
+       * the draw buffer and both shadow maps, and a *tier* change alters the
+       * atmosphere's sample counts, which is a new shader variant and an ANGLE
+       * HLSL compile — and that compile was landing inside the timed blocks. So
+       * warm until two consecutive short blocks agree within 4%, then stop, with
+       * a cap so a genuinely unstable machine cannot spin here forever. */
+      const settle = (draw) => {
+        let prev = Infinity;
+        for (let g2 = 0; g2 < 12; g2++) {
+          const t = performance.now();
+          for (let i = 0; i < 15; i++) draw();
+          sync();
+          const ms = (performance.now() - t) / 15;
+          if (ms >= prev * 0.96) return g2;
+          prev = ms;
+        }
+        return 12;
+      };
       const run = (draw) => {
-        for (let i = 0; i < 12; i++) draw();
-        sync();
+        settle(draw);
         const ms = [];
         for (let b = 0; b < blocks; b++) {
           const t = performance.now();
@@ -252,7 +288,7 @@ try {
         calls: info.calls, tris: info.triangles,
         buffer: g.perf.stats().buffer.join('x'),
       };
-    }, [BLOCKS, PER, moving]);
+    }, [BLOCKS, PER, moving, rung]);
     return { label, ...r };
   };
 
@@ -273,7 +309,63 @@ try {
   });
   stopGpu = sampleGpu(700);
   process.stderr.write(`  [${TAG}] booted in ${((out.bootMs) / 1000).toFixed(0)}s, timing full\n`);
-  out.rows.push(await measure('full'));
+
+  if (has('ladder')) {
+    /* The whole ladder in one page load, held and moving at each rung.
+     *
+     * One load rather than one per rung because the boot is forty seconds and
+     * nine of those is most of the window a frozen tree gives you. The rung
+     * changes reallocate the draw buffer and both shadow maps, which is exactly
+     * what the sixty warm-up frames inside measure() are for — an earlier
+     * version warmed six and reported 42 ms against a true 20. */
+    const n = await page.evaluate(() => window.__game.perf.rungs.length);
+    /* Visit every rung once before timing any of them, so that every tier's
+       shader variant is already compiled when the timed sweep starts. Without
+       this the first rung to reach each tier pays that tier's compile and reads
+       slower than the rung above it — which is exactly the table the first
+       version of this sweep produced. */
+    process.stderr.write(`  [${TAG}] pre-compiling ${n} rungs\n`);
+    await page.evaluate(async (n) => {
+      const g = window.__game;
+      g.setPaused(true);
+      for (let i = 0; i < n; i++) {
+        g.perf.setRung(i);
+        for (let f = 0; f < 12; f++) g.renderOnce();
+      }
+    }, n);
+    /* Two passes over the ladder, keeping the lower of the two readings per rung.
+     *
+     * Not cherry-picking: contention is strictly additive. Another process on the
+     * card can only ever make a frame take longer, never shorter, so of two
+     * measurements of the same rung the smaller is the better estimate of what
+     * the scene costs and the larger contains something that is not the scene.
+     * The first clean sweep of this ladder had rungs 6 and 7 land 10 ms and 4 ms
+     * above their neighbours, out of order with rungs on either side, because a
+     * capture started somewhere else on the machine while they were being timed.
+     * The spread between passes is reported so a reader can see how much of that
+     * was happening. */
+    const PASSES = Number(getf('passes', 2));
+    const best = new Array(n).fill(null);
+    for (let p = 0; p < PASSES; p++) {
+      for (let i = 0; i < n; i++) {
+        const row = await measure('rung ' + i, true, i);
+        const b = best[i];
+        if (!b) best[i] = { ...row, heldHi: row.ms, movingHi: row.moving };
+        else {
+          b.heldHi = Math.max(b.heldHi, row.ms);
+          b.movingHi = Math.max(b.movingHi, row.moving);
+          if (row.ms < b.ms) b.ms = row.ms;
+          if (row.moving < b.moving) b.moving = row.moving;
+        }
+        process.stderr.write(`  [${TAG}] pass ${p} rung ${i} ${String(row.buffer).padEnd(9)} ` +
+          `held ${row.ms.toFixed(2)}  moving ${row.moving == null ? '?' : row.moving.toFixed(2)}\n`);
+      }
+    }
+    out.passes = PASSES;
+    for (const r of best) out.rows.push(r);
+  } else {
+    out.rows.push(await measure('full'));
+  }
 
   if (has('ablate')) {
     /* Substitutions go in through onBeforeCompile on every material in the
@@ -371,6 +463,22 @@ else {
     `   frame L ${out.frame ? out.frame.L : '?'} clipped ${out.frame ? out.frame.hot : '?'}%` +
     `   ${out.real ? 'looks like the scene' : '✗ DOES NOT LOOK LIKE THE SCENE'}`);
   if (out.error) console.log(`  ✗ ${out.error}`);
+  if (out.idle) console.log(`  foreign GPU load before boot: mean ${out.idle.mean}%, ` +
+    `${out.idle.min}-${out.idle.max}% over ${out.idle.n} samples — ` +
+    `${out.idle.mean <= 12 ? 'the machine was quiet, these numbers are the honest ones'
+      : 'NOT QUIET — every figure below is a floor, not an estimate'}`);
+  if (has('ladder')) {
+    console.log(`  best of ${out.passes} passes per rung; the spread is how much the machine moved under it`);
+    console.log('  rung  buffer       held ms  held fps   moving ms  moving fps   spread');
+    for (const r of out.rows) {
+      const sp = Math.max(r.heldHi - r.ms, (r.movingHi || 0) - (r.moving || 0));
+      console.log(`  ${r.label.replace('rung ', '').padEnd(5)} ${String(r.buffer).padEnd(11)} ` +
+        `${r.ms.toFixed(2).padStart(8)} ${(1000 / r.ms).toFixed(0).padStart(9)}  ` +
+        `${(r.moving == null ? '' : r.moving.toFixed(2)).padStart(10)} ` +
+        `${(r.moving == null ? '' : (1000 / r.moving).toFixed(0)).padStart(11)} ` +
+        `${(Number.isFinite(sp) ? sp.toFixed(2) : '').padStart(8)}`);
+    }
+  } else {
   console.log('  what                  held  paired   saved  moving    walk  redraw   sites   tris');
   for (const r of out.rows) {
     console.log(`  ${r.label.padEnd(16)} ${r.ms.toFixed(2).padStart(8)} ` +
@@ -381,6 +489,7 @@ else {
       `${(r.noRedraw == null ? '' : '+' + (r.moving - r.noRedraw).toFixed(2)).padStart(7)}  ` +
       `${(r.sites == null ? '' : r.sites === 0 ? '0 STALE' : String(r.sites)).padStart(6)} ` +
       `${((r.tris / 1e6).toFixed(2) + 'M').padStart(6)}`);
+  }
   }
   if (out.gpuLoad) console.log(`  GPU during the run: mean ${out.gpuLoad.mean}% util, ` +
     `${out.gpuLoad.min}-${out.gpuLoad.max}%, sm clock ${out.gpuLoad.clock} MHz — ` +
