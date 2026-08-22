@@ -1499,6 +1499,11 @@ float gSc = exp2(-gFl);
 vec2 gUV = wxz + vec2(3.7, 12.9);
 vec4 gr = mix(texture2D(uGrit, gUV * gSc), texture2D(uGrit, gUV * gSc * 0.5), gTw);
 float gritK = smoothstep(0.007, 0.030, footG);
+/* Tangent-space strength for the same map's normal channels, applied on far
+   ground below. rock.js reads this map at 1.9 on a close face; this is lower
+   because the population it lands on is grazing-lit, which is the geometry where
+   grain normals turn to salt and pepper before the structure metric notices. */
+const float GRIT_N = 1.4;
 
 /* Three scales of variation. The 61 m and 18 m maps break up the detail tiles;
    the 7 m map exists to fill the mid distance, where a two-scale scheme leaves
@@ -1916,6 +1921,11 @@ vec3 gWN = tsToWorld(gNt, gN);
    remaining artefact on the banks — it was hidden before only because the
    triplanar rock map used to cover them. Triplanar the dirt too, and blend it in
    by slope so the flat floor keeps the cheap two-scale sample. */
+/* Computed before the steep branch because the branch needs it to decide whether
+   to pay for the grit layer's reprojection; applied after it. */
+float gritNK = smoothstep(0.020, 0.045, footG) * (1.0 - rockW) * (1.0 - wallM);
+vec2 gritGB = gr.gb;
+
 vec3 triW = pow(abs(gN), vec3(4.0));
 triW /= max(triW.x + triW.y + triW.z, 1e-4);
 float steep = smoothstep(0.14, 0.40, slope);
@@ -1943,6 +1953,57 @@ if (steep > 0.006) {
   gM  = mix(gM, pM, w);
   gWN = normalize(mix(gWN, tsToWorld(normalize(mix(vec3(0.0, 0.0, 1.0), pN,
         0.16 + 0.84 * grainF)), gN), w));
+  /* The grit layer needs the same reprojection and for exactly the same reason.
+     Its UV is world XZ, as the dirt's was, so on a slope its grains are drawn
+     out along the dip line. Read at GRIT_N 6.0 the far_320 head came back combed
+     into long parallel fibres, and an isotropic worley packing can only produce
+     parallel marks if the projection is stretching it - so the layer added to
+     break the streaks was delivering its detail already aligned with them.
+     Four fetches, only on steep ground that is also past the gritNK onset. */
+  if (gritNK > 0.002) {
+    vec2 gz = (vWPos.zy + vec2(3.7, 12.9)) * gSc;
+    vec2 gx = (vWPos.xy + vec2(3.7, 12.9)) * gSc;
+    vec2 gzdx = pdx.zy * gSc, gzdy = pdy.zy * gSc;
+    vec2 gxdx = pdx.xy * gSc, gxdy = pdy.xy * gSc;
+    vec2 gp0 = mix(texture2DGradEXT(uGrit, gx, gxdx, gxdy).gb,
+                   texture2DGradEXT(uGrit, gz, gzdx, gzdy).gb, pw);
+    vec2 gp1 = mix(texture2DGradEXT(uGrit, gx * 0.5, gxdx * 0.5, gxdy * 0.5).gb,
+                   texture2DGradEXT(uGrit, gz * 0.5, gzdx * 0.5, gzdy * 0.5).gb, pw);
+    gritGB = mix(gritGB, mix(gp0, gp1, gTw), w);
+  }
+}
+
+/* ---- the grit layer's normal, on far ground ----
+   makeGrit packs a normal into G,B and this shader has never read it: the layer
+   drives an albedo mottle (gr.r) and a socket (gr.a) and nothing else. rock.js
+   has always read it, as domApply((gr.gb - 0.5) * 1.9, gN); terrain has not.
+
+   This is the only layer in the shader whose feature size is held constant in
+   screen space - gLod/gSc key the sample to footG - so it is the only detail
+   here that does not thin out with distance. Every other normal is world-locked
+   and is flattened by the mip chain long before 100 m. Past a 40 mm footprint
+   grainF has faded the dirt normal to its 0.16 floor and the mesh normal shades
+   the surface very nearly alone: broad undulation with no relief on it. Under a
+   15 degree sun a small normal deviation is a large luminance swing, so on a
+   slope facing the light that undulation reads as long parallel streaks, and it
+   crosses landform boundaries because the undulation does. That is the far_320
+   headwall, and the flat version of the same absence is the mid-distance floor.
+   It is an absence rather than a term to remove, which is why ablating rill and
+   gully each came back innocent.
+
+   The onset puts it outside the near field by construction rather than by
+   measurement: ground samples its near and mid bands at 9.1 and 12.1 mm and
+   wash_mid its near at 17.9 mm, so gritNK is exactly zero on all three and
+   nothing downstream can differ by a bit. It first carries weight in wash_mid's
+   mid band at 28.4 mm - the population the gradient headroom belongs to - and
+   is saturated on the far_320 head at about 100 mm. No slope gate: the two
+   defects are one defect seen flat and seen on a slope, so a gate on slope
+   would fix half of it by construction. */
+if (gritNK > 0.002) {
+  /* Composed in the frame of the normal already computed rather than mixed
+     toward a replacement, so the sand bedform and the triplanar reprojection
+     survive underneath it instead of being crossfaded away at range. */
+  gWN = tsToWorld(normalize(vec3((gritGB - 0.5) * (GRIT_N * gritNK), 1.0)), gWN);
 }
 
 /* ---- desiccation cracks ----

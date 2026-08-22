@@ -6735,3 +6735,117 @@ observation that discriminated between *categories* was available and outranked
 by one that matched *vocabulary*: here, "no shadow terminator inside them" said
 shading rather than geometry before any ablation was run. Rank the discriminating
 observation first; a matching name is the weakest evidence in the room.
+
+---
+
+## The 30 m detail cliff: fixed. The grit layer's normal, reprojected
+
+**Status: landed.** `src/terrain.js`, `GRIT_N = 1.4`. This is one change for the
+two worst remaining defects — the `far_320` headwall streaking (critic's
+number-one finding) and the mid-distance floor waxiness — which the previous
+round established are one defect seen on a slope and seen flat.
+
+### What was actually wrong: an unread channel
+
+`makeGrit` packs **`R` = tone, `G` = normal x, `B` = normal y, `A` = ao**.
+`terrain.js` read `gr.r` and `gr.a` and *never read `G,B` at all*. `rock.js` has
+always read them, as `domApply((gr.gb - 0.5) * 1.9, gN)`. So the one layer in the
+shader whose feature size is held constant in screen space — `gLod`/`gSc` key it
+to `footG`, which is why it is faded *in* with footprint — was contributing an
+albedo mottle and a socket term and no shading whatsoever.
+
+Everything else in the ground shader is world-locked and is flattened by the mip
+chain long before 100 m. Past a 40 mm footprint `grainF` has faded the dirt
+normal to its 0.16 floor and the mesh normal shades the surface nearly alone:
+broad undulation with no relief on it. Under a 15° sun a small normal deviation
+is a large luminance swing, so on a slope facing the light that undulation reads
+as long parallel streaks, and it crosses landform boundaries because the
+undulation does. **The defect was an absence, which is why ablating `rill` and
+`gully` each came back innocent.**
+
+### The correction inside the correction: the grit layer needed reprojecting too
+
+First attempt read `gr.gb` directly and was invisible at `GRIT_N` 1.0. Rather
+than assume it was too weak, it was driven to **6.0** as a discriminator. The
+head came back *combed into long parallel fibres* — and the grit map is an
+isotropic worley packing, so **an isotropic map can only produce parallel marks
+if the projection is stretching it**. `gUV` is world XZ, exactly as the dirt's
+was before the triplanar branch was added for it. The layer brought in to break
+the streaks was delivering its detail already aligned with them.
+
+Fixing it is the reprojection the dirt layer already has, applied to the same
+map, inside the existing `steep` branch and reusing its `pw` and `pdx/pdy`:
+four `texture2DGradEXT` fetches, gated on `gritNK > 0.002` so no near or flat
+ground pays for them. **The mechanism was right and the projection was wrong,
+and the amplitude sweep is what separated those** — at 1.0 "no effect" and "wrong
+space" are indistinguishable; at 6.0 they are not.
+
+### Results
+
+| | baseline | shipped (1.4) | band |
+|---|---|---|---|
+| `ground` near+mid, every metric | — | **identical to 4 dp** | — |
+| `ground` near field pixels | — | **byte-identical** y 0.17–1.00 | — |
+| `wash_mid` near, every metric | — | **identical to 4 dp** | — |
+| `wash_mid` mid `grad/L` | 0.1220 | **0.1374** | 0.12–0.16 ✓ |
+| `wash_mid` mid `hf9/L` | 0.1796 | **0.1958** (+9%) | detail arriving |
+| `ground` hue / `wash_mid` sat | — | **unmoved** | — |
+
+`far_320`: the continuous combed fibres are gone from the headwall, replaced by
+discrete lit facets with dark between them. The broad tonal banding from the mesh
+undulation remains — that is geometry — but the critic's actual complaint,
+*"there is no rock inside them: no bedding, no facets, no shadow terminator, no
+scale cue"*, is answered: there are now facets and terminators at grain scale.
+**This is a partial fix of the streaking and a full fix of the absence.**
+`far_220` and `far_270` both improve, their mid floors carrying granular detail
+where they went waxy.
+
+### Byte-identity by construction, not by measurement
+
+`gritNK = smoothstep(0.020, 0.045, footG) * (1 - rockW) * (1 - wallM)`. The onset
+is chosen against measured footprints rather than tuned: `ground` samples its
+near and mid bands at 9.1 and 12.1 mm and `wash_mid` its near at 17.9 mm, so the
+gate is **exactly zero** on all three and nothing downstream can differ by a bit.
+It first carries weight in `wash_mid`'s mid band at 28.4 mm — the population the
+gradient headroom belonged to — and saturates on the `far_320` head at ~100 mm.
+Same pattern as the `gridK` work and the `max(grainF, farG)` attempt: *state the
+gate in the units the guardrail is measured in, and the guardrail cannot be
+violated by arithmetic.* Verified: 0 differing pixels below y 0.17 on `ground`.
+
+No slope gate, deliberately. The two defects are one defect seen flat and seen on
+a slope, so gating on slope would have fixed half of it by construction.
+
+### Amplitude: chosen by the trap predictor, not by eye
+
+`tools/_gritn.mjs` runs the binary-field guard offline before any render. RMS
+tangent slope has the trap at 0.8 and never came close (1.4 → 0.181). **The
+predictor that bound the choice was the terminator-crossing fraction**, which is
+the one `_rakeprobe` says actually predicts salt and pepper:
+
+| `GRIT_N` | RMS slope | past terminator |
+|---|---|---|
+| 1.0 | 0.129 | 0.1% |
+| **1.4 (shipped)** | **0.181** | **1.7%** |
+| 1.9 | 0.246 | 6.1% |
+| 2.2 | 0.284 | 9.7% |
+
+2.2 was rendered and rejected **by eye on `far_270`**, whose mid floor came back
+as high-contrast hash with too many fully-dark texels — torn straw rather than
+gravel — at the same time as its `grad/L` (0.1508) was still comfortably inside
+the band and its RMS was a third of the trap. *The gradient band and the RMS trap
+both passed a setting the eye refused.* That is the fourth instance of `hf/lf`
+and its relatives being blind to this family, and the first time the
+terminator-crossing column has been the one that agreed with the eye — at 9.7%
+against 1.7%. **Rank that column, not RMS, when the sun is grazing.**
+
+### For whoever picks this up
+
+- `rock.js` reads these channels at **1.9** on a close face and is fine there,
+  because the trap is a property of *grazing* light and not of the map.
+- The remaining `far_320` banding is mesh-normal undulation under a 15° sun. It
+  is a height-field or a light-angle problem, not a texture one; no detail layer
+  will remove it, only put material on it.
+- `tools/_banddiff.mjs` exists now because `pxdiff`'s frame-wide figure cannot
+  distinguish "gate leaking into the near field" from "gate working as specified
+  in the far strip" — on a floor framing, **bands are distances**, and a
+  distance-gated change can only be verified per band.
