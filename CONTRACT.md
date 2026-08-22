@@ -4482,3 +4482,117 @@ probe and the bounce probe separately, which is cheap because both probes alread
 is flat in `tAO`, this story is wrong too. **It is a lead with a number attached, not a finding,
 and it is stated that way because the last two mechanisms published from this desk without one
 were both no-ops.**
+
+## The gate, and the one check in it that does not care about exposure
+
+`node tools/gate.mjs` is the pre-delivery gate. It refuses and exits non-zero.
+Run it before you hand anything over; `--allow-dirty` to gate a working copy,
+`--bless` to rewrite the reference from a build you have looked at, `--injure`
+to watch every render check fail on purpose.
+
+It is built around the three failures this project has already shipped past
+itself, and the interesting thing is that **only one of the three was visible to
+anything static**. An undeclared uniform in `rock.js` made every rock program
+fail to link, so the walls, both aprons and all ten buttes drew nothing while a
+colour probe faithfully measured the sky standing behind the hole. A debug line
+painted the ground white with zero console errors and zero warnings, because the
+shader compiled perfectly. An unclosed comment in `terrain.js` blew the wash
+floor near-white. In two of the three the code was valid and the picture was
+wrong, which is why the core of the gate is a measured picture.
+
+Two layers, and the split is the design:
+
+- **FLOOR** — absolute bounds on what a dry wash at an eleven-degree sun can
+  physically be. Hard-coded, never derived from a build, and `--bless` cannot
+  move them. `--bless` refuses outright if a FLOOR check fails, so you cannot
+  bless a white desert into the reference.
+- **DRIFT** — bands around `tools/gate.ref.json`, taken from a known-good build.
+  Deliberately wide, 15-35%, because a gate that cries wolf every time a tuning
+  lands is a gate that gets bypassed, and that is worse than not having one.
+  Two runs of the same six framings twenty minutes apart moved by about 1.5%, so
+  there is an order of magnitude between the noise and the bands.
+
+**`floorRG` is the most valuable number in the file**, and it is worth
+understanding why. It is the red-to-green ratio of the bottom third of the frame,
+which is wash floor in every framing the gate uses, and it sits at 1.56-1.87 on
+a good build. Every other measure is a brightness, and every brightness is a
+moving target while an indirect-light lift and a ground self-shadowing pass are
+landing — set a ceiling tight enough to be a good detector and it will refuse a
+legitimate tuning by lunchtime. Chroma has no such problem: red rock in warm
+light is red at any exposure, and **white is achromatic at any exposure**. The
+white-ground injury reads R/G 1.026 against a healthy 1.730. That check would
+have caught the debug line on its own, with no reference build, no console error
+and no golden image.
+
+The second-most valuable is `skyOverGround`, for the same reason, and it carries
+a lesson about deriving a bound from the wrong end. Sky over ground measures
+2.74-7.59 on a good build. My first instinct was a floor of 1.15 — safely below
+anything observed. But the two known white-desert states read `groundAvg` 124.5
+and 155.8 under a sky around 190, which is a ratio of 1.53: **a bound chosen from
+the healthy side would have let both of the failures it exists for straight
+through.** The bound is 2.0, and it is derived from the failures.
+
+### The injury harness, and the check it immediately proved was broken
+
+`--injure` breaks the live page five ways inside a single page load — white
+ground, all eighteen rock meshes hidden, exposure zeroed, `NaN` into a live
+uniform, a `div` appended to `body` — measures each, reverts it, and **requires
+each one to have been refused**. If a deliberate breakage is not caught, the gate
+fails on that alone. A gate nobody has watched fail is not a gate.
+
+This paid for itself on the first run. Four of the five were refused; hiding
+every rock mesh fired **nothing at all**. The check was not weak — it was being
+asked from a viewpoint that could not answer. All five injuries ran at one
+framing, a steep down-pitch at the wash floor, where the rock is largely outside
+the frustum anyway, so the rendered triangle count barely moved and the ground
+was terrain either way. **This is the same error as measuring lit sandstone in a
+rectangle with no sandstone in it**, which has already cost this project a
+published number, and it arrived here by exactly the same route: an instrument
+aimed somewhere the answer was not.
+
+The fix was both halves. Each injury now names the framing it is visible in —
+the missing rock is asked from `shade`, a wall face with no sky in it at all,
+which is the framing the real failure produced its most confident wrong number
+in. And a new check, `rockTris`, sums triangles over the meshes `rock.js` names
+by traversing the scene graph rather than reading the frame, so it gives the same
+answer from every viewpoint: 569k healthy, 0 injured. **A framing-dependent check
+needs a framing chosen to make it fail, and a check that does not depend on the
+framing is better than one that does.**
+
+### What it refuses to be fooled by
+
+The rule that a tool measuring nothing must not print a number applies hardest
+here, because a gate that passes on an empty measurement is worse than no gate —
+it is trusted. So the anti-empty guards run first and, if any of them trips, the
+verdict is `NO MEASUREMENT`, nothing else is reported, and the exit code is 2:
+
+- The expected six framings must all have measured, and the pixel count and the
+  floor-band pixel count must both be non-zero.
+- The six must not have produced *identical* numbers, which would mean the probe
+  is not a function of the frame.
+- `probe()` is called twice per framing with a re-render between, and the two
+  must agree exactly.
+- At least one framing must have contained sky, or the whole sky-over-ground
+  family tested nothing. A framing with no sky in it is skipped explicitly
+  rather than passed as though it had some — `shade` has none, and its
+  `skyOverGround` is not evaluated.
+- At least one program must have linked, or the link check inspected nothing.
+
+Also checked: page errors and console errors must be empty — **this is the check
+that was already sitting in the capture manifest during the missing-rock failure
+and went unread, so the gate reads it for you**; `document.body` is still
+`[SCRIPT, CANVAS]`; every program reports `LINK_STATUS`; no non-finite bounding
+sphere or material uniform anywhere in the visible scene; `window.__game` appears
+within seven minutes.
+
+And a preflight that needs no browser, which is the other half of why deliveries
+break — not that the tool did not exist but that nobody ran all four of them:
+`git status` on `src`, `index.html` and `package.json` must be clean (this is the
+check that answers "is the tree clean", which is the question the gate exists to
+let you ask), every `src/*.js` parses, then `_p7pre.mjs`, `glslcheck.mjs`,
+`_bootprobe.mjs` and `_walktest.mjs` in turn. The corridor walk test is in there
+deliberately: terrain heights move under it every time somebody touches
+`terrain.js`, and it costs a second and a half.
+
+The gate pins `#high`. The adaptive governor is a moving target by design and you
+cannot draw a reference band around one.

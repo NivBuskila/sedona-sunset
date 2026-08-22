@@ -6,7 +6,8 @@
   "description": "First-person walk through Sedona, Arizona at golden hour. Fully procedural Three.js.",
   "scripts": {
     "dev": "node tools/serve.mjs",
-    "shoot": "node tools/shoot.mjs"
+    "shoot": "node tools/shoot.mjs",
+    "gate": "node tools/gate.mjs"
   },
   "devDependencies": {
     "playwright": "^1.62.0"
