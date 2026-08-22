@@ -476,8 +476,23 @@ let injuries = [];
 
 await run({ width: W, height: H, waitReady: false, hash: HASH }, async ({ page, errs }) => {
   const t0 = Date.now();
-  await page.waitForFunction(() => !!window.__game, null, { timeout: 420_000 });
-  const bootS = (Date.now() - t0) / 1000;
+  /* Boot is forty seconds of blocked main thread, so the wait has to be long.
+     But `waitForFunction` alone waits the whole seven minutes even when the page
+     threw at second forty-five and is never going to define `__game` — which is
+     what it did the first time this gate met a broken tree, and seven minutes is
+     a long time to spend learning something the console already knew. Watch both
+     and stop on whichever happens. */
+  let bootS = 0;
+  for (;;) {
+    if (await page.evaluate(() => !!window.__game).catch(() => false)) break;
+    if (errs.length) {
+      throw new Error(`the page threw during boot, after ${((Date.now() - t0) / 1000).toFixed(0)}s:\n  ` +
+        [...new Set(errs)].slice(0, 4).join('\n  '));
+    }
+    if (Date.now() - t0 > 420_000) throw new Error('window.__game never appeared within 420s');
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  bootS = (Date.now() - t0) / 1000;
   await page.evaluate(() => window.__game.begin());
   console.log(`render checks   #${HASH}  ${W}x${H}  boot ${bootS.toFixed(0)}s\n`);
 

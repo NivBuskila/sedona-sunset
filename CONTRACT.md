@@ -5155,3 +5155,27 @@ several hours on plausibility alone.
 
 The general form, and the counterpart to the aphorism rule above: **an instrument should be able to
 fail out loud.** A tool that cannot report that it is wrong is only ever reporting that it ran.
+
+### Two things learned by running the gate at a tree four agents were editing
+
+**Do not pipe the gate through `tail`.** The refusal is the exit code and a pipe
+reports the *last* command's status, so `node tools/gate.mjs | tail -40` exits 0
+on a build the gate refused. That is the failure the gate exists to prevent,
+reintroduced by the habit of trimming output. Run it bare; it is not verbose.
+
+**The gate no longer waits out a page that has already thrown.** `waitForFunction`
+on `window.__game` needs a seven-minute timeout, because boot legitimately blocks
+the main thread for forty seconds. But when `vegetation.js` threw
+`ReferenceError: x is not defined` at second forty-five, the gate sat there for
+the remaining six minutes to learn what the console knew immediately. It now
+watches the page-error channel and the global together and stops on whichever
+arrives, which turns a seven-minute refusal into a one-minute one. At quarter to
+midday that is the difference between the gate being run and being skipped.
+
+Worth recording what that run showed about the preflight, too: `_p7pre.mjs`
+reported that every module evaluates and `_bootprobe.mjs` reported that the scene
+builds, and the page still could not boot, because the fault was inside
+`planVegetation` at run time rather than at module scope. **The cheap checks
+narrow the search; they do not replace loading the page.** Any future
+reorganisation that drops the browser leg to save forty seconds has removed the
+only leg that has ever caught anything on its own.
