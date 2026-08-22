@@ -9940,8 +9940,15 @@ therefore a negative-mean perturbation in coverage, and the response is convex
 exactly where the population is densest.
 
 This is the fifth instance of the law and the first where the offending space was
-*my own justification* rather than an inherited statistic - I guarded the mean of
-the quantity I was changing instead of the quantity the viewer sees. Whole hull
+*my own justification* rather than an inherited statistic:
+
+> **I guarded the quantity I was changing instead of the quantity the viewer sees.**
+
+That generalises past this project and past graphics. The quantity you are
+changing is the one you have a number for, which is exactly why it is the one
+you will reach for; the quantity that matters is the one downstream of a
+non-linearity you did not write down. Here the non-linearity is a clip at zero,
+and a clip turns a symmetric cause into a one-sided effect. Whole hull
 rather than visible cap, whole population rather than the stones covering pixels,
 exact normals rather than perceived ones, bounding extents rather than projected
 area, and now **mean height rather than clipped area**.
@@ -9986,3 +9993,123 @@ control, and visible unamplified across roughly 600x350 px of open floor in
 sun_gap. The five eliminated hypotheses were all clast-surface hypotheses. If it
 is on the cliff face and the open floor it was never a clast defect, and the
 population was misidentified before the first hypothesis was written.
+
+## The quilt: there is no repeating spatial frequency. The statistic was measuring itself.
+
+Six hypotheses have now been eliminated. The seventh answer is that there was
+never anything to attribute, and the population was not merely misidentified -
+the defect was an artefact of how it was being measured. `_quiltfilt.mjs`
+settles it in one command and needs no render.
+
+### Why the caution was the whole job
+
+A high-pass built by subtracting a box blur of radius R is not a high-pass, it
+is a band-pass with a scale of its own, and it will report structure near that
+scale out of anything. The tell was already in the record and nobody had put the
+two numbers side by side:
+
+| instrument | kernel | period it reported |
+|---|---|---|
+| `_lattice.mjs`, all afternoon | 14 px radius (29 px box) | 23-27 px |
+| the delivery critic | 9 px | 5.9-12.3 px |
+
+Each is about 0.8 times its own kernel. Two instruments, two answers, both
+proportional to the thing the observer chose.
+
+### The reported statistic, run on fields with no periodicity in them
+
+Peak-to-median of a power spectrum after a box-subtract high-pass, reproduced
+verbatim as `_quiltfilt.mjs --critic` on the `sun_gap` floor:
+
+| high-pass | render | white noise | pink noise |
+|---|---|---|---|
+| 3 px | 4.6x | 1.2x | 12.5x |
+| **9 px** | **14.8x** | **1.1x** | **75.1x** |
+| 16 px | 24.6x | 1.1x | 149.7x |
+| 30 px | 40.7x | 1.1x | 400.3x |
+
+**At the critic's own 9 px kernel the statistic returns 75x on 1/f noise**,
+which contains no repeating frequency of any kind, against the 17-51x reported
+on the renders. The render itself scores 14.8x - *lower than every figure in the
+critic's table and five times lower than the noise control.*
+
+The mechanism is visible in the shape of the table. White noise has a flat
+spectrum and returns 1.1x at every kernel. Pink noise has a falling spectrum and
+returns numbers that grow monotonically with the kernel, while the reported
+"period" stays pinned at the top of whatever band survives the filter. **Peak
+over median of a falling spectrum measures the slope of the continuum.** It
+cannot distinguish a repeating pattern from a texture, and every natural surface
+has a falling spectrum.
+
+### The filter-independent test, and what it finds
+
+Any linear filter multiplies the power spectrum by a smooth transfer function.
+So estimate the continuum *locally* - a running median of neighbouring bins -
+and every smooth factor divides out, the filter included. What survives is the
+only thing a smooth filter cannot manufacture: narrow excess at one frequency. A
+line. That is also the correct reading of the complaint, since "real photographs
+have no dominant repeating spatial frequency" is a statement about lines and not
+about texture scales.
+
+Strongest line in each of the five regions the critic measured, both arms:
+
+| region | strongest line | excess over continuum |
+|---|---|---|
+| `ground` | 2.3 px | 1.67x |
+| `ground` ungraded | 2.2 px | 1.83x |
+| `wash_mid` | 64 px | 1.62x |
+| `wall_lit` | 64 px | 1.28x |
+| `shade_far` | 64 px | 1.29x |
+| `sun_gap` | 42.7 px | 1.29x |
+
+**Nothing at 6-8 px on any surface, in either arm.** The strongest line anywhere
+in the set is 1.83x. The pink-noise control, with no periodicity by
+construction, scores 3.1x to 5.4x on the same test - so every real surface in
+the delivery set is *flatter-spectrumed than noise*.
+
+### Liveness, because a null is worth nothing without it
+
+The tool must be shown capable of seeing the thing whose absence is claimed.
+Injecting a sinusoid of known period into the real `sun_gap` crop:
+
+| injected amplitude | what the tool reports |
+|---|---|
+| +-1 code value | not detected (still 64 px) |
+| +-2 code values | not detected |
+| **+-4 code values** | **8.0 px, 1.76x** - exactly the injected period |
+| +-8 code values | 8.0 px, 4.83x |
+
+Threshold is between two and four code values on a 512x350 crop. A pattern
+described as visible unamplified across 600x350 px is far above that, and would
+have been caught with room to spare.
+
+### Consequences, including for my own record
+
+- The five earlier hypotheses were all clast-surface hypotheses and all failed.
+  They failed because the thing did not exist, not because the population was
+  wrong. Six eliminated hypotheses against a measurement artefact is the cost of
+  never having asked whether the instrument could produce the reading on its own.
+- **A correction to this afternoon.** I discharged the "do not add a second
+  regular field" caution on the detail normal using `_lattice.mjs`, and quoted
+  "near-band period 23.0 px before and after". That period is the kernel, not
+  the scene, and I should not have quoted it as a scene property. **The
+  discharge itself still stands**, because it was a paired before/after
+  comparison at a fixed kernel and a genuinely new regular field would have
+  moved the period or the correlation; both held (r 0.090 to 0.095). A
+  differential result survives a biased instrument, an absolute one does not.
+- `_lattice.mjs` keeps its job and gains a header saying which half of it is
+  trustworthy. Its stated purpose is discriminating world-locked from
+  screen-locked features by how the period changes between two range bands,
+  which is differential and therefore sound. Absolute periods from it are not
+  evidence of a pattern.
+- What this does **not** say: that the critic saw nothing. A blotchy texture at
+  a characteristic scale is a broad hump in the spectrum, is real, and is what
+  every natural surface has. The claim tested and refuted is the specific one -
+  a dominant *repeating* spatial frequency, the thing that would make the set
+  look woven. There is no such frequency in these frames.
+
+**And the general form, which is the same law once more:** a statistic that
+returns a large number on noise is not measuring the property it is named after.
+Before attributing a defect, run the detector on a field that cannot contain it.
+Six hypotheses and an afternoon would have been saved by one run against 1/f
+noise, which costs nothing and needs no render.

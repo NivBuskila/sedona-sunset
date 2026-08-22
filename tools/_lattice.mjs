@@ -1,5 +1,25 @@
 /* What is the period of that regular pattern, in pixels, and does it hold with range?
  *
+ * ── READ THIS BEFORE QUOTING A PERIOD FROM THIS TOOL ────────────────────────
+ * This high-passes by subtracting a box blur of radius 14, and a box-subtract
+ * high-pass is a band-pass: it has a scale of its own and will report structure
+ * near that scale out of anything, including noise with no periodicity in it.
+ * The periods this tool reports on natural surfaces - 23 to 27 px - are about
+ * 0.8 times its own kernel, and a delivery critic running the same statistic at
+ * a 9 px kernel reported 6 to 8 px on the same frames, also about 0.8 times
+ * theirs. Both were reading their filters. `_quiltfilt.mjs --critic` shows the
+ * statistic returning 75x on pink noise at a 9 px kernel.
+ *
+ * So an ABSOLUTE period from this tool is not evidence of a pattern. What the
+ * tool is still good for is the job named below, which is DIFFERENTIAL: the
+ * same kernel on two bands of one receding surface, where a world-locked
+ * feature and a screen-locked one separate by how their period changes with
+ * range. Paired before/after comparisons at a fixed kernel are sound for the
+ * same reason. For "is there a repeating frequency here at all", use
+ * `_quiltfilt.mjs`, which measures excess over the local continuum and so
+ * divides out every smooth filter including this one.
+ * ────────────────────────────────────────────────────────────────────────────
+ *
  * Terrain's discriminator, run on a frame already on disk: a footprint-keyed
  * texture layer has a world-space period that steps by powers of two with
  * distance, because the LOD scale is `exp2(-floor(gLod))`, so its *screen* period
