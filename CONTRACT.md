@@ -3455,6 +3455,12 @@ The frame is **30.5 ms → 15.7–16.9 ms at 2560×1440 on the top tier** and th
 ladder reaches 120 fps at rung 4 and 182 fps at its floor. Full account in `PERF.md` §9;
 what belongs here is the method and the two instrument failures, because both recur.
 
+*(Both figures in that sentence were true of `fa8b9ec` with the camera held and are true of
+neither the current tree nor a walking player. The frame is 23.3 ms held and 26.9 moving on
+`2548d04`, and no rung reaches 120 fps moving. See "The ladder as a player walks it" below —
+which adds a third instrument failure to the two this section names, of the same kind: an
+instrument that could not be pointed at the thing being measured.)*
+
 **An object ablation cannot price a shader.** Every ablation `bench.mjs` had hides a *mesh*,
 which is the wrong instrument twice over: hiding the terrain does not price the terrain
 shader, because whatever stands behind it must be shaded instead, and the two largest
@@ -3527,6 +3533,11 @@ potato at native resolution, which is a setting the governor never selects. `per
 exposes `rungs` and `setRung` and `bench.mjs` prints both tables.
 
 ### The ladder, measured, and the numbers to quote
+
+> **Superseded for the delivery note. See "The ladder as a player walks it" below.** This table
+> is a true record of `fa8b9ec` and is not the current tree — the frame has since grown 6.5 ms at
+> rung 0 — and it is measured with the camera held, which does not pay the shadow-cascade redraw
+> that a walking player pays on every frame. Both columns of the corrected table are here.
 
 Per rung at `sun_gap`, 2560×1440, RTX 4060, median of seven blocks of thirty:
 
@@ -3649,6 +3660,109 @@ never asked* are different failures that `false` conflates.
   reverted on purpose. It should land as a correctness change with its own verification rather
   than inside a perf commit.
 
+
+## The ladder as a player walks it, which is not the ladder above
+
+Everything in the two sections above was measured with `tools/bench.mjs` — loop paused, camera
+held, `renderOnce` driven by hand through each rung. A real-browser playthrough then measured the
+governor settling two rungs below where that table says it should, unable to climb back, and
+spending the first forty seconds at half the target. All three reproduced on an idle machine, and
+one of them is much larger than reported. `tools/govern.mjs` is the instrument; `PERF.md` §11 is
+the account. **The four things to know before quoting a number from this file:**
+
+**1. The frame moved 39% under the measurement, and this is the headline.** `bench.mjs` on
+`2548d04` reads `wash_mid` at **24.48 ms** against **16.80** on `fa8b9ec` two hours earlier. Same
+tool, same machine, same seven blocks of thirty; `govern.mjs`, a different instrument in a
+different page, independently reads 23.34 at the same station and rung. Deliberately not
+attributed here — an indirect-light fix in `rock.js` and `terrain.js`, cliff jointing and
+vegetation all landed in that window and three of those files were dirty while this ran — but
+anyone bisecting should start with the indirect-light change, because it lands on the two heaviest
+fragment shaders in the scene. **The table above is a true record of `fa8b9ec` and is not the
+current tree.**
+
+**2. A walking player pays a shadow-cascade redraw that no bench has ever measured.** Both
+cascades redraw only when the rig moves, and `bench.mjs` holds the camera still. It is a flat
+**+3.4 ms** at every rung, and it does not shrink as the tier steps the maps from 4096/2048 down
+to 1024/512 — so it is the terrain and rock redraw, not the depth fill.
+
+**3. `bench.mjs`'s three stations are not the expensive ones.** `wash_mid`, `wall_lit` and
+`sun_gap` are all at 46 m or beyond. The spread *between* stations is wider than four rungs of the
+ladder: at rung 0, `ground` is 13.9 ms and `wash_mid` is 23.3. Anything tuned on those three
+framings cannot say what the walk costs.
+
+### The corrected table — 2560×1440, RTX 4060, `2548d04`
+
+`held` is the bench's own method and is directly comparable with the table above. `moving` is what
+a walk pays. Both are at `wash_low`, near the mouth, which is where a player boots and is within
+0.5 ms of `mouth`, `wash_mid` and `sun_gap` at every rung.
+
+| rung | tier | scale | buffer | held ms | held fps | **moving ms** | **moving fps** |
+|---|---|---|---|---|---|---|---|
+| 0 | high | 1.00 | 2560×1440 | 23.3 | 43 | **26.9** | **37** |
+| 1 | high | 0.88 | 2253×1267 | 20.7 | 48 | **24.6** | **41** |
+| 2 | medium | 0.88 | 2253×1267 | 18.2 | 55 | **21.5** | **47** |
+| 3 | medium | 0.78 | 1997×1123 | 16.6 | 60 | **19.8** | **51** |
+| 4 | low | 0.78 | 1997×1123 | 13.8 | 73 | **16.7** | **60** |
+| 5 | low | 0.68 | 1741×979 | 12.4 | 81 | **15.2** | **66** |
+| 6 | potato | 0.68 | 1741×979 | 10.9 | 91 | **14.6** | **69** |
+| 7 | potato | 0.58 | 1485×835 | 9.9 | 101 | **13.5** | **74** |
+| 8 | potato | 0.50 | 1280×720 | 9.2 | 109 | **12.7** | **79** |
+
+The cheapest station in the walk, `ground`, reaches 8.33 ms held at rung 4 and never reaches it
+moving. **No rung reaches the 120 fps budget at any station with the camera moving, and the top
+tier is 37 fps.** That is the number for the delivery note. It is not a regression in the
+governor and it is not a regression in anything this pass touched — §10's table was accurate when
+it was taken, and the frame has since grown by 6.5 ms at rung 0 with another 3.4 ms of it always
+having been invisible to the instrument.
+
+Rung 8 is new: `RSCALE` gains a 0.50 step. It is worth 0.6–0.8 ms and that is said plainly rather
+than implied, because resolution has stopped being the strong lever it was — `@0.7res` takes
+`wash_mid` from 24.48 to 17.95, so 49% of the pixels now save 27% of the frame. The rung exists
+because a governor whose bottom step is over budget has nowhere to put a struggling machine.
+
+### What the governor does now
+
+**Cold start: 2.5 s, was 17.** The governor was accumulating its clock and its holds from
+`main.js`'s `dt`, which is `Math.min(0.05, ...)`. That clamp is right for `step()` and exactly
+wrong for a governor whose subject is wall-clock slowness: during the compile-heavy first frames a
+170 ms frame advanced its clock by 50 ms. First rung change 8.5 s → **1.3 s**, settled 17.0 s →
+**2.5 s**. Note that this is *why there is no optimistic start* — the opening is now two and a half
+seconds, so starting low would cost a fast machine a climb it does not need.
+
+**The ratchet is gone, and the band was not the thing to widen.** The old rule descended above
+`t × 1.15` and climbed below `t × 0.62`, and every rung below 4 cost *between* those two, so a
+transient stall degraded the picture until reload. The gate was asking the wrong question: "is
+this rung very cheap" rather than "would the next rung up fit", and a rung step is worth 6–20%
+here against a 38% headroom demand. The governor now remembers what each rung cost, expires that
+memory after 8 s because the player is walking, probes a climb for 900 ms, reverts one step if it
+overruns, and puts a failed rung on a 15/30/60 s backoff whose expiry clears the price — so
+nothing is closed off permanently. Verified by putting it at the floor and watching: it climbed
+8→7→6→5→4→3→2→1 with no oscillation, back where it started after 37 s.
+
+**`#adapt` is new and matters to anyone writing a probe.** `perf.js` pins the top tier whenever
+`navigator.webdriver` is set, which is right and is why every capture is deterministic — but it
+also meant the governor was the one system in this project that no instrument could observe. Only
+`tools/govern.mjs` sets `#adapt`. Do not set it in a capture.
+
+### Thirteen shader warnings, and they are all one loop
+
+`X3595: gradient instruction used in a loop with varying iteration` — 8 distinct on a fresh boot,
+13 in the playthrough, the difference being how many programs have compiled. Attributed by
+ablation rather than by matching line numbers, because the numbers in those messages are into
+ANGLE's generated HLSL: `#adapt` gives 8, `#adapt&hardshadow` gives **0**. Every one is
+`src/sky.js:734–739`, the variable-width penumbra spiral, whose trip count `n` is per-pixel while
+`texture2D` needs derivatives to pick a mip.
+
+**For System 4, whose file it is.** The fix is one token and is identical by construction — the
+shadow map is `NearestFilter` with `generateMipmaps` off, so there is no mip to select and the
+derivative is computed and discarded. `texture2D( map, p.xy + o )` becomes
+`texture2DLodEXT( map, p.xy + o, 0.0 )`; `three.module.js:6454` defines that as `textureLod`, and
+`terrain.js` already uses the sibling `texture2DGradEXT` define at 6457, so the mechanism is live
+in this project today. Not done here because `sky.js` was dirty with in-flight work throughout,
+and staging a hunk into a file someone else is editing is how `sky.js` got destroyed once already.
+It is not the bug class that produced the grazing lattice — that was a derivative whose *value*
+was unbounded, this is one whose value is discarded — so it is console noise sitting on a real
+one-token improvement, not a correctness risk.
 ## Accepted and declined, for System 2, so they are decisions rather than oversights
 
 Both were ruled on by the coordinator against the time remaining, and both are real.
