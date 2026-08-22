@@ -6554,3 +6554,78 @@ guard added to a flag is a change to the behaviour of *omitting* that flag, and
 that is the case least likely to appear in the tests written alongside it.
 Tonight's count of tools taught to refuse rather than quietly answer a different
 question is five; this is the first where the refusal itself became the defect.
+
+## The `far_320` streaks, localised to the shading normal by elimination
+
+The specified diagnostic was run. **It killed the candidate**, and a second cheap
+render then narrowed the cause considerably. Nothing landed; `src/` is clean.
+
+**The triplanar is not under-engaged.** Painting `steep`, `1 - sandW` and their
+product `w` into the frame shows the streaked upper slopes as pure white — slope
+gate fully open, sand classification zero, **triplanar blend weight 1.0 exactly
+where the streaks are**. The plan-projection-smear hypothesis is dead. It was a
+good hypothesis: it explained the soft parallel form, the perspective
+convergence, and the indifference to landform boundaries. It is simply not what
+is happening.
+
+Worth noting how seductive it was. The triplanar branch exists *specifically*
+for this artefact and its own comment reads: *"every feature smears into a long
+streak, all of them parallel, and the bank ends up looking brushed."* That is
+the critic's complaint almost word for word, written next to the code that
+prevents it — and the code is working. **That is the third naming coincidence
+tonight**, after the two height-field terms whose comments matched the critic's
+vocabulary and were innocent.
+
+**The albedo is clean.** Painting `gA` alone shows fine, even, granular texture
+across those slopes with no streaking of any kind. So the streaks are not in the
+surface colour; they are in how it is being lit.
+
+| eliminated | how | result |
+|---|---|---|
+| `rill` (height field) | ablation, triangle count moved | streaks unchanged |
+| `gully` (height field) | ablation, triangle count moved | streaks unchanged |
+| triplanar blend weight | painted `steep`, `1-sandW`, `w` | 1.0 on the streaks; fully engaged |
+| albedo | painted `gA` | clean; no streaks present |
+
+**What that leaves, and why it is consistent.** The streaks are in the shading
+normal or in an occlusion term. There is a specific reason to suspect the
+normal: inside the triplanar branch the detail normal is blended as
+`mix(vec3(0,0,1), pN, 0.16 + 0.84 * grainF)`, and at this distance `grainF` is
+zero, so **84% of the detail normal is faded out and the shading is driven by
+the interpolated mesh normal almost alone.** A surface lit by a smooth
+interpolated normal with no detail normal on it, over a slope with long-
+wavelength height variation, gives exactly what the critic reports: soft
+parallel tonal bands with no bedding, no facets, no terminator and no scale cue,
+following the fall line and converging in perspective, and crossing landform
+boundaries because the mesh normal field does not know about them either.
+
+This also reconciles the two innocent ablations. `rill` and `gully` change *which*
+undulations exist; they do not change the fact that at this distance nothing but
+the mesh normal is shading them. Removing one set of undulations leaves the
+others reading the same way.
+
+**The next test, cheap and specified.** Paint `gWN` as RGB in the same slot. If
+the streaks are visible in the normal field, the cause is the mesh normal and
+the fix is in the `grainF` fade on the triplanar branch — the same 30 m cliff
+already documented as the mid-distance limit, arriving here as a *far*-field
+defect on a steep surface, where it matters more because the slope faces the
+light. If the normal is smooth, paint `tAO` and `gRake` next; it is an occlusion
+term.
+
+Not attempted: the fade is the term I was told three times not to reopen in the
+near field, and reaching for it at 11:10 on delivery morning, against a record
+already shot, is not a decision to take at speed. It is a small change in one
+place with a clear hypothesis and a one-render test, and it is the first thing
+to do.
+
+### The rule this earns
+
+Numerical coincidence and **naming** coincidence are the same trap. The 24 cm
+that matched the sand ripple and the bed spacing exactly cost an evening; three
+times tonight a term whose *comment* matched the reported symptom pulled
+attention away from an observation that already ruled its whole category out.
+Here that observation was **"no shadow terminator inside them"**, which says
+shading rather than geometry before any ablation is run, and which I ranked
+below two comments that happened to use the word converging. Rank the
+observation that discriminates between categories above the one that matches
+vocabulary.
