@@ -417,6 +417,79 @@ described as "facets turned away from the sun", which is exactly what an unbound
 perturbation produces, and the description survived every subsequent theory about grids,
 anisotropy and ripple wavelengths.
 
+## Landed: the capture settle is frames now, not wall clock
+
+`8ea8680`. `shoot.mjs` waited 400 ms between `walkTo` and the capture. That is about
+a hundred frames at 800×450 and **thirteen to twenty-four at 1440p**, and fewer again
+while another agent is rendering — so the settle silently bought an order of magnitude
+fewer frames exactly as the resolution rose, and fewer still precisely when several
+people were capturing and results were most likely to be compared against each other.
+
+`tools/settle.mjs` replaces it with convergence on the frame the harness would actually
+take: a floor of 90 frames, then three identical framebuffer hashes five frames apart,
+`setPaused`/`renderOnce`/`readPixels` exactly as `capture` does it. **It reports how it
+exited**, on the view's line and in the run manifest, because a settle that quietly falls
+back to its ceiling is the same silent under-settle wearing a different hat. A framing
+that prints `CEILING` is not established as byte-stable and a byte diff against it is not
+evidence of anything.
+
+**The boot pass is a different instrument and that is a finding, not a detail.** Run the
+convergence settle before the first `walkTo` and it never converges — measured at **1605
+frames and 30 s without two matching hashes** — because `walkTo` is what keys the
+atmosphere and grain clocks to the station, and before it they are free-running. So the
+boot pass is `warmup()`, a frame count with a backstop. That non-convergence is also the
+liveness proof for the hash: the same function that never matched twice in 1605 free
+frames matches on the first three checks after a `walkTo`, and hashes differently for
+every one of the thirteen framings.
+
+**Verified.** Repeated captures of the same viewpoints, byte-compared:
+
+| resolution | condition | result |
+|---|---|---|
+| 800×450 | quiet | byte-identical |
+| 2560×1440 | quiet | byte-identical |
+| 1997×1123 (rung 4) | second run under three-way CPU contention | byte-identical |
+
+The clearest evidence that the quantity has actually changed hands: at 1440p the two runs
+took **1.7 s and 2.7 s for the same 100 frames**. Under load at rung 4, 1.7 s and 2.6 s,
+again for the same 100. The wall clock moved by half; the settle did not.
+
+**What I could not reproduce, stated plainly.** With `--minframes 1` every one of the
+thirteen framings converges at **11 frames** — the earliest the checker can possibly
+declare it — and those captures are byte-identical to the 90-frame ones. So on this
+machine, in these framings, the scene is stable almost immediately after `walkTo` and the
+old 400 ms was already sufficient. **The cause is removed and the invariance is measured,
+but System 7's two-of-eight mismatch at 1440p was not reproduced here, so this is not
+established as the fix for it.** If it recurs, that is still an open question and it should
+not be closed by pointing at this commit. One thing seen in passing that may be worth
+pulling on: `info.textures` goes 38 → 39 after the first captured view of a run, so a
+resource is still becoming resident during capture, and a run's *first* framing is
+therefore the one least like the others.
+
+Residual risk worth knowing: convergence stops checking once it is satisfied, so a
+resource landing at frame 200 is still not caught. The 180-frame warmup is what covers
+that, and it is the knob to raise if a first-view capture is ever suspected.
+
+## RULE: a tool that measures nothing must not print a number
+
+Four instances now, so it is a rule rather than an observation. `grad.mjs` turned an
+unrecognised flag into a `NaN` crop, selected no pixels and printed a header with no rows.
+`_p7name.mjs` silently measured nothing when given a mode that does not exist. `shoot.mjs`
+would take an `--only` matching no viewpoint, render nothing and write a manifest with an
+empty results array. `_clastprobe.mjs` would take `--only bogus`, switch off *both* the
+coarse map and the grit, and print a table for a facet with nothing on it.
+
+The reason this is worse than ordinary sloppiness is specific to this project: an empty or
+zero measurement is usually the *interesting* answer here. It is what a successful ablation
+looks like, what a byte-identical control looks like, and what a fixed defect looks like.
+An instrument that returns that same answer in response to a typo is producing the single
+most misleading output available to it — and we have spent real time tonight on
+measurements that turned out to be about something other than what they named.
+
+`tools/argcheck.mjs` carries `die`, `finite`, `oneOf` and `nonEmpty`; all four exit 2 and
+name the mistake. `nonEmpty` goes immediately before the first number is printed. It is
+three lines to adopt and every probe that takes a flag should.
+
 ## RULE: a negative result is only evidence if the thing you removed was doing something
 
 **Diff for liveness before believing an ablation.** Render the ablated frame against the
