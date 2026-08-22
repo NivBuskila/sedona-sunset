@@ -7250,3 +7250,121 @@ would refuse a good build or bless a bad one with equal confidence.
 **It is not a substitute for the gate and it says so on the way out.** It cannot
 see a black frame, a white desert or an unlinked program. A build that has only
 passed the preflight has not passed the gate.
+
+---
+
+## The pale flat slabs: the dust film now scales with the proud fraction
+
+**Status: landed, CPU-side, census-verified. Visual confirmation outstanding.**
+`src/scatter.js`. System 2's fix #1, which was the right one of the three.
+
+### Why fix #1 and not #2 or #3
+
+All three would have moved the number. #1 is the only one that corrects the
+*interaction*, which is what actually broke: the sky-facing dust dates to the
+21st, the burial to `9320488` this morning, and **neither is wrong alone**.
+`resid` ramps the film *up* with radius because a big clast lies still longest,
+which is true; but the same size classes are the deeply seated ones, so the
+stones given the most film are the ones showing the least of themselves. The
+product was the defect.
+
+Decisively, it is written **against the seat rather than as a constant**, so it
+cannot drift out of agreement with the burial the way #2 and #3 would - the dust
+now follows the seat wherever the seat goes. That is the same shape as the apron
+breach: an identity, not a tuned onset. Tonight produced this regression and
+three separate bugs from constants that had to agree in two places; a fix with no
+such invariant is worth more than a fix with a good number in it.
+
+It is also the only one of the three that is entirely CPU-side and therefore
+verifiable tonight on a machine that is being played on.
+
+### The mechanism is fully determined on the CPU
+
+Worth recording because it is not obvious from either end: `dustK` **is** `aDust`
+verbatim. The vertex stage packs it as `vSeat = normalize(seat) * (1 + aDust)`
+and the fragment stage recovers it as `length(vSeat) - 1`. So
+
+    cDust = (0.34 + 0.66 * smoothstep(-0.12, 0.52, n.y)) * min(0.80, 0.42 * aDust)
+
+and on the up-facing facet, where the orientation term is 1.0 and where the
+defect is reported, the delivered film is exactly `min(0.80, 0.42 * aDust)`.
+**No shader change was needed and none was made.** `tools/_dustfilm.mjs` prints
+that quantity per class; `_slabwho` prints the raw weight, which is not the same
+thing.
+
+### Before and after, s 0..100 m
+
+Delivered film on a sky-facing facet. 0.80 is the cap - four fifths of the way to
+a constant colour.
+
+| class | before p50 | before MAX | after p50 | after MAX |
+|---|---|---|---|---|
+| `cobble3` | 0.058 | **0.800** | 0.031 | **0.458** |
+| `block0` / `block2` / `block3` | 0.010 | **0.800** | 0.007 | 0.44-0.60 |
+| `boulder0/1/2` | **0.243** | 0.513 | 0.136 | 0.349 |
+| `slab1` | 0.180 | 0.712 | 0.095 | 0.405 |
+| `gravel*` | 0.000 | 0.124 | 0.000 | 0.089 |
+
+`cobble` is the class that matters - 3600 instances, ~1730 in the first hundred
+metres - and it comes off the cap to 0.458. The floor was chosen to land it
+there because **0.45 is where System 2 independently put it** by dropping the
+shader cap; two mechanisms agreeing on a number is better evidence than either
+alone, and it is the smaller of the two candidate changes, which is the right way
+round for the one that cannot be seen tonight.
+
+### Guardrails, proved offline
+
+`_slabwho 100 14` before and after is **identical in every column except
+`dust`** - instance count, pale count and pale%, dip, aspect, `seat`, mean
+albedo RGB, hue and saturation all unchanged to the printed precision. So:
+
+- **The burial is untouched.** `seat` is identical (boulder0 -0.173 both runs).
+  `buried` was only *hoisted* above the dust weight so both terms could read it;
+  `sink` and `hTrue` are not reassigned between the old and new call sites.
+- **No CPU-side colour movement.** `setColorAt` is unchanged, so the per-instance
+  albedo written into the scene is bit-identical.
+
+**Outstanding, and it needs a frame:** the film is a *shader* effect on top of
+that albedo, so the rendered floor colour on `wash_low` / `ground` will move by
+design, and `grad/L` on those framings is not measurable from the CPU. Those two
+guardrails are unverified.
+
+### A measurement error in the instrument, worth recording
+
+`_slabwho`'s `t` column prints the instance **y scale** (`halfH`), not the clast's
+true vertical half-extent, which is `halfH * cl.flat` with `flat` running
+0.42-0.86. Reading `t` as thickness overstates it by up to 2.4x. That is what
+produced "a 0.52 x 0.34 m stone has about 6 cm standing proud" - the true figure
+is nearer 2-3 cm, and the coarse classes are 85-95% buried rather than ~75%.
+`scatter.js` already carries a long comment recording this exact confusion
+causing a shipped bug once tonight; it has now caused a misread of the evidence
+as well. Same trap, second visit, different instrument.
+
+## The near-field quilted cross-hatch: scatter's grain layer is ruled OUT
+
+By reading plus one offline measurement, no render.
+
+1. **Its tiling cannot be visible.** The layer samples `uGrit` on a world-locked
+   planar projection, so the map repeats every `1/gScC` metres - about 0.25 m in
+   the near field, which is exactly quilt scale, and was the reason to suspect it.
+   But a tile repeat is only visible in proportion to the map's *low-frequency*
+   content, and `makeGrit`'s is negligible: energy at k <= 3 is **0.150%** of
+   total for the tone channel and **0.034%** for occlusion, amplitude 0.0025 and
+   0.0015. Through `1.0 + (grC.r - 0.427) * 1.30` that is about **one code
+   value**. The map is mean-removed per octave by construction, which is why.
+2. **It cannot produce per-instance seams.** `gUVc` is world position, not an
+   instance UV, so adjacent clasts sharing a facing sample one continuous field.
+3. **It cannot produce hard LOD bands.** `gLodC`/`gFlC` are crossfaded by
+   `mix(..., gLodC - gFlC)`, and in any case iso-footprint contours on a floor
+   are 1D bands, not a cross-hatch.
+
+The hard triplanar branch (`aWc.y > max(aWc.x, aWc.z) ? ... : ...`) *is* an
+unblended discontinuity and would give abrupt direction changes across facet
+boundaries - but on the near-field floor almost every clast is sky-facing, so the
+branch does not flip there. It is a flank effect, not a floor one.
+
+**A discriminating prediction for whoever takes this next, free of charge:** if
+the pattern were any footprint-keyed texture layer, its world-space period would
+**step by powers of two with distance**, because `gScC = exp2(-floor(gLod))`. A
+joint azimuth grid has a period fixed in world space and independent of distance.
+One crop at two distances separates them without a new render.

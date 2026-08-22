@@ -1652,7 +1652,44 @@ export function buildScatter(terrain, tex) {
      * still, for which instance size is the available proxy. One float per
      * instance, which is cheaper than the varying it replaces was to get wrong. */
     const resid = clamp((rad - 0.075) / 0.16, 0, 1);
-    const dustW = resid * (0.30 + 2.85 * clamp((paleL - 0.33) / 0.19, 0, 1));
+    /* Hoisted above the dust weight because both need it now. */
+    const buried = clamp(sink / Math.max(hTrue, 1e-4), 0, 1);
+    /* ---- times how much of the stone is actually standing proud ----
+     * A settling film is a deposit that has to survive where it lands, and what
+     * it has to survive is the bed's own traffic. A stone standing clear of the
+     * bed is a bench: it is out of the path of the grains that move along the
+     * floor, and fines that settle on it stay. A cap sitting flush with the bed
+     * is not a bench, it is part of the floor - swept by the same grains and
+     * reworked with them - so it should carry the bed's dust and no more.
+     *
+     * Without this the two halves of the surface disagree. `resid` ramps the
+     * weight *up* with radius on the argument that a big clast lies still
+     * longest, which is true; but the same size classes are the deeply seated
+     * ones, so the stones given the most film are the ones showing the least of
+     * themselves. Measured over the first hundred metres, the coarse classes sit
+     * 85-95% buried in true half-extents, so a boulder shows two or three
+     * centimetres of cap - and that one visible facet was four fifths of the way
+     * to a flat pale film that is not a lithology. Neither term is wrong alone.
+     * The product was.
+     *
+     * Written against the seat rather than as a constant per class, so it cannot
+     * drift out of agreement with the burial the way a tuned number would: the
+     * dust now follows the seat wherever the seat goes. Tonight's regression was
+     * exactly a pair of independently-correct terms that no longer agreed, and
+     * this is the same shape of fix as the apron breach - an identity rather
+     * than an onset.
+     *
+     * The floor is not zero for the same reason the shader's orientation term
+     * has one: a flush stone still takes fines by splash and by runoff into its
+     * pore space. It is set where it is because it puts `cobble`, which is the
+     * dominant near-field coarse class at 3600 instances, from a saturated 0.80
+     * to 0.458 - and 0.45 is where System 2 independently put it by dropping the
+     * shader cap. Two mechanisms agreeing on a number is better evidence for it
+     * than either alone, and it is the smaller of the two candidate changes,
+     * which is the right way round for the one that cannot be seen tonight.
+     * Lowering it further is a single constant if the frame disagrees. */
+    const dustW = resid * (0.30 + 2.85 * clamp((paleL - 0.33) / 0.19, 0, 1))
+                * (0.48 + 0.52 * (1 - buried));
     /* ---- how much sky this stone can actually see ──────────────────────────
      * The most frequent single tell in the whole set: "the wash floor's pebble
      * layer is lit as if the shadows weren't there", and a shaded bank that
@@ -1679,7 +1716,6 @@ export function buildScatter(terrain, tex) {
      * hand-rolled blue fill on a clast is precisely the blue-chip defect I spent
      * a round removing, and it will be wrong again the moment the environment
      * changes. Occlude correctly and let System 4 own the colour of the dome. */
-    const buried = clamp(sink / Math.max(hTrue, 1e-4), 0, 1);
     /* Coefficients set from a paired capture rather than from first principles,
        because the first set was calibrated against the wrong baseline. At 0.46
        and 0.34 a bank gravel came out at 0.65 of the dome, the shaded bank's
