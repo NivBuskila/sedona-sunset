@@ -95,14 +95,23 @@ const views = only ? pool.filter(v => only.split(',').includes(v.name)) : pool;
 
 /* Same rule as the flags. Rendering nothing and writing a manifest with an empty
    results array is a capture run that looks like it happened. The commonest
-   version of this is asking for a far framing without --far. */
-if (!views.length) {
+   version of this is asking for a far framing without --far.
+   Check every requested name, not just whether any matched. A partial match is
+   the dangerous one: `--only ground,wash_mid,far_270` without --far rendered two
+   frames, reported "2 shots" and dropped the third silently, which is a capture
+   that looks complete and is not. Asking for four and getting three is exactly
+   the shape of error this file exists to refuse. */
+if (only !== null) {
   const want = only.split(',').filter(Boolean);
-  const far = want.filter(n => FAR_VIEWS.some(v => v.name === n));
-  die(`--only "${only}" matched no viewpoint.` +
-      (far.length ? ` ${far.join(', ')} ${far.length > 1 ? 'are' : 'is'} a far framing — add --far.` : '') +
-      `\n  available: ${pool.map(v => v.name).join(', ')}` +
-      (args.includes('--far') ? '' : `\n  with --far, also: ${FAR_VIEWS.map(v => v.name).join(', ')}`));
+  const missed = want.filter(n => !pool.some(v => v.name === n));
+  if (!want.length || missed.length) {
+    const far = missed.filter(n => FAR_VIEWS.some(v => v.name === n));
+    die(`--only "${only}" named ${missed.length || 'no'} viewpoint${missed.length === 1 ? ' that does' : 's that do'} not exist` +
+        (missed.length ? `: ${missed.join(', ')}.` : '.') +
+        (far.length ? ` ${far.join(', ')} ${far.length > 1 ? 'are' : 'is'} a far framing — add --far.` : '') +
+        `\n  available: ${pool.map(v => v.name).join(', ')}` +
+        (args.includes('--far') ? '' : `\n  with --far, also: ${FAR_VIEWS.map(v => v.name).join(', ')}`));
+  }
 }
 
 const shotsDir = path.join(DIR, 'shots');
