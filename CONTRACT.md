@@ -47,6 +47,403 @@ a real sunset photograph of Sedona. Not stylized, not low-poly, not "good for a 
   "The ladder as a player walks it" — every earlier fps table on this project was taken
   with the camera held on a quiet machine and is not what a walking player gets.
 
+# THE PROCESS RULES — read these before measuring anything
+
+Every rule below was paid for with hours, most of them more than once. They were scattered
+through five thousand lines of this file in the order they were learned; they are gathered
+here in the order they are needed, each with the instances that earned it, because a rule
+without its instances is an aphorism and this project has a rule about those (rule 7). The
+long-form account of each is still in place further down and is worth reading when you hit
+the thing it describes.
+
+## Rule 1 — A negative result is only evidence if the thing you removed was doing something
+
+**Diff for liveness before believing an ablation.** Render the ablated frame against the
+unablated one and quote the percentage of differing pixels and the mean delta. If the change
+is near zero you have not excluded your candidate; you have discovered that your ablation did
+nothing, which is a different and much less useful fact.
+
+This is the single most transferable lesson on the project. Six instances, in five disguises:
+
+1. **The anisotropy gate (System 1).** A gate to fade the grit where the footprint ratio
+   exceeds ten. The re-render was byte-identical, read as "the fix did not help". It was "the
+   gate never fired" — which additionally established that the ratio never exceeds ten in any
+   of these framings, so nobody should reach for an anisotropy explanation again.
+2. **`shadowMap.enabled` — a compile-time define written at runtime.** `bench.mjs`'s
+   `-shadow` column read **0.05 ms of a 30.49 ms frame** for a term that was **23 ms** of it,
+   and the number was quoted upward as evidence that shadows were free. Three does not relink
+   on a runtime change, so the column measured the same shader twice.
+3. **`shadowRadius` — ignored outright by `PCFSoftShadowMap`.** `PCF_SOFT` compiles a fixed
+   bilinear-weighted 3×3 over a single texel and never reads the uniform, so the 3.5 and 1.7
+   texels these cascades have carried since they were built have never done anything. The
+   experiment that widened 3.5 to 10, measured floor `grad/L` unchanged at 0.186 and concluded
+   that cast-shadow edges are too small a share of a region to move a nine-pixel high-pass
+   **reached a plausible conclusion by a route that proved nothing.**
+4. **The wall-rock branch (System 1).** Substituting `gWN` for `mix(gWN, rockWN, rockW)` moved
+   1.98% of pixels at a mean of 0.05. That is not an exclusion by ablation, it is an exclusion
+   *by construction*: `rockW` is `wallM * (…)`, `wallM` is `smoothstep(0.06, 0.42, vWall)`, and
+   that is ~0 on the bank in question. A candidate would have been crossed off having never
+   been tested.
+5. **The bedform comb.** Two renders went into it on the strength of its wavelengths before
+   anyone read the line above it: `bedW` is multiplied by `floorB` and by
+   `(1.0 - smoothstep(0.06, 0.20, slope))`, so it is largely off on a bank and was never live
+   at the artefact. **Read the gate before ablating the term** — a term's gate is cheaper to
+   read than its behaviour is to measure.
+6. **`_fillcost`'s applied-flag,** the mirror image: a correct ablation that printed
+   `NO — CHECK` beside a real 4.44 ms saving. See rule 2.
+
+**The shape both compile-time cases share, and it is worth recognising rather than
+re-deriving: a renderer setting consumed at compile time raises no error when written at
+runtime.** It silently keeps the old value, and every measurement downstream is precise,
+reproducible and about nothing. Before publishing that a term does not matter, prove the term
+moved — drive it to an absurd value and confirm the frame visibly breaks, read back the
+compiled program, or dump the define. **A null is evidence only once the independent variable
+is known to have varied.**
+
+**The corollary, which is what found the far_270 lattice.** An ablation that *is* live and
+still leaves the artefact is a real exclusion, and a strong one. Of the five live ablations
+run against that lattice, four excluded a candidate and the fifth found it.
+
+**The structural answer is a flag the shader branches on, which cannot quietly not exist.**
+`#hardshadow`, `#noastern`, `#aok=1`, `uJointK` and `uWarpK` all exist for this. `#aok=1` is
+the model: at an exponent of one the solve returns `vWall = vSky = ao` and the gain is
+`vec3(1)` at every depth, so it is an **exact algebraic identity** rather than an
+approximately-inert setting, and running it confirmed the term was inert to the digit.
+
+**And a coincidence that survives arithmetic is still a coincidence.** The sand map's relief
+is documented as "a ripple train at a quarter of a metre" and the lattice dots measured about
+24 cm. The match was exact, it is the kind of agreement that normally settles a question, and
+the ablation came back live at 22.1% with the lattice completely unmoved. The bed spacing
+later turned out to be 7.7–25 cm, so the *same* 24 cm matched the true cause as well.
+
+## Rule 2 — A tool that measures nothing must not print a number
+
+Nine instances, so it is a rule rather than an observation:
+
+1. **`grad.mjs`** turned an unrecognised flag into a `NaN` crop, selected no pixels, and
+   printed a header with no rows.
+2. **`_p7name.mjs`** silently measured nothing when given a mode that does not exist.
+3. **`shoot.mjs`** would take an `--only` matching no viewpoint, render nothing, and write a
+   manifest with an empty results array.
+4. **`_clastprobe.mjs`** would take `--only bogus`, switch off *both* the coarse map and the
+   grit, and print a table for a facet with nothing on it.
+5. **`_clastprobe.mjs` again, first run**, put every pixel of the facet at 0.95 in encoded
+   sRGB, where the curve is nearly flat and every gradient it existed to measure was
+   compressed fivefold. **A probe with a free exposure has to be exposed** — check the
+   reported mean before reading anything else it says.
+6. **`bench.mjs`'s `-shadow` column** printed 0.05 ms for three quarters of the frame. A
+   broken ablation with a plausible number attached is this rule and rule 1 at once.
+7. **`fillcost.mjs`** printed `NO — CHECK` beside every row *including a real 4.44 ms saving*.
+   `customProgramCacheKey` carries the ablation's name, which is what stops fourteen variants
+   sharing one compiled program — and it also means each program sits in three's cache from
+   block 0 onward, so `onBeforeCompile` never runs again and the applied-flag, read once per
+   timing block, kept the *last* block's reading. It now records site counts for the life of
+   the run and prints the count rather than a boolean, because **"matched nothing" and "was
+   never asked" are different failures that `false` conflates.** *(A cache key that makes an
+   ablation measurable also makes the evidence that it applied unobservable on every run after
+   the first. And when a warning and a plausible number disagree, find out which is lying
+   before quoting either.)*
+8. **`settle.mjs`** reports how it exited, on the view's line and in the run manifest, because
+   a settle that quietly falls back to its ceiling is a silent under-settle wearing a different
+   hat. **A framing that prints `CEILING` is not established as byte-stable and a byte diff
+   against it is not evidence of anything.**
+9. **`tools/gate.mjs`** runs its anti-empty guards first and, if any trips, the verdict is
+   `NO MEASUREMENT`, nothing else is reported, and the exit code is 2 — because a gate that
+   passes on an empty measurement is worse than no gate: it is trusted.
+
+**Why this is worse than ordinary sloppiness, and it is specific to this project: an empty or
+zero measurement is usually the *interesting* answer here.** It is what a successful ablation
+looks like, what a byte-identical control looks like, and what a fixed defect looks like. An
+instrument that returns that same answer in response to a typo is producing the single most
+misleading output available to it.
+
+`tools/argcheck.mjs` carries `die`, `finite`, `oneOf` and `nonEmpty`; all four exit 2 and name
+the mistake. **`nonEmpty` goes immediately before the first number is printed.** It is three
+lines to adopt and every probe that takes a flag should.
+
+The general form, and the counterpart to rule 7: **an instrument should be able to fail out
+loud. A tool that cannot report that it is wrong is only ever reporting that it ran.**
+`tools/_probesplit.mjs` is the shape to copy — it asserts that its three parts close on the
+whole to 0.0000% before it prints a single number. That check cost four lines.
+
+## Rule 3 — Population discipline: quote the population, the crop, the threshold and the resolution beside every colour figure
+
+**A number recorded as evidence and read later as a requirement** is the failure mode, and it
+has landed nine times. Every one of these figures was arithmetically correct for what it
+measured. The recurring shape is not error, it is that **a name travels between tools while
+the population underneath it does not.**
+
+| what was quoted | what it actually was | direction of the error |
+| --- | --- | --- |
+| lit rock 0.687 at 14.6° against 0.615–0.626 | the whole window, not the brightest 40% | false regression |
+| `V` 0.687 against "0.589–0.600" | two old readings, the second one a band's *floor* quoted back as its ceiling | false regression |
+| wash floor 0.737 against 0.55 | `--lit` sunlit population against a whole-window target | would have cut exposure hard |
+| every "shaded" figure, from the darkest 40% | a floor measuring 0.70 sunlit: grazing-lit dirt with pebble shadows | shade read warm for weeks |
+| `hf/lf` 0.49 against 0.54–0.75 | 1600×900 against a band derived at photographic resolution | false shortfall |
+| lit rock at hue −146.7°, B/G 1.193 | **there was no rock in the frame** — an undeclared uniform failed the link and the fixed rectangle measured the sky behind the hole | routed as a material fault |
+| the injury harness firing nothing when all eighteen rock meshes were hidden | all five injuries ran at one framing where the rock was outside the frustum anyway | a check believed to be weak that was merely aimed wrong |
+| whole-frame true-black 0.583% → 0.552% | a whole-frame statistic cannot see a localised defect that is a fraction of a percent — the ablation removed *every* hole from `bend` | a real fix read as no fix |
+| whole-frame crush 40.8% → 44.4% | the foreground lost a juniper and gained cast shadows while two vegetation files were uncommitted | **a plant leaving frame moved it by more than the fix did** |
+
+**Two of these are two tools sharing a name for different populations**, which is the version
+that is hardest to catch:
+
+- **`sat.mjs --lit` against `sat.mjs`.** The flagship figure had two honest answers on the same
+  commit — **0.615 at 21°** and **0.687 at 14.6°** — and was nearly routed as a live regression
+  on the most-defended number in the project. The axis is the brightest-fraction threshold: the
+  unrestricted window includes the oblique and self-shadowed parts of the same wall, which are
+  redder and more saturated, so dropping the restriction drags saturation up and hue down
+  together. **That is what walks hue six degrees, and it is why neither clipping story could
+  account for it** — clipping moves the top of the range, so it moves saturation while leaving
+  hue in band.
+- **`grad.mjs` and `hf.mjs` measure `ground`'s floor at different distances** — y 0.32–0.58,
+  mid-frame, against y 0.80–0.98, at the camera's feet. Different distances, different
+  footprints, different surfaces. **Every "hold grad/L while hf9 climbs" statement made about
+  `ground` was a statement about two places at once**, and on consistent bands `ground` turns
+  out to be under-detailed at *every* distance rather than balanced against a ceiling — a
+  different problem with a different fix from the one being pursued. `tools/_band2.mjs` reports
+  both metrics over one rectangle and should be the tool for any two-sided target from here.
+
+The **contract population**, in full, because every part of it has now been the ambiguity:
+view `wall_lit`; crop the fractional rectangle `[0.30, 0.24, 0.34, 0.34]`; the brightest **40%**
+ranked by max channel, after discarding pixels whose max channel is under 12 code values;
+statistic the mean per-pixel HSV `(max − min)/max`; either arm, but say which; and quote the
+resolution.
+
+Three standing requirements on every tool in `tools/`:
+
+- **Print bands in labelled layers.** *Acceptance bands, from Sedona reference photographs* are
+  a different thing from *drift guards, tighter than the photographs, earned rather than
+  referenced*. A figure outside layer one is a fault; a figure outside layer two is a change to
+  explain. Those are not the same conversation.
+- **Never print a historical reading in the position where a limit goes.** That single
+  formatting decision cost two false regressions on the project's two most-quoted numbers.
+- **Quote the population with the number** — window, threshold, resolution, arm. A tool that
+  cannot say which population it measured should refuse.
+
+Two arithmetic traps that ride along with this. **`hf9` is an unnormalised RMS**, so part of a
+gap between two framings is exposure rather than surface — `wash_mid`'s near band is 19%
+brighter than `ground`'s. Print `hf9/L` beside it for the same reason `grad/L` is printed
+beside `grad`. And **a hue angle without its chroma magnitude is meaningless**: hue is an angle
+on a circle whose radius is the chroma, and as the radius goes to zero the angle stays perfectly
+well defined and stops meaning anything. **Report hue with B/R or B/G beside it, always.**
+
+## Rule 4 — A baseline is a measurement, and it expires
+
+> **Two figures ninety minutes apart in a churning tree are two afters, not a before and an
+> after.**
+
+Four instances. The one that earned the promotion **inverted a decision**:
+
+1. **`s4AoTint`.** Measured against a baseline taken ninety minutes earlier, the term looked
+   like it cost 0.007 of lit saturation to buy 0.018 of shaded — a bad enough exchange on a
+   defended metric that **the recommendation to ship it inert was already drafted.** Run
+   against `#aok=1`, an exact algebraic identity in the same tree, shaded saturation came back
+   at 0.638 to the digit (confirming inertness) and lit rock read **0.617, not 0.621.** Four
+   thousandths of the apparent cost belonged to a `textures.js` edit that landed in between.
+   The real price is **0.003 for 0.018, six to one in favour**, and the change was worth
+   having. It is also why lit rock sits a thousandth under its band floor at 0.614: **that
+   thousandth is the texture drift, not the term.**
+2. **`bl1`.** Four hours old and worthless as a baseline once three other systems had committed
+   into the window. The `bumpFrom` tilt bound was therefore re-shot back to back against the
+   same function with `MAXTILT = 1e9` — an exact no-op, so the pair differed in nothing but the
+   bound.
+3. **Two captures are not a pair.** An A/B taken as two `shoot.mjs` runs is not matched, and
+   with six agents committing it is routinely not even close: the gap is not the ninety seconds
+   they render for, it is however long the second waits on the capture lock, which has run over
+   an hour. One attempt lost its control to a file rewritten **22 seconds** after the first half
+   finished, and the pixel diff reached the bottom of the frame, where the thing being ablated
+   could not possibly reach. Another pair differed by 84–92% of the frame. **If a diff touches
+   pixels the change cannot reach, the pair is contaminated — check that before believing it.**
+4. **The `_fillonly` blue-violet shift**, published as dramatic, was a cross-session comparison
+   whose halves were **2.5 hours apart**, spanning another system's tone-curve work, on a frame
+   that was also corrupt (rule 5). A term whose own delta is 1.02× in luminance cannot double a
+   level, and noticing that arithmetic is what prompted the check.
+
+**Toggle inside one page load instead.** `_farpair.mjs` screenshots twice around a single
+visibility flip; `postpair.mjs` freezes `src/` to a snapshot and serves both halves from the
+copy; `shadowpair.mjs`, `#hardshadow`, `#noastern` and `#aok=1` do it in the shader. Matched by
+construction. **Build the ablation before the measurement, not after an argument about it.**
+
+## Rule 5 — Look at the patch before quoting a number from it
+
+**Two agents nearly published measurements of another agent's debug visualisation.**
+
+1. A `_fillonly` "after" frame rendered the wash floor as **pale lavender with its ground
+   texture gone and red debug stripes across it**, from another agent's uncommitted edit to
+   `terrain.js` or `rock.js`. **Nothing in the metrics flagged it, because the saturation of a
+   lavender floor is a perfectly well-defined number.** The reading was published before it was
+   looked at.
+2. A second `_fillonly` pair had the wash floor blown to near-white in a fill-only render,
+   which is not physical, while `terrain.js`, `rock.js` and `vegetation.js` were **all
+   uncommitted**. That time the rule held: the frames were discarded without a figure being
+   taken off them.
+
+The rule in full: **look at the frame before measuring it, and check `git status` before
+believing either.** It has since paid for itself twice more — it is what caught the near-field
+quilting and the pale slabs in the final delivery set, on a floor whose `hf/lf` measured a
+perfectly respectable 0.45, and it is the reason that set was stopped rather than shipped.
+
+The converse is just as expensive and has happened three times: **a measurement can be fully
+satisfied by something that looks wrong.** The clast grit layer at full normal amplitude turned
+a grazing sun into a binary lit/unlit decision per grain, and a binary field has an excellent
+one-pixel gradient and a very good `hf/lf` — and looks like pebble-dash. **A metric bounds a
+defect; it does not certify a fix.** Every number in this file that moved in the right direction
+was also looked at magnified before it was believed, and the ones that were not are in the
+failure lists.
+
+## Rule 6 — A statistic that returns the same answer for two populations cannot be evidence about either
+
+The final critic failed the build on shade colour, measured as mean chroma by luminance decile
+in the lower 45% of the frame, showing the darkest decile redder and more saturated than the
+brightest. **The numbers reproduce exactly.** The disproof was not an argument about tone
+curves — it was running the same instrument on **sunlit** dirt in the same window shape:
+saturation 0.696 → 0.471 across the deciles, against the shaded row's 0.758 → 0.493, with no
+shade in it and 0–5% crush against 98%. Sorting any surface by luminance and reading chroma off
+the ends produces "darker is redder and more saturated", because that is what a tone curve does
+to a warm-lit red substrate.
+
+> Where a metric is suspected of measuring the instrument rather than the scene, **find the
+> population where the effect must be absent and check the metric is absent there too.** That
+> is cheaper than reasoning about the mechanism and it is decisive where reasoning is not.
+
+## Rule 7 — An aphorism that explains an observation is not evidence for it
+
+> **Before publishing a mechanism, produce the one number that would look different if it were
+> false.** If that number cannot be named, the mechanism is a story about the observation and
+> not a finding from it.
+
+The instance. The stipple on the lit patch in `wall_shade` was attributed to a hard early-out
+in the blocker search and compressed to: *an averaging kernel degrades to noise of amplitude
+1/n; a kernel with a hard early-out degrades to noise of amplitude 1.* That sentence is true in
+general, it is memorable, it explained the observation cleanly, and **it is not what was
+happening** — the confidence blend it implies was implemented and the artifact was unchanged,
+pixel for pixel. The disproof is one line of pixels across the edge:
+
+```
+23  25  49  67  46  46  47  47  65  77  66  79  62  77  96  89  103
+```
+
+**A continuous ramp with 12–20% noise on it, not a binary flip between two levels — which rules
+out amplitude-1 noise on sight.** It cost about four seconds to produce after the fact.
+
+The failure was not the hypothesis; hypotheses are free. It was that **the hypothesis arrived
+already phrased as a lesson, and a mechanism that is pleasing to state feels like it has been
+checked.** The more quotable a mechanism is, the more it needs a measurement standing in front
+of it, because its quotability is doing work that evidence should be doing.
+
+Two aggravating factors, both of which generalise. **The claim was amplified back by the
+coordinator as something to keep applying, and that felt like corroboration.** It is not — a
+coordinator repeating a claim is the same claim, arriving from the direction that confidence
+comes from; nothing about a restatement is independent. And it **overturned a correct prior
+note** at `sky.js:640` in favour of a better-sounding one, which is the direction this trap
+usually runs, because a new sharp idea always sounds more like insight than an old accurate one.
+
+Note the asymmetry with rule 6, which is the durable part: **that one held because it is a
+procedure — go and measure the population where the effect must be absent — while this one
+failed because it is an explanation. Procedures survive contact with data; explanations are
+what data is for.**
+
+## Rule 8 — Attribution has to reach the triangle, not stop at the mesh
+
+`tools/_pixowner.mjs` named `wallL` as the owner of the "left mesa" pixels in `shade_far`.
+**That was true, and it cost four rounds** — a crest-snap diagnosis, a crest fix that measured
+nothing, five rim-planting strategies that each measured 0.50 px, and an elegant, correct piece
+of physics about end-on skylines being envelopes rather than profiles, applied to an object
+that was not a landform. The next question was **which triangle of `wallL`, and how big.**
+
+`tools/_rimtri.mjs` takes the raycast hit's `faceIndex` back through the index buffer and
+reports the drawing triangle with its edge lengths. The tell was unmistakable:
+**0.99 / 83.04 / 82.76 m in a grid whose columns are 0.62 m apart.** A silhouette drawn across
+the middle of one triangle cannot vary however much the crest varies, because there are no
+vertices there to carry it.
+
+> **An elegant argument about why something is impossible is worth exactly as much as the
+> attribution of the object it is about.**
+
+**The symptom that should send you here first: a silhouette or surface that no parameter change
+can move.** Both instances of the domain bug in rule 9 presented that way. If a feature is
+insensitive to the parameter that generates it, stop tuning the parameter and ask what geometry
+is actually there. Usually the answer is that there is almost none.
+
+The order that works: `_pixowner.mjs` (which mesh — necessary and *not* sufficient) →
+`_rimtri.mjs` (which triangle, with its edge lengths) → `_skystraight.mjs` (residual from a
+fitted line, on the PNG, in a second, with no `src` import to be blocked by anyone else's
+mid-edit file). `_pixowner.mjs` does earn its keep at step one: it settled in a single render
+what three rounds of argument from pictures had not, naming `apronL` where the thing looked
+like a wall.
+
+Two related cautions from the same round. **`tools/_skyenv.mjs` should not be trusted** — it
+bins vertex positions, so its envelope is the envelope of a face's *corners* rather than of the
+drawn edge, which against an 83 m triangle is a different object; and it measured *flatness* on
+an edge that rises at slope 0.159, so it scored a perfect ruler as unremarkable. And **a
+node-side `buildWalls(path, terrain, {})` is not the wall the app draws** — one reported no rock
+above y 0 where the running scene has wall at y 46.8. Ask the running scene.
+
+## Rule 9 — A domain-clamped array must be checked at both ends, and a derived accessor must clamp both its samples
+
+This produced **two of the project's most conspicuous defects, independently, from opposite
+ends of the same array**, and neither was findable from the picture.
+
+**The shape.** `WashPath.posAt` clamps its parameter into the path's real domain,
+`[-11.99, 332.3]` m. That is correct and defensive. The bug is in the *consumer*: a loop that
+walks `s` past either end gets the same clamped point back for every iteration, so N columns are
+placed on one point, and any lateral offset then fans that stack of coincident columns into a
+sheet standing where no landform is. **A defensive clamp does not protect a caller that never
+asks whether it is inside the domain — it hides the fact that it is not.** The failure is
+silent, because a clamped parametric lookup returns a valid point and the geometry that lands
+there is well-formed rather than NaN, so nothing in `nanhunt` or a bounding-sphere check sees it.
+
+| | out-of-domain run | columns stacked | what it produced |
+|---|---|---|---|
+| far end | `S1 = 356` against `length = 332.3` | 39, at x 0.0, z −319.9 | the **`far_320` ledge** — aprons leaning on the stack met on the axis as a berm 14–16 m high, hiding a 24 m amphitheatre behind it |
+| near end | `S0 = -34` against `-sZero = -11.99` | 36, at x 0.0, z 20.0 | half of the **`shade_far` ruler** |
+
+**The second failure mode is worse: a derived accessor clamped asymmetrically.** `headingAt`
+differences two `posAt` samples and clamped **only the backward one**, at zero rather than at
+`-sZero`. Below `s = -3` the two samples straddled the origin *backwards*, so the heading
+reversed — **−177.6° at `s = -34` against a true +5.7°** — through a degenerate
+`atan2(0, -0) = 180°` at exactly `s = -3` where they coincide. `cNx = cos(th) * side` therefore
+flipped, fifty columns were built on the far side of the corridor, and the single transition
+column stretched one quad **83 m** across it at near-constant height. **A derived quantity must
+clamp to the same domain as the accessor it is built on, and it must clamp *both* samples**, or
+it returns a confidently wrong value in the interior of a range where the underlying accessor is
+perfectly fine.
+
+Fixed by `sEndOf(path)` and `sStartOf(path)` in `rock.js`, six metres of margin each, so the end
+fades finish on real path rather than on the clamp.
+
+**Why the far end was found first, and the near end took another night.** Nothing frames the
+start of the walk. The far end is the payoff shot and a critic described the defect there within
+hours; the near end is only visible from a station added late, looking back down-canyon, and
+even then it presented as a plausible landform — a "left mesa" with a straight rim — rather than
+as an error. **A defect out of frame is not a smaller defect, only a later one.**
+
+## Rule 10 — `hf/lf` is blind to a regular mid-frequency pattern
+
+The newest, found on the final shoot, and the reason the delivery set was stopped.
+
+**A two-band ratio reads a tiling defect as healthy texture**, because the energy is not in the
+high band. The `ground` floor measures **0.45 on both arms with the quilted cross-hatch plainly
+visible in the frame.** So a tiling defect can be at its worst while every structure figure in
+this document looks correct. It was caught only by looking at the frame before measuring it
+(rule 5).
+
+Two bounds already recorded that belong beside it, because together they say what this metric
+is and is not for:
+
+- **`hf/lf` cannot see *where* energy sits in the spectrum**, only how much there is. Filling
+  the 0.4–1.6 m octaves and tripling the bedform amplitude moved `wash_mid` floor `hf/lf` from
+  0.59 to 0.59, exactly, while `grad/L` went 0.203 → 0.219 and the octave table moved
+  substantially. **Use the octave table for structure questions.**
+- **`hf/lf` is resolution-dependent** and the 0.54–0.75 reference band was derived from
+  photographs at their own pixels per metre. Byte-identical rock measures midwall 0.49 at
+  1600×900 and 0.54 at 2560×1440. Quote the resolution and compare only at equal resolution.
+
+So `hf/lf` remains the right gate for "has this surface gone to wax overall", and the wrong one
+for "is the spectrum the right shape", "is this tiling", and any comparison across two
+resolutions.
+
 ## Performance budget, measured on the target machine
 
 Reference numbers from a comparable Three.js scene on this exact RTX 4060, at 1600×900:
