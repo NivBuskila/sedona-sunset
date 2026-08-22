@@ -18,6 +18,31 @@ export const VIEWS = [
   { name: 'bend',       d: 92,  yaw: -22,  pitch: 2 },
   { name: 'juniper',    d: 62,  yaw: 34,   pitch: 3 },
   { name: 'sun_gap',    d: 120, yaw: 0,    pitch: 6 },
+  /* The cool half of the walk, which until now nothing photographed.
+   *
+   * The eight above stop at 120 m and five of them sit at 46 m or nearer, inside
+   * the part of the corridor whose walls fill 45 to 80 degrees of their sky with
+   * sunlit red rock. Warm shade there is what correct light transport gives and it
+   * is not going to be faked. But tools/_skydist.mjs measures the corridor opening
+   * astern as the walk lengthens - the up-canyon skyline falls from 80 degrees at
+   * 8 m to about 17 past 160 - so the fill's away-from-sun lobe arrives at hue 317
+   * out here where it arrives at hue 10 at the head of the walk. The player
+   * traverses this; the camera never did. Every critique this project has received
+   * was formed on the warm half, which is a sampling failure on our side rather
+   * than anything about the scene.
+   *
+   * Chosen by looking, in tools/_scout.mjs, over three stations and eleven
+   * bearings. The brief is shaded ground against sunlit wall because the contrast
+   * is the point and not the shade on its own - a frame of uniformly cool dirt
+   * would prove the fill works and say nothing about whether the warm/cool split
+   * reads. This bearing puts shaded floor across the right foreground with a soft
+   * terminator through it, sunlit floor at the left, and a sunlit stratified wall
+   * behind, so warm and cool are in one frame and can be compared without
+   * remembering another. 160 m rather than further because the outer wash is wide
+   * and its floor is largely grazing-lit: past about 180 the shaded fraction falls
+   * away and there is nothing to contrast. The astern aperture mix here is 0.945.
+   */
+  { name: 'shade_far',  d: 160, yaw: -155, pitch: -4 },
 ];
 
 export const byName = (n) => VIEWS.find((v) => v.name === n);
