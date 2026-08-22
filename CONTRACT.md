@@ -3302,18 +3302,26 @@ Differences between rows are transport; differences between arms are the grade.
 | 2560×1440 | graded | control | the chain |
 | --- | --- | --- | --- |
 | floor **shade** hue median | **4.3°** | 6.7° | −2.4°, cooler |
-| floor **shade** hue q25 | **−3.0°** | 0.0° | past red into magenta |
+| floor **shade** hue q25 | **−3.0°** | 0.0° | ~~past red into magenta~~ see below |
 | floor **shade** B/G | **0.895** | 0.833 | +0.062 |
 | floor **lit** hue median | 21.3° | 21.6° | −0.3° |
 | floor **lit** B/G | 0.608 | 0.603 | +0.005 |
 | floor shade `grad/L` | 0.104 | 0.093 | +0.011 |
 
 **This is the original brief's hardest colour requirement measured rather than asserted** — that
-"teal" mean shadows cooling and not a global cyan drift. The shaded row moves 2.4° cooler and its
-lower quartile crosses zero into magenta, which is "purple shadows in the crevices" as a number;
-the sunlit row of the same dirt moves 0.3°. No unpaired window could separate those two claims,
-because a hue difference between two different surfaces is always partly pigment. `grad/L` rising
-0.093 → 0.104 says the deepening does not wax over the micro-relief.
+"teal" mean shadows cooling and not a global cyan drift. The shaded row moves 2.4° cooler and
+~~its lower quartile crosses zero into magenta, which is "purple shadows in the crevices" as a
+number~~; the sunlit row of the same dirt moves 0.3°. No unpaired window could separate those two
+claims, because a hue difference between two different surfaces is always partly pigment. `grad/L`
+rising 0.093 → 0.104 says the deepening does not wax over the micro-relief.
+
+> **The magenta half of that is withdrawn — see "A retraction of my own".** At the B/R of 0.28
+> this population carries, a negative hue angle is **one code value of blue over green**: it is
+> the dither pattern, not a pigment. The paired window is still the right instrument and the
+> −2.4° cooling is still real and still the strongest colour evidence in the handoff. What must
+> not be repeated is the reading of the q25 as purple shadows. **Report hue with B/R or B/G
+> beside it, always** — a hue angle without its chroma magnitude is an angle on a circle of
+> radius zero.
 
 ### Banding, edges and structure, both delivery buffers
 
@@ -4341,17 +4349,21 @@ Measured on `s4v_shade_far`, shipped pipeline, 1600×900:
 | figure | `floor shade` | `floor lit` | reads as |
 | --- | --- | --- | --- |
 | hue median | **4.1°** | 21.3° | 17.2° of separation on one albedo |
-| hue q25 | **−3.0°** | 18.4° | a quarter of the shaded floor past red into magenta |
+| hue q25 | **−3.0°** | 18.4° | ~~a quarter of the shaded floor past red into magenta~~ withdrawn, see below |
 | B/G | **0.888** | 0.631 | the fill is far bluer than the sun |
 | saturation | 0.641 | 0.627 | shade holds its pigment |
 | V | 0.131 | 0.642 | |
 | grad/L | **0.124** | 0.120 | structure survives the fill |
 | hf/lf | 0.51 | 0.55 | |
 
-Two things worth reading off this. The brief's **"purple shadows in the crevices" is now a number
+Two things worth reading off this. ~~The brief's **"purple shadows in the crevices" is now a number
 rather than an impression**: hue median 4.1° with the lower quartile at −3.0° means a quarter of the
 shaded floor has wrapped past red into the magenta quadrant, at B/G 0.888 against the sunlit
-0.631. And `grad/L` holds at **0.124 in shade against 0.120 in sun**, both inside the 0.12–0.16
+0.631.~~ **Withdrawn — see "A retraction of my own" below.** At this population's B/R of 0.28 a
+negative hue angle is one code value of blue over green, i.e. the dither. What survives is the
+**17.2° of hue separation on one albedo** and the B/G split of 0.888 shaded against 0.631 sunlit,
+which are chroma-magnitude statements and do stand. And `grad/L` holds at
+**0.124 in shade against 0.120 in sun**, both inside the 0.12–0.16
 band, so the fill is adding light without flattening micro-relief into wax — the failure mode a
 brighter ambient usually buys. `hf/lf` sits at 0.51 against the 0.55 gate on the shaded half, which
 is the one figure here under its gate; shade legitimately carries less high-frequency content than
@@ -4965,6 +4977,16 @@ The gate pins `#high`. The adaptive governor is a moving target by design and yo
 cannot draw a reference band around one.
 
 ## An end-on skyline is an envelope, not a profile
+
+> **SUPERSEDED — read "Superseded: it was a reversed heading" at the foot of this section
+> before quoting anything in it.** The physics below is sound and the conclusion it reaches —
+> that no crest change can straighten an end-on skyline — was **sound physics applied to the
+> wrong object**. The "left mesa" was not a landform and not an envelope over many stations:
+> it was the interior of **one 83 m triangle** built by a reversed heading at the near end of
+> the wall curtain's domain. Fixing that moved the residual 0.50 → 21.42 px, which the
+> impossibility argument says cannot happen. Kept in place because the *way* it went wrong is
+> the transferable part, and because the argument was quoted upward as a measured
+> impossibility.
 
 The final critique's second-ranked finding, and the object it called the most conspicuous in
 the set, was a "left mesa" in `shade_far` with a "perfectly straight, un-notched, un-eroded"
