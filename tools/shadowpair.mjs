@@ -43,8 +43,17 @@ const has = (k) => args.includes('--' + k);
 
 const W = Number(getf('w', 1280)), H = Number(getf('h', 720));
 const TAG = getf('tag', 'sp');
+/* Weighted to the far field on purpose. The four taps are gated on
+   `wide = 1.0 - gFoot`, so they are *off* in the near field by construction and a
+   near framing can only ever report zero — which is what the first run of this
+   tool mostly did, and a table of zeros from views where the block does not
+   execute is not evidence that it is harmless where it does. bend, sun_gap and
+   shade_far are 92, 120 and 160 m, which is where the footprint ramp is open and
+   also where a blocker-distance penumbra is widest. wall_shade is kept because it
+   is the floating-slab framing; it is a rock-shader region and should read zero,
+   which makes it the run's own negative control. */
 const views = has('all') ? VIEWS
-  : VIEWS.filter(v => ['wash_mid', 'wall_lit', 'wall_shade', 'bend'].includes(v.name));
+  : VIEWS.filter(v => ['wash_mid', 'bend', 'sun_gap', 'shade_far', 'wall_shade'].includes(v.name));
 
 /* Two literal substrings, both short and both unique, so a miss is detectable
    rather than silent. `applied` is reported per variant for that reason. */
@@ -145,20 +154,37 @@ try {
     const a = decode(fs.readFileSync(fOld)), b = decode(fs.readFileSync(fNew));
     let sum = 0, max = 0, over1 = 0, over4 = 0, n = 0;
     let la = 0, lb = 0;
+    /* Histogram of |d| rather than a running mean alone. A frame-wide mean of
+       0.01 is compatible with two very different pictures: a hundredth of a code
+       value spread over everything, which nobody can see, and four code values
+       over a quarter of a percent of the frame, which is a visible seam if those
+       pixels are adjacent. The percentile and the conditional mean separate
+       them, and the changed-region extent says whether they are adjacent. */
+    const hist = new Uint32Array(256);
+    let cSum = 0, cN = 0, x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
     for (let i = 0; i < a.w * a.h; i++) {
       const ia = i * a.ch, ib = i * b.ch;
       const d = Math.max(Math.abs(a.px[ia] - b.px[ib]),
                          Math.abs(a.px[ia + 1] - b.px[ib + 1]),
                          Math.abs(a.px[ia + 2] - b.px[ib + 2]));
       sum += d; if (d > max) max = d;
-      if (d >= 1) over1++;
+      hist[d]++;
+      if (d >= 1) {
+        over1++; cSum += d; cN++;
+        const x = i % a.w, y = (i / a.w) | 0;
+        if (x < x0) x0 = x; if (x > x1) x1 = x;
+        if (y < y0) y0 = y; if (y > y1) y1 = y;
+      }
       if (d >= 4) over4++;
       la += a.px[ia] * 0.2126 + a.px[ia + 1] * 0.7152 + a.px[ia + 2] * 0.0722;
       lb += b.px[ib] * 0.2126 + b.px[ib + 1] * 0.7152 + b.px[ib + 2] * 0.0722;
       n++;
     }
+    let acc = 0, p999 = 0;
+    for (let d = 0; d < 256; d++) { acc += hist[d]; if (acc <= n * 0.999) p999 = d; }
     rows.push({ view: v.name, mean: sum / n, max, over1: over1 / n, over4: over4 / n,
-      lOld: la / n, lNew: lb / n });
+      lOld: la / n, lNew: lb / n, p999, cMean: cN ? cSum / cN : 0,
+      box: cN ? `${x1 - x0 + 1}x${y1 - y0 + 1}` : '-' });
   }
 
   console.log('\n  ── control (old estimator) against HEAD, matched in one page load ──');
@@ -168,6 +194,12 @@ try {
       `${(r.over1 * 100).toFixed(2).padStart(6)}% ${(r.over4 * 100).toFixed(2).padStart(6)}% ` +
       `${r.lOld.toFixed(2).padStart(8)} ${r.lNew.toFixed(2).padStart(8)} ` +
       `${(r.lNew - r.lOld).toFixed(3).padStart(7)}`);
+  }
+  console.log('\n  ── and where those differences are, which the mean cannot say ──');
+  console.log('  view          p99.9 |d|   mean over changed px   changed-region extent');
+  for (const r of rows) {
+    console.log(`  ${r.view.padEnd(12)} ${String(r.p999).padStart(9)} ` +
+      `${r.cMean.toFixed(2).padStart(22)} ${r.box.padStart(23)}`);
   }
   console.log(`\n  shots/${TAG}old_*.png and shots/${TAG}new_*.png — run grad.mjs, sat.mjs, hue.mjs on both.`);
 
