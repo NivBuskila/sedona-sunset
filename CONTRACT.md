@@ -9577,3 +9577,136 @@ lift across that pair is not attributable. A same-build A/B with only these
 material uniforms returned to their defaults gives **identical medians**, putting
 all of it on the sky edit. **Two figures from a tree that moved between them are
 two afters, not a before and an after.**
+
+# The hero crown had no transmission, and that was the missing term
+
+Two hypotheses, one falsified and one landed, on the complaint of "a hard
+lit/shade split within each spray" on the object a critic called the best in the
+set.
+
+The knee was the first and it is written up above: switched into irradiance space
+it moved 1.18% of pixels by a mean of one code value and took internal crown
+contrast the *wrong* way, 8.87:1 to 8.97:1, because the two forms are identical
+below saturation and this crown sits at value 0.08. Reverted, with the reason
+left as a comment so nobody retries it.
+
+The second was that the crown carried **no transmission at all** — `uTransAmt`
+and `uTransIso` both zero by default, from a choice made hours before a delivery
+when the injection hook was first found to be live. An internal contrast of
+8.9:1 against a real juniper's 2.4:1 is the size of gap a *missing* term makes
+rather than a mistuned one. That is what it was.
+
+Landed at `uTransAmt` 0.35, `uTransRim` 0.70, `uTransIso` **0**, in `2adb6fc`.
+Measured against the crown's own coverage mask with both arms out of one page
+load, so they cannot differ by a file that landed between them:
+
+| | crown p90/p10 | midtone share | control |
+|---|---|---|---|
+| `juniper` before | 18.26 | 34.8% | L 0.1666 |
+| `juniper` after | **14.96** | **37.1%** | L 0.1666 |
+| `wash_mid` before | 11.26 | 44.2% | L 0.2722 |
+| `wash_mid` after | **9.66** | **48.4%** | L 0.2722 |
+
+Zero clipped pixels in every arm. `sun_gap` and `wall_lit` contain no crown
+pixels at all, so they are untouched by construction rather than by comparison,
+which is the better guarantee. At 3x the shaded right-hand crown mass gains
+foliage structure where it read as one black shape, with silhouette, form and
+depth unchanged and no glow.
+
+It cannot reach the deepest interstitials and was never going to: those are
+genuinely occluded, `folSunVis` is zero there, and a term gated on sun arrival
+cannot light them. What it reaches is the spray facing away from the sun while
+standing in it, which is what was complained about.
+
+`uTransIso` is zero here and nowhere else among the tiers that carry
+transmission. It is exactly the term that was effectively emissive on the shrubs
+— albedo times a constant, with no light, normal or shadow in it — and with every
+contribution passing through the shadow gate, the "brightest thing in a dark
+corner" failure cannot recur on this object. It is also a flat lift on every
+unoccluded fragment, so it raises lit sprays as much as shaded ones: it bought
+0.05 of ratio for triple the hue shift.
+
+## The known cost, and the explanation for it that turned out to be wrong
+
+**The crown warms by 1.6 degrees in `juniper` and 2.7 in `wash_mid`.** Saturation
+rises 0.014 and 0.028. That is a property of the committed state and the next
+capture's hue reading should not be a surprise to anyone.
+
+The comfortable explanation was that this is a population artefact. Transmission
+raises value, and hue is only meaningful where there is chroma, so a population
+gated on v>0.10 *grows* when the term is switched on — 59550 crown pixels to
+64200 here — and the arrivals carry the transmission's own tint. That moves a
+median with no pixel changing colour. It is a real mechanism and it is the fifth
+population error this project has chased.
+
+It is not what happened. Measuring hue a second way, over a population held fixed
+at the arm-0 one, agrees with the free measurement to 0.4 degrees. **The warming
+is real.** Both figures are reported side by side by the tool now, because the
+two need not agree and the difference is the whole finding when they do not.
+
+## Queued: the crown is using a grass tint
+
+`uTrans` is (1.35, 1.12, 0.58), which is hue 42 — a dry cream grass blade,
+inherited from the near-field tiers because it is the default. Transmitted light
+is filtered by the pigment it passes through, so a dry grass blade and a
+juniper's blue-green scale foliage should not share one tint. Retinting toward
+the crown's own foliage should close the split at near no hue cost, and if it
+does then 0.35 is not the ceiling either. `tools/herotrans.mjs` takes the tint as
+a swept parameter for this. Not yet run.
+
+# Instrument fault: a coverage mask built from MeshBasicMaterial renders the atlas, not white
+
+Findable by whoever searches for "mask". This is the fifth misleading instrument
+caught today and it is the one most likely to be reused, because the pattern
+appears in more than one tool and it looks obviously correct.
+
+The pattern is: to measure a population of pixels belonging to one object, hide
+everything else, override that object with `new MeshBasicMaterial({ color:
+0xffffff, map: src.map, alphaTest: src.alphaTest })` so the cutout still cuts,
+render with the atmosphere and both post chains off, and threshold the result to
+get coverage.
+
+**A bound `map` multiplies into the output.** So "colour white, map the atlas"
+does not render white — it renders the atlas's own colour, then tone maps it. A
+brightness threshold on that keeps the bright texels of the atlas and silently
+discards the dark ones, and how much it discards depends entirely on how dark the
+atlas happens to be. On a pale cream shrub atlas most texels still clear a
+threshold and it passes for a coverage mask. On the hero crown's dark olive
+atlas, mean 0.355 in sRGB, almost none do: it reported a crown of **1176 px
+against a true 110368**, a 94-fold undercount, on a crown spanning hundreds of
+pixels across.
+
+Every figure taken through such a mask is a figure over the brightest part of the
+population, which is not the population named.
+
+**It gave itself away by moving a control that should not have moved.** The tool
+reports the median of every *unmasked* pixel alongside the masked statistics, on
+the reasoning that a material-local uniform cannot reach outside its own object,
+so the control drifting at all means the arm differs by something else. It
+drifted — because the 109000 crown pixels the mask had failed to catch were still
+in the frame, and had landed in the control. Without that column the crown
+numbers would have looked plausible and been wrong by two orders of magnitude in
+population. **A masked measurement should always carry a population that must not
+move.**
+
+The fix is to force the colour after the map is sampled, leaving alpha untouched
+so the alpha test still is the cutout, and to turn tone mapping off so white
+arrives as white:
+
+```js
+mm.onBeforeCompile = (sh) => {
+  sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>',
+    '#include <map_fragment>\n\tdiffuseColor.rgb = vec3( 1.0 );');
+};
+```
+
+**`tools/vegval.mjs` carries the same pattern and has not been corrected.** Its
+`plant` population — the one every near-field level, clip fraction and midtone
+figure in this record was taken over — is biased toward bright texels. The
+direction is certain; the magnitude is not, and quantifying it needs a render.
+The near-field atlases are pale, so most of their texels clear the threshold, but
+the outer darker passes of every blade and leaf sit near it and the scrub stems
+at (104, 88, 66) sit at or below it. The midtone-share deltas were taken with the
+same mask on both arms, so the *direction* of those results should survive; the
+absolute figures should not be quoted as populations of "the plant" until the
+mask is fixed and re-run.
