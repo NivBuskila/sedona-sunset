@@ -102,6 +102,58 @@ export const POST_DEFAULTS = {
      shadows cool, the lit faces do not move. */
   splitPivot: 0.12,
   vibrance: 0.10,            // low-saturation pixels only; zero above sat 0.60
+
+  /* ── the shadow lift, and why it is here rather than in the toe ────────────
+   *
+   * The critic's first finding was clast side faces that read as pure black
+   * beside blazing orange ground. Terrain attributed it to this chain, and the
+   * attribution holds: the shading is right and ACES is what loses it.
+   *
+   * The frame contains scene-linear 0.0092 on the worst facet against 0.30 on
+   * the sunlit floor behind it — 3.1%. That the 3.1% is *correct* has an
+   * independent check that needs no sky-visibility figure at all: the shaded
+   * floor of this scene sits at 7.4% of the sunlit floor, which pins sky-only
+   * illumination on a fully open horizontal surface, so a facet at the measured
+   * 71.5% sky visibility predicts 5.3% and burial and contact darkening take it
+   * the rest of the way down. Nothing upstream is broken.
+   *
+   * ACES is. It reaches 0.0092 with a toe so hard that the value arrives at code
+   * 6, and deleting the *entire* clast occlusion chain — every AO term, burial,
+   * contact darkening — moves it only to about code 13. The whole available range
+   * is inside the toe, which is why the defect reappeared on a new population
+   * every time a material was blamed: it is a luminance band, not a population.
+   *
+   * The obvious response — reach for the toe below — is the wrong end of the
+   * pipe twice over. That curve runs on *encoded* luminance after ACES has
+   * already compressed the bottom two stops into six code values, so it can only
+   * stretch what survived; and ACES flattens the contrast *between* dark facets
+   * on the way, so re-expanding afterwards recovers the level without recovering
+   * the separation. Acting in scene-linear before the curve keeps both, and costs
+   * no precision because the frame is float until the final write.
+   *
+   * The shape is a soft knee: `shadowLift` gain at zero, falling as (1 - y/knee)^2
+   * to exactly unity at `shadowLiftKnee` scene-linear luminance. So everything
+   * above the knee is untouched *by construction* rather than by measurement,
+   * which is the property that makes this safe to ship against a colour record —
+   * lit rock at 0.365 linear and the sunlit floor at 0.30 cannot move, because
+   * the term is identically 1.0 there. And it is a scalar on all three channels,
+   * so like every other term in this file it leaves HSV saturation and hue
+   * exactly where they were.
+   *
+   * The knee is bounded by something real, and it is what kills the term: the
+   * facet at 0.0092 and the shaded floor at 0.0221 are 1.27 stops apart, so no
+   * operation keyed on luminance can lift one without lifting the other. The
+   * shadow gate is a *mean* over a shaded window, so it moves with the whole
+   * population rather than with the worst pixel, and it moves first. Measured at
+   * gain 4, knee 0.045: the gate goes to 0.418 against a 0.25 ceiling.
+   *
+   * So this ships at 1.0, the identity, where the branch does not even run. It is
+   * off because it was measured and cannot be afforded, not because it is
+   * unfinished. `#lift=N` and `#liftknee=N` drive the arms, and CONTRACT.md has
+   * the swept table, the captured pair, and the reason the decision above this
+   * line is a contract question rather than a code one. */
+  shadowLift: 1.0,
+  shadowLiftKnee: 0.045,
   /* Chroma-preserving, and applied after the sRGB encode with the pivot at
      encoded middle grey. See the shader for why both of those are corrections
      rather than choices. */
@@ -568,6 +620,13 @@ export function createPost({ renderer, camera, atmo, sun }) {
      ends of it are sweepable from the URL without a rebuild. `#toe=0` restores
      the plain pivoted contrast, black point and all, which is how the toe's own
      contribution gets separated from the rest of the grade. */
+  /* The shadow lift's two numbers, sweepable for the same reason the toe's are:
+     the knee is a trade against the shadow gate, the gain is a trade against how
+     black a physically-correct 3% facet is allowed to read, and both have to be
+     re-measured whenever the fill moves. `#lift=1` is the identity and is how the
+     shipped arm gets paired against the curve as it was. */
+  P.shadowLift = num('lift', P.shadowLift);
+  P.shadowLiftKnee = num('liftknee', P.shadowLiftKnee);
   P.toeTop = num('toe', P.toeTop);
   P.toeSlope = num('toes', P.toeSlope);
   P.shoulderTop = num('sh', P.shoulderTop);
@@ -923,6 +982,7 @@ ${GHOSTS.map(([t, r, tr, tg, tb, gi]) => `    {
       uHighTint: { value: new THREE.Vector3(...P.highTint) },
       uSplitPivot: { value: P.splitPivot },
       uVibrance: { value: P.vibrance },
+      uLift: { value: new THREE.Vector2(P.shadowLift, P.shadowLiftKnee) },
       uContrast: { value: P.contrast },
       uContrastPivot: { value: P.contrastPivot },
       uToe: { value: new THREE.Vector2(P.toeTop, P.toeSlope) },
@@ -958,6 +1018,7 @@ uniform float uSplitPivot;
 uniform float uVibrance;
 uniform float uContrast;
 uniform float uContrastPivot;
+uniform vec2 uLift;
 uniform vec2 uToe;
 uniform vec2 uShoulder;
 
@@ -1101,6 +1162,17 @@ void main() {
     float t = l / (l + uSplitPivot);
     vec3 tint = mix(uShadowTint, uHighTint, t);
     c *= mix(vec3(1.0), tint, uGrade);
+  }
+
+  /* The shadow lift, in scene-linear, immediately before the curve. Placed
+     after the split tone so the tone's pivot still classifies pixels by their
+     original luminance and its measured effect on shaded rock is unchanged, and
+     before ACES because that is the compression being answered. Identically 1.0
+     at and above the knee, so nothing in the measured middle can move. */
+  if (uGrade > 0.0 && uLift.x > 1.0) {
+    float ly = max(luma(c), 0.0);
+    float w = max(0.0, 1.0 - ly / uLift.y);
+    c *= 1.0 + (uLift.x - 1.0) * w * w * uGrade;
   }
 
   vec3 o = aces(c);
@@ -1660,6 +1732,7 @@ void main() {
     fu.uHighTint.value.set(...P.highTint);
     fu.uSplitPivot.value = P.splitPivot;
     fu.uVibrance.value = P.vibrance;
+    fu.uLift.value.set(P.shadowLift, P.shadowLiftKnee);
     fu.uContrast.value = P.contrast;
     fu.uContrastPivot.value = P.contrastPivot;
     fu.uToe.value.set(P.toeTop, P.toeSlope);
