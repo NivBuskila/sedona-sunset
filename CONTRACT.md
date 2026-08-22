@@ -8759,3 +8759,160 @@ with the term off. Inside noise. On the ladder as `post.lift`, compiled out on p
 2. **The near-field clasts are rectangular boxes** — flat top, straight side, hard
    90° edges — which reads as a brick rather than a fractured sandstone slab. That
    is geometry and belongs with the transported-lithology work, not with the grade.
+
+---
+
+# The clast shape complaint: measured, decomposed, and not landed
+
+**The lever that exists improves the average stone and does not touch the worst
+ones, which is the entire complaint. Recommending no change, with the number
+that says so.**
+
+## First, a correction to my own earlier measurement
+
+`tools/_hullface.mjs` reported the largest planar facet at 6.5-9.3% of hull
+surface area over 23-53 planes, and I concluded the bevel work had succeeded and
+must not be redone. **That measurement is correct and it answers the wrong
+question**, by a factor of four.
+
+It measured the whole hull. The camera never sees the whole hull. `sink` runs
+0.34 to 0.95 of a clast's vertical *half*-extent, so what stands above the bed is
+only 20-24% of its total height - a thin cap off the top of a convex body, which
+is not a small version of that body. Measured over the cap that is actually
+visible, and weighted by projected area from a near-field camera
+(`tools/_visface.mjs`):
+
+| | whole hull | as presented to the camera |
+|---|---|---|
+| largest single plane | 6.5-9.3% | **27.8-34.1%** |
+| top three planes | - | **58-73%** |
+| distinct planes | 23-53 | 8.6-16.5 |
+
+So the coordinator's second hypothesis is right: **the facet count is fine and
+the facet distribution is not.** A clast presents three big flat facets carrying
+about two thirds of everything the camera sees of it. That is a brick.
+
+The general form is worth keeping, because it is the fourth instance this week:
+an aggregate taken over a population the viewer cannot see is not a measurement
+of what the viewer sees. Burial made 76-80% of every clast invisible and the
+statistic went on averaging over all of it.
+
+## The flat plates are `cobble`, attributed rather than assumed
+
+`tools/_paleblob.mjs` finds the large desaturated plates by search - they are
+conspicuous precisely because they are pale and flat against saturated orange
+bed - and `_pixowner` attributes the two largest to **`cobble1` and `cobble2`**.
+
+Not `slab`, not `pavement`. `cobble` has `flat: 0.42`, the most tabular setting
+in the class table, 3600 instances, and it is a near-field class.
+
+A process note: my first three probe coordinates were read off a *magnified*
+crop as displayed rather than off the crop's own pixel grid, the viewer had
+scaled it, and all three landed on bare ground and attributed to terrain. One
+render wasted. `tools/_at.mjs` now checks a normalised coordinate against the
+capture in a few milliseconds, which is the cheap half of what the render was
+doing.
+
+## The lever that works on the mean
+
+Bevel directions are drawn uniformly over the sphere, so roughly half the facet
+budget lands on the underside, which is buried, and much of the rest below the
+bed line. The seating aligns the clast's local +y with the ground normal before
+a modest tilt, so local +y is world up for essentially the whole population and
+the budget can be moved without changing its size.
+
+Biasing bevel points into the visible band (`tools/_topbias.mjs`), **at flat
+triangle count**:
+
+| class | largest visible plane | top-3 | tris |
+|---|---|---|---|
+| cobble | 29.0% -> 23.6% | 64.2% -> 54.2% | 34 -> 37 |
+| pavement | 31.2% -> 23.2% | 65.9% -> 51.2% | 38 -> 42 |
+| slab | 26.2% -> 18.7% | 60.2% -> 44.1% | 47 -> 48 |
+| boulder | 32.1% -> 20.1% | 65.0% -> 44.0% | 54 -> 53 |
+
+Non-monotone, turning around past bias 0.40-0.55 as the flanks start to starve.
+Real, free, and in the right direction.
+
+## And the measurement that says not to land it
+
+The critic is not looking at the average stone. "The single worst object in the
+whole set" is a statement about a tail, so `tools/_flattail.mjs` reports the
+distribution rather than the mean, over 800 seatings per setting:
+
+| bias | mean | >35% | >45% | **>55%** |
+|---|---|---|---|---|
+| 0.00 (shipped) | 29.7% | 19.3% | 7.0% | **3.4%** |
+| 0.25 | 25.8% | 16.0% | 6.1% | **3.5%** |
+| 0.40 | 24.6% | 14.4% | 6.4% | **3.6%** |
+| 0.55 | 25.0% | 14.0% | 6.4% | **3.6%** |
+
+**The tail does not move. At >55% it is very slightly worse.** The mean falls by
+a sixth and the stones that read as bricks are exactly as they were.
+
+The reason is structural. A cobble presenting one plane at over half its visible
+area is one seated nearly flat, and that plane is set by the four top corners of
+the jittered box - four points hull into two triangles and therefore into one
+broad plane however far apart in height they are. Bevel points chamfer that
+plane's rim; they cannot break its middle.
+
+**A cross-check that the tail figure is the right one.** 3.4% of 3600 cobbles is
+about 120 worst-case stones across the near field. The critic counted "forty-plus
+of them" in the `ground` framing alone - same order, and about what one framing's
+share of the near field should contain. The statistic and the complaint are
+counting the same objects.
+
+So: landing the bias would change the geometry of every clast in the scene,
+could not be verified by eye before the critic reports, and by its own numbers
+would leave all 120 offending stones untouched. That is the trade declined three
+times already today and it is declined again here.
+
+## The waterline, and an instrument I do not trust
+
+The silhouette carries one straight edge at about 32% of its perimeter, and the
+whole bottom arc is about 52% (`tools/_silho.mjs`, `tools/_silho2.mjs`).
+Spending bevel budget on jittered box-edge midpoints, which is where a long
+silhouette run between two corners could be broken, moves the longest free edge
+from 25.2% to 24.5-27.0% - nothing.
+
+Why the contact is exactly straight: the near-field terrain grid is **0.20 m in
+X by 0.42 m in Z** and a cobble is 0.14-0.38 m across, so the bed is a single
+triangle under a typical cobble. It is not approximately planar there, it is
+exactly planar, and a plane through a convex body is a straight line.
+
+`scatter.js` already contains a mechanism written for this exact defect, in
+almost the same words - the `fillet`, whose comment reads *"leave the stone's
+waterline, the line where it meets the bed all the way round, a clean
+intersection between a hull and a smooth plane. A real one is not clean... its
+job is entirely to break that waterline."* It fires on 62% of qualifying
+cobbles. But it is a lens **centred** on the stone, sx and sz both 1.55-2.10
+radii against sy 0.26-0.40, so it is very nearly a surface of revolution about
+the clast's own axis - and a centred smooth convex surface raises a waterline
+without breaking it. Breaking one needs azimuthal variation.
+
+**I could not demonstrate that.** `tools/_waterline.mjs` returned no difference
+between a bare plane, a fillet and a collar, and reported 12.7% chord deviation
+on the bare plane, which is inconsistent with the silhouette measurement above.
+Either the tracer is too coarse or the bed models are too weak. **The null is
+not reported as a result**; the argument about axisymmetry stands on its
+geometry and not on that tool, and the tool should be fixed or discarded before
+anyone quotes it.
+
+## What would actually work, for whoever picks this up
+
+Not more facets - that direction is now closed with numbers, twice. The tail is
+set by the four top corners of a jittered box hulling into one broad plane, so
+the candidates are:
+
+1. **More gross points, not more bevel points.** The 8 box corners set the
+   silhouette and the big planes; the bevel only chamfers between them. Adding
+   structural points would change the shape statistics of every class and needs
+   its own verification.
+2. **Reduce the number of cobbles seated broad-face-up.** `tiltCap` caps tilt by
+   aspect, and it exists because tilted thin plates became "paper-thin
+   knife-edged wings". Any move here re-opens that defect.
+3. **Accept it.** 3.4% of cobbles at >55%, about 120 stones, mostly small.
+
+Option 1 is the only one that attacks the measured cause, and it is a
+population-level change that wants a render and a critic, not a blind landing
+while a set is being judged.
