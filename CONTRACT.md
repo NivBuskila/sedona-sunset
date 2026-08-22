@@ -7602,3 +7602,95 @@ hypothesis dies with the others and the projection itself is next.
 
 I have **not** run it: the ablation was the authorised turn on the lock and
 others are queued behind it.
+
+---
+
+## The Nyquist test: NEGATIVE. And the grit layer is eliminated entirely.
+
+`+1.0` on the LOD at all three sites, one render (`nyq1`), GPU path, HEAD
+`9a94490` with a clean tree. `src/` was unchanged since the `ab0` baseline, so
+that baseline still stood and the test cost exactly one render.
+
+**The families did not collapse, and they did not double either.** They held at
+*identical periods and angles*, with r down about a fifth:
+
+| band | family | shipped | LOD `+1.0` |
+|---|---|---|---|
+| upper face | 28.3 px @ 8 deg | r 0.235 | r 0.200 |
+| lower face | 34.5 px @ 68 deg | r 0.386 | r 0.311 |
+| lower face | 30.1 px @ 6 deg | r 0.352 | r 0.288 |
+
+That double negative is the informative part. `+1.0` halves the grit sampling
+frequency: a **texture feature** would have doubled to 56-68 px, and a **Nyquist
+alias** would have vanished. Neither happened. A pattern whose screen period is
+invariant to a 2x change in the layer's sampling scale is not drawn by that
+layer.
+
+Combined with the octave ablation, two independent properties of the grit layer
+- its octave structure and its sampling scale - have now been changed with no
+effect on period or angle. **The grit layer is eliminated.** The r drop of a
+fifth is its genuine contribution to the band's *energy*; it contributes
+texture, but it does not draw the families.
+
+### The instrument's noise floor, measured before anything was read into it
+
+A 30 px lag inside a 55 px band has little overlap, so `_lattice.mjs` was run on
+clean floor in the same frame with no reported quilt. At the same band size
+(160x60) it returns r 0.128-0.142; at 300x150 it falls to 0.081-0.105. So small
+bands inflate r, and the floor for these bands is **r ~= 0.14**. The boulder's
+0.386 is roughly 2.7x that and is real signal.
+
+**This also corrects the far_320 reading.** Its families sit at r 0.081-0.176,
+at or barely above the floor. far_320 should not be treated as the same defect
+on this evidence; the strong, real instance is the near-field clast, which is
+what was reported in the first place.
+
+### The attribution that now fits, with the arithmetic
+
+`scatter.js:626`, in the vertex stage:
+
+```glsl
+float uvK = clamp(iRad * 34.0, 1.0, 18.0);
+vMapUv *= uvK;    // and vNormalMapUv, vRoughnessMapUv
+```
+
+The clast's albedo, normal and roughness maps are tiled a **fixed number of
+times across the hull**. That count is per object - not per world metre, not per
+pixel - so the screen period is the object's screen diameter divided by the
+count, it does not change with range, and **nothing in the grit layer can move
+it.** Those are exactly the invariances the two ablations kept running into.
+
+`tools/_uvk.mjs` projects the capture camera and reports the instances whose
+screen disc covers the measured band:
+
+| instance | iRad | screen dia | uvK | predicted period |
+|---|---|---|---|---|
+| `scour` | 0.631 m | 533 px | **18.0** (clamped) | **29.6 px** |
+| `scour` | 0.444 m | 341 px | 15.1 | 22.6 px |
+| `scour` | 0.277 m | 192 px | 9.4 | 20.4 px |
+
+Measured: **19.0, 28.3, 30.1, 34.5 px**. The dominant instance predicts 29.6
+against 28.3 and 30.1 measured, and the smaller ones predict 20.4-22.6 against
+19.0. Two independent families, both matching within a few percent, from a
+mechanism whose invariances were already established by the ablations.
+
+Note the ceiling: `iRad * 34` is 21.5 for the dominant instance and is **clamped
+to 18**, so every large clast carries the *same* repeat count regardless of
+size. That is a mechanism for one consistent pattern across all the biggest
+stones, which is what a quilt across the boulders is.
+
+This is also **scatter-only**. `rock.js` and `terrain.js` have no `uvK`, so if
+this is confirmed, terrain's normal field is not exposed to it - which retires
+the worry recorded against the three-site note.
+
+### The pre-registered test, not run
+
+One render, and a **positive** prediction rather than a vanish: halve `uvK` and
+the periods must **double**, 29.6 px to about 59 px, at unchanged angles.
+
+- If they double, it is attributed.
+- If they hold at 28-34 px again, the tiling dies with the other two and the
+  remaining suspect is the hull geometry itself.
+
+Not run: the authorised test was Nyquist, it returned a negative so there is no
+trade to decide, and the performance measurements need an idle machine.
