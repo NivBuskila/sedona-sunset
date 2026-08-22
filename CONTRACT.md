@@ -7362,6 +7362,13 @@ as well. Same trap, second visit, different instrument.
 
 ## The near-field quilted cross-hatch: scatter's grain layer is ruled OUT
 
+> **The quilt is still unattributed - do not stop reading here.** This section
+> clears three specific properties of the clast grain layer and is still correct.
+> A fourth property of the same expression was proposed afterwards, the two
+> octaves being in registration with each other, and that was investigated and
+> also came back negative. See *"The octave crossfade"* below, which supersedes
+> nothing here but is where the open question and the one-render test now live.
+
 By reading plus one offline measurement, no render.
 
 1. **Its tiling cannot be visible.** The layer samples `uGrit` on a world-locked
@@ -7468,12 +7475,28 @@ mechanism, and the defect is unattributed again.
 ### The cheap decisive test, for when a frame is free
 
 The claim is that the artefact needs *both* octaves contributing, which is why it
-is worst where `frac ~ 0.7`. That is a one-line ablation: force `frac` to 0.0 and
-then 1.0 and shoot the frame. A single octave cannot be in registration with
-itself. **If the quilt survives either ablation the pair is exonerated in one
-render**, and if it vanishes at both endpoints and returns in the middle the
-mechanism is confirmed and worth fixing properly. That is the same shape as the
-triplanar-weight paint that cleared the blend weight earlier.
+is said to be worst where `frac ~ 0.7` and clean at wall range where the weight
+sits near an endpoint. **A single octave cannot be in registration with itself**,
+so forcing the crossfade weight to an endpoint decides it.
+
+The test: replace `gLodC - gFlC` with a literal `0.0`, shoot; then `1.0`, shoot.
+Two renders, no other change. Run it on `far_320` as well as the reported clast
+framing, for the reason in the three-site note above.
+
+The two outcomes, and both are worth having:
+
+- **The quilt survives either endpoint.** The octave pair is exonerated. The
+  artefact is a property of a single tap - the map, the projection, or the
+  footprint keying - and the search moves there. This is the outcome my offline
+  work predicts.
+- **It vanishes at both endpoints and returns in the middle.** The mechanism is
+  confirmed against my analysis, and the fix is the rotation below rather than
+  the translation. In that case my measurements were looking for an extended
+  correlation that the artefact does not have, and the note about `A = B` being
+  a point rather than a patch is where the error would be.
+
+Same shape as the triplanar-weight paint that cleared the blend weight earlier:
+one instrumented render that can only come back with a useful answer.
 
 ### And if it is confirmed, the fix wants an operation that does not commute
 
@@ -7487,10 +7510,24 @@ component swap and a negate, no transcendentals:
 
 Offered as the corrected form, not as something to land unseen.
 
-### Note for the other two sites
+### THREE sites carry this expression, and terrain's is the dangerous one
 
-The same expression exists at **`rock.js:1961`** and at **`terrain.js:1500`** -
-three instances, not two. `terrain.js`'s is now load-bearing in a way it was not
-this morning: `3dbeefa` began reading `gr.gb` as a normal on far ground, so if
-this mechanism is ever confirmed, the terrain instance carries it into the
-shading normal and not only into tone and cavity.
+Read this before touching any of them.
+
+| site | reads the mix into |
+|---|---|
+| `scatter.js:811` | clast tone and cavity - where the artefact was *reported* |
+| `rock.js:1961` | wall tone and cavity - System 2's, deliberately untouched |
+| **`terrain.js:1500`** | tone, cavity **and, since `3dbeefa`, the shading normal** |
+
+It is three instances, not two, and they are not equivalent in consequence.
+`terrain.js`'s became load-bearing this morning: `3dbeefa` began reading
+`gr.gb` from that same mixed sample as a detail normal on far ground. So if this
+mechanism is ever confirmed, terrain carries it into the **normal field** rather
+than only into tone and cavity - a periodic structure in shading under a 15
+degree sun, which is a materially worse failure than the one that was reported
+and lands on the far slopes that fix was written for.
+
+The corollary for the ablation below: **run it on `far_320` as well as on the
+reported clast framing.** A `frac` ablation on scatter alone would clear the
+reported instance and leave the worse one untested.
