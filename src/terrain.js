@@ -59,6 +59,21 @@ const RAKE_FAR = RAKE_NEAR * Math.pow(RAKE_RATIO, 7);      // for the comment on
    `syncWind` below reads it. This is only the fallback for a material built
    before the audio exists, and it is deliberately the same 0.12 rad down-wash
    heading so a page with a dead audio context still agrees with itself. */
+/* How much of the colluvial apron the drainage channel cuts away on the axis,
+   and how wide that channel is. See `_headRise`. Named here rather than inline
+   because they are the two numbers anyone re-opening the arrival will want to
+   move, and because the sight line to the amphitheatre depends on both. */
+const BREACH = 0.55;
+const CHAN_W = 9.5;
+/* The breach is narrower than the pour-off notch it hands off to, and that is
+   not cosmetic. `CHAN_W` is the notch's original width and `far_270` sees that
+   notch from fifty metres upstream, so changing it moves the highest-scoring
+   frame in the set — measured, 10.10 deg to 12.07 at CHAN_W 4. The breach needs
+   its own width for a separate reason: System 2's talus toes reach in to |x| 4.4
+   at this station, and a cut that goes under them leaves their aprons standing
+   on nothing, which is what a first pass at 9.5 did. */
+const BREACH_W = 11.0;
+
 const TONIGHT_FALLBACK = 0.12;
 
 /* Scour hollow geometry. SC_IN is where the stone's own footing ends and the pit
@@ -991,7 +1006,33 @@ export class Terrain {
     /* The pour-off. A wash head is where the water comes *over*, so the one place
      * the headwall is not a wall is on the axis: a notch cut back into it with
      * the plunge below. Without this the channel simply runs into the slope. */
-    const notch = 9.5 * (1.0 - smoothstep(2.0, 9.5, ax)) * smoothstep(-332, -374, z);
+    const chan = 1.0 - smoothstep(2.0, CHAN_W, ax);
+    const notch = 9.5 * chan * smoothstep(-332, -374, z);
+    /* ---- the channel breaches the apron, because it drained through it ----
+     * The apron reached its full height on the axis at about z -328 and the
+     * pour-off only began to bite at -332, so the incision started four metres
+     * *behind* the crest it was supposed to have cut. Read as composition that
+     * is a lip hiding the amphitheatre; read as landform it is unphysical. The
+     * water that cut the pour-off had to leave through the apron, so the apron
+     * cannot stand unbroken across the axis.
+     *
+     * Rather than choose a new onset and re-tune it against the sight line,
+     * key the breach to the apron itself. `ramp * ramp * 10.0` *is* the apron,
+     * so subtracting that same term inside the channel means the apron can
+     * never dam the channel that drains it — at any future apron height, and
+     * without anyone re-deriving a z range that has to agree with another one.
+     * BREACH below 1 leaves a residual sill, which is real for a channel that
+     * aggrades as it leaves a canyon head; 1.0 is a clean cut.
+     *
+     * The breach hands off to the notch rather than adding to it. `ramp`
+     * saturates at 1 and stays there, so an unwindowed breach goes on cutting
+     * its ten metres through the whole headwall as well, deepening the pour-off
+     * far behind the apron and dropping `far_270`'s skyline by 1.9 degrees
+     * fifty metres upstream. Fading it out over exactly the range the notch
+     * fades in keeps the total cut at about ten metres everywhere instead of
+     * nineteen, so the channel is continuous and only the apron is breached. */
+    const breach = BREACH * (1.0 - smoothstep(1.5, BREACH_W, ax)) * ramp * ramp * 10.0
+                 * (1.0 - smoothstep(-332, -374, z));
     /* Side gullies converging on the head, which is the other half of "zero
      * erosional variation" — a colluvial slope this size is drained, and the
      * drainage is what gives it its vertical grain. */
@@ -1042,7 +1083,7 @@ export class Terrain {
     return ramp * ramp * 10.0
          + wall * (26.0 + 11.0 * fbm(x * 0.021, z * 0.021, 3, 421)
                         + 6.0 * (ridged(x * 0.034, z * 0.034, 2, 423) - 0.5))
-         - notch - gully - col - rill;
+         - notch - breach - gully - col - rill;
   }
 
   /** Height at the far-field crossover, so the blend starts from something
