@@ -861,3 +861,181 @@ Three honest observations and no more work done on them:
 - **The 3.9 ms multisampled target is a top-tier feature and the ladder already
   spends it.** Dropping it at `high` would be removing a feature to buy frame
   time, which is the one thing this pass was told not to do.
+
+## 10. Re-benched on the shipping build, because the penumbra moved underneath it
+
+§9 was measured while five other systems were committing. Four changes have landed
+on or beside the shadow path since, and one of them lands on the exact term §9
+optimised: System 4's blocker-distance penumbra (`639309d`, `543ea94`), which
+replaces three's fixed kernel with a search-plus-disc filter sized from the sun's
+angular diameter. The others are System 1's grazing bound in `bumpFrom`
+(`af365e8`), System 2's settled rock, System 4's astern sky aperture (`4ac9877`),
+System 5/7's fill doorway and silhouette gate (`3f1003a`, `7868b5d`).
+
+The headline number in a delivery note has to come from the build that ships, so
+everything below was re-run on `fa8b9ec`.
+
+### 10.1 The penumbra was already in the tree, and the table reproduces
+
+Worth establishing first, because it changes what the re-bench is *for*.
+`639309d` landed 04:29 and `543ea94` at 04:46; §9's fix is `4d72ec6` at 04:56 and
+its bench ran 05:08–05:11. So §9's figures were **always** measured on the
+penumbra path — the re-bench is a confirmation, not a correction.
+
+It confirms. 2560×1440, median of 7 blocks of 30, loop paused:
+
+| | §9 (05:08) | HEAD (06:16) |
+|---|---|---|
+| `wash_mid` | 16.78 | **16.80** |
+| `wall_lit` | 12.24 | **12.23** |
+| `sun_gap` | 17.69 | **16.82** |
+| rung 0 — high / 1.00 | 16.95 | **16.91** |
+| rung 4 — low / 0.78 | 8.12 | **8.21** |
+| rung 7 — potato / 0.58 | 5.48 | **5.44** |
+
+Every rung within 0.1 ms except `sun_gap`, which came *down* 0.9. Nothing that
+landed in the last hour costs anything measurable, System 1's bound included.
+**The ladder needs no retune**: it was tuned against a penumbra-live table, and
+8.33 ms is still reached at rung 4.
+
+### 10.2 The reduction and the penumbra are complementary, and the trade is 18 ms
+
+The question worth asking was whether a wider, per-pixel kernel invalidates a
+four-tap approximation justified on a 4×4 neighbourhood. The justification does
+not survive; the reduction does, and it is worth three times more than when it
+was made.
+
+`tools/terrcost.mjs` gained a `footFull` row that puts the **old** estimator back
+— four full `getShadow` calls at the offsets — and so reports a negative saving.
+At `wash_mid`, against its own 17.07 ms full frame:
+
+| block | Δ ms |
+|---|---|
+| every shadow lookup this material makes | −4.30 |
+| — the centre tap alone (System 4's penumbra) | −3.80 |
+| — the four footprint taps (§9's reduction) | −0.58 |
+| **the four footprint taps as full `getShadow` again** | **+18.22** |
+
+So the old estimator would take `wash_mid` from 17.1 ms to **35.3** — worse than
+the 30.5 the project started at. §9 saved 14.6 ms when it landed; on the penumbra
+path the same edit is worth 18.2, because each restored offset would now be a
+12-tap blocker search plus a spiral rather than sixteen comparisons. **The
+penumbra is only affordable because the offsets were reduced first.** There is no
+conflict to arbitrate.
+
+The overlap argument in §9.3 is nevertheless retired, and `src/terrain.js` now
+says so beside the code. The five samples no longer cover one shared
+neighbourhood: the centre integrates up to 2 m of the coarse cascade where the
+offsets still sit at 2.6 texels. What holds instead is that they answer different
+questions — the centre resolves the **penumbra**, a property of the blocker; the
+four resolve the mean over the **screen footprint**, a property of range — and
+both are still answered.
+
+### 10.3 Re-verified as a pair, and it does not band
+
+`tools/shadowpair.mjs` re-run over all nine views. Its default view set was
+weighted to the far field first, because the taps are gated on `1 - gFoot` and a
+near framing can only ever report zero — a table of zeros from views where the
+block does not execute is not evidence about views where it does.
+
+| | mean abs Δ | max Δ | px ≥ 4 cv | p99.9 Δ | changed-px mean |
+|---|---|---|---|---|---|
+| `wash_low` | 0.247 cv | 131 | 1.74% | 33 | 7.6 |
+| `wash_mid` | 0.293 | 99 | 2.00% | 37 | 7.2 |
+| `ground` | 0.051 | 127 | 0.36% | 11 | 5.2 |
+| `wall_lit` | 0.292 | 119 | 1.80% | 39 | 8.2 |
+| `wall_shade` | 0.055 | 86 | 0.46% | 10 | 4.4 |
+| `bend` | 0.087 | 87 | 0.74% | 16 | 5.7 |
+| `juniper` | 0.350 | 130 | 2.67% | 29 | 7.5 |
+| `sun_gap` | 0.315 | 136 | 2.09% | 40 | 8.2 |
+| `shade_far` | 0.275 | 123 | 1.76% | 36 | 7.8 |
+
+The first eight rows reproduce §9.4 to the digit — 0.29/99/2.00% at `wash_mid`
+then and now — and `shade_far`, which did not exist then, joins the same family.
+
+**Banding was the specific risk and it is not there.** The instrument for it is
+`hf/lf`: a filter that has gone blotchy carries its gradient at four pixels
+rather than one, so the ratio falls. Across all twelve standard windows plus
+three placed by hand on `shade_far`'s soft terminator, `grad`, `grad@4` and
+`hf/lf` are identical to four digits. On the terminator crop itself — the widest
+penumbra in the capture set — `grad` 0.0323 → 0.0322, `grad@4` 0.0551 → 0.0547,
+`hf/lf` 0.59 both sides. The two 3× crops are visually indistinguishable.
+
+Colour holds exactly. **Lit rock reads 0.619 saturation at hue 14.6° on both
+sides**, which is the contract figure to three digits; `wash_mid` floor 21.8°
+both; `shade_far` shaded floor 4.0° and lit floor 21.1° both.
+
+And the run carries its own negative control: the floating-slab region on `wallL`
+is a **byte-identical** crop between the halves. That surface is `rock.js`'s, whose
+wrapper only catches the value, so a terrain-side filter cannot reach the defect
+System 4's penumbra was built to fix. The two changes do not touch the same pixels.
+
+### 10.4 What the penumbra costs, priced properly
+
+Not a proposal — System 4's penumbra fixes a named defect and is theirs. But a
+compile-time feature cannot be ablated at runtime (§9.6), so it needed a second
+page load to price at all: `bench.mjs` gained `--hash`, and `#hardshadow` selects
+three's fixed kernel at shader-build time.
+
+| | PCSS (ships) | `#hardshadow` | penumbra costs |
+|---|---|---|---|
+| `wash_mid` | 16.80 | 12.64 | **4.16 ms** |
+| `wall_lit` | 12.23 | 9.93 | 2.30 |
+| `sun_gap` | 16.82 | 12.15 | 4.67 |
+
+25% of the top-tier frame, and it is the single largest identified item in it.
+Stated as a ladder cost rather than a millisecond count: **the penumbra moves the
+120 fps rung by one step.** With it, 8.33 ms is rung 4, low / 0.78 / 1997×1123;
+without it, rung 3, medium / 0.78 at the same resolution. So the price of a
+terminator that rises over 27 px instead of 3 is one quality tier at the target
+framerate, at identical pixel count. That is the trade, and on a frame whose worst
+critique was a hard-edged parallelogram pasted on rock it looks like the right way
+round — but it is a picture decision, not a perf one.
+
+### 10.5 `tools/terrcost.mjs` printed `NO — CHECK` beside every correct number
+
+The twelfth instrument failure, and the mirror image of §9.6 — there a broken
+ablation reported a plausible number, here a working ablation reported a broken
+warning.
+
+`customProgramCacheKey` carries the ablation's name, which is what stops all
+fourteen variants sharing one compiled program. It also means each program is in
+three's cache from block 0 onward, so `onBeforeCompile` does not run again — and
+the flag was read once per block, so the *last* block's reading was kept: not
+compiled, therefore not substituted, therefore `NO — CHECK` printed beside a
+4.44 ms saving that was entirely real.
+
+It now records site counts for the life of the run rather than per block, and
+prints the count rather than a boolean, because *matched nothing* and *was never
+asked* are different failures and `false` conflates them. Every row reads `1`
+(and `footFull` reads `4`). The general form, beside §9.6's:
+
+> A cache key that makes an ablation measurable also makes the *evidence* that it
+> applied unobservable on every run after the first. Verify once and carry it;
+> do not re-read a compile-time flag per timing block.
+
+### 10.6 Where the frame is now, and the two things left in it
+
+At the top tier, 2560×1440, `wash_mid` at 16.8 ms:
+
+| | ms | whose |
+|---|---|---|
+| the blocker-search penumbra | 4.2 | System 4 — named-defect fix |
+| fixed: vertex, MSAA resolve, post chain | ~4.5 | — |
+| the 4× half-float target | ~3.9 | System 7, and the ladder spends it |
+| terrain, everything except its shadow taps | ~2.7 | 41 fetches, all of them |
+| rock, vegetation, marched in-scatter | ~2.9 | |
+| the four footprint shadow taps | 0.6 | this pass |
+
+Two observations, no work done on either:
+
+- **Fetch count is still not the axis, now less than ever.** System 1's liveness
+  map says the `rockW` branch is inert across the floor and terraces, and it
+  measures 1.01 ms where it *is* live; the always-live `steep` branch's six
+  fetches are 0.43. The whole of §9.2's "about two milliseconds" holds.
+- **The four `fwidth` calls in the bedform comb are measuring the wrong quantity**
+  and System 1 has written the correct footprint form beside them. Left alone on
+  purpose: the block prices at 0.05–0.08 ms, so there is no cost case, and it is
+  measured-good protected work whose replacement they deliberately reverted. It
+  should land as a correctness change with its own verification, not smuggled in
+  under a perf commit.
