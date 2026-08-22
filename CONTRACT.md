@@ -5367,3 +5367,66 @@ populations**. The recurring shape is not arithmetic error — every number was
 correct for what it measured. It is that a name travels between tools while the
 population underneath it does not. A metric quoted without its region, its
 banding and its normalisation is a different metric.
+
+## The arrival, landed: the apron is breached by the channel that drained it
+
+`far_320` scored 3.0 — *"arriving does not feel like arriving; it feels like the
+trail ran out."* The specification above was right and is now landed.
+
+**What was wrong.** The colluvial apron ramps over `smoothstep(-274, -336, z)`
+and reached its full ten metres on the axis at about z −328; the pour-off notch
+only began to bite at −332. The incision therefore started four metres *behind*
+the crest it was supposed to have cut. As composition that is a 6.4 m mound
+twenty metres from the camera hiding a real 24 m amphitheatre. As landform it is
+unphysical: the water that cut the pour-off had to leave through the apron.
+
+**The fix is an identity, not a new onset.** `ramp * ramp * 10.0` *is* the
+apron, so the breach subtracts that same term inside the channel. The apron can
+then never dam the channel that drains it, at any future apron height, without
+anyone re-deriving a z range that has to agree with another one. Two things had
+to be added, and both were found by measurement rather than by eye:
+
+- **The breach must hand off to the notch, not add to it.** `ramp` saturates at
+  1 and stays there, so an unwindowed breach goes on cutting its ten metres
+  through the entire headwall, deepening the pour-off far behind the apron.
+  That dropped `far_270`'s skyline from 10.10° to 8.15° — the highest-scoring
+  frame in the set, fifty metres upstream. Fading the breach out over exactly
+  the range the notch fades in holds the total cut near ten metres instead of
+  nineteen. `far_270` returns to 10.10° at 180 m, bit-identical to `BREACH = 0`.
+- **The cut must clear System 2's talus toes.** A first pass at the notch's full
+  9.5 m width undercut the aprons, which reach in to |x| 4.4 at this station,
+  and left one standing on nothing — a hard-edged rectangular slab in the hero
+  frame. `_pixowner` named `apronR` on three points rather than arguing from the
+  picture. The breach now carries its own width. **Do not** narrow `CHAN_W` to
+  achieve this: it is the notch's width, `far_270` sees the notch, and taking it
+  to 4.0 moves that frame from 10.10° to 12.07°.
+
+**Depth was the surprise.** The lip only needed about a metre: the threshold
+where it stops being the highest thing on the ray lies between `BREACH` 0.05 and
+0.10. A full cut works but drops the walker 3.2 m into a slot with 52° walls
+two metres away, which trades a berm for a trench and reads worse than the
+defect. Shipped at **0.55**, which leaves the lip at 4.66° against a 13.16°
+headwall — eight and a half degrees of margin — for a 1.76 m drop.
+
+| | before | after |
+|---|---|---|
+| highest point on the `far_320` ray | 13.62° at **20 m** (the mound) | 13.16° at **125 m** (the headwall) |
+| the lip at 20 m | 13.62° | 4.66° |
+| ground out to 40 m | above the eye | below the eye, climbing from 45 m |
+| `far_270` skyline | 10.10° at 180 m | 10.10° at 180 m |
+
+**Checked from eye height on the path, not only from the capture station.**
+`_headlook` marches from `path.posAt(d)` at 1.62 m, which is the walker, and the
+head reads as a headwall from every station on the approach: 14.69° at 280,
+12.65° at 300, 13.16° at 320. The playthrough's *"low dark ridge with bright sky
+over it"* is gone — the frame now shows a wash floor converging into the head
+with distant land visible **through** the notch rather than sky over a berm.
+
+Guardrails: `far_270` grad/L 0.094 → 0.095, sat mean 0.486 → 0.487, V 0.480 →
+0.483. `wash_mid` is byte-identical on both metrics — expected, since
+`_headRise` returns 0 for z > −274 — and no measured colour target moved.
+
+**Left for System 2, not a defect in their work.** Lowering the channel by 1.76 m
+moves ground out from under the inner toes of the head aprons. At the shipped
+width nothing shows, but their seating was computed against the old surface, so
+if the breach is ever deepened those toes want re-seating rather than clamping.
