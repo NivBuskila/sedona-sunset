@@ -1678,20 +1678,32 @@ void main() {
        grid — so a blend one texel along the edge is the right width at any
        resolution. The gate is a luminance range, which is unitless. */
     ru.uEdge.value = level.edge ? P.edgeAmount : 0.0;
-    /* The silhouette gate scaled to the frame, for the same reason the circle of
-       confusion above is. It is a threshold on the luminance range across *one
-       pixel*, and that is not a property of the scene: the skyline carries about
-       150 code values across a pixel at 900 lines and spreads the same step over
-       1.6 pixels at 1440, so a fixed 70-130 gate that fully fires at capture
-       resolution only partly fires at the resolution the thing is delivered at —
-       weakening the resolve exactly where it was measured to be needed. Surface
-       texture shrinks per pixel by the same factor, so scaling the gate keeps the
-       discrimination between an edge and a surface where it was tuned.
-       Exactly 1.0 at 900 lines, so every figure already recorded against this pass
-       is untouched by the scaling. */
-    const gs = h / 900;
-    ru.uGate.value.set(P.edgeLo * gs, P.edgeHi * gs);
-    ru.uGrainPx.value = 256 * gs;
+    /* The silhouette gate is *not* scaled with resolution, and it was briefly
+       scaled on an argument that measurement contradicted. The argument: the gate
+       is a threshold on the luminance range across one pixel, the skyline carries
+       about 150 code values across a pixel at 900 lines, so at 1440 the same step
+       should spread over 1.6 pixels and a fixed threshold would stop firing.
+       Measured on paired captures at both sizes, the ungraded median largest
+       one-pixel jump across the skyline is 81.5 code values at 900 lines and 85.0
+       at 1440 — unchanged, slightly up. A silhouette is a geometric edge and four
+       coverage samples resolve it to about one pixel wherever it is drawn; more
+       resolution buys more edge pixels, not a softer edge. Scaling the gate by 1.6
+       therefore lifted it above the median edge and the resolve stopped firing
+       there: the median improvement over the control fell from 23% to 10%, while
+       the p90 kept most of its 42-47% because only the strongest edges still
+       cleared the raised threshold.
+       So the gate stays in absolute code values. The circle of confusion above
+       does scale, and the difference is not inconsistency: defocus is an optical
+       size in the image plane, which is a fixed fraction of the frame and so a
+       varying number of pixels, whereas this is a contrast threshold on an edge
+       that is one pixel wide at any size. */
+    ru.uGate.value.set(P.edgeLo, P.edgeHi);
+    /* The grain plate does scale, unlike the gate above. Grain is a property of
+       the stock, not of the sampling: a 256-pixel tile on a 1440-line frame is a
+       finer-looking grain than the same tile on a 900-line frame, and would read as
+       a different film at the resolution this ships at. Exactly 1.0 at 900 lines,
+       so no recorded figure moves. */
+    ru.uGrainPx.value = 256 * (h / 900);
     ru.uGrain.value = P.grain;
     draw(resolveMat, null);
     return true;
