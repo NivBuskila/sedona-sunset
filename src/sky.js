@@ -526,6 +526,8 @@ export function makeShadowRig(sun, sunNear) {
    itself, so a before/after pair across the two measures the sum of two edits
    and can convict either. With this, both halves of the pair come from the same
    tree in the same minute. */
+const NO_ASTERN = /(^|[#&,])noastern(\b|$|[&,])/.test(
+  (typeof location !== 'undefined' ? location.hash || '' : '').toLowerCase());
 const HARD_SHADOW = /(^|[#&])hardshadow(\b|$|&)/.test(
   (typeof location !== 'undefined' ? location.hash || '' : '').toLowerCase());
 
@@ -962,8 +964,14 @@ function installProbeHeightLerp(A) {
         irradiance += s4ProbeDelta( s4wn ) * s4open;
         /* Scaled by what the height lerp has not already opened. Above the rim
            shOpen has no escarpment left in it at any bearing, so there is no
-           up-canyon window left to open and crediting one would double-count it. */
-        irradiance += s4AsternDelta( s4wn ) * ( s4AsternOpen( vFogW.z ) * ( 1.0 - s4open ) );
+           up-canyon window left to open and crediting one would double-count it.
+           #noastern drops this term and nothing else, so the up-canyon aperture
+           can be ablated inside one build. Comparing two sessions is not good
+           enough for a chroma reading on shade: the fill-only frames sit at V 0.11
+           to 0.24, which is far enough down the toe that any tone-curve work
+           landing in between moves the hue by more than this term does.` + (NO_ASTERN ? `
+           Off for this run. */` : ` */
+        irradiance += s4AsternDelta( s4wn ) * ( s4AsternOpen( vFogW.z ) * ( 1.0 - s4open ) );`) + `
       }
     #endif`);
 }

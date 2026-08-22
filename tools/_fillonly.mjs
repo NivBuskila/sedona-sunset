@@ -35,7 +35,9 @@ const want = only.split(',').map((s) => s.trim()).filter(Boolean);
 const pool = VIEWS.filter((v) => want.includes(v.name));
 const dir = path.join(process.cwd(), 'shots');
 
-await run({ width: 1600, height: 900, hash: 'high&noadapt&air=0' }, async ({ page, errs }) => {
+const extra = getf('hash', '');
+await run({ width: 1600, height: 900, hash: 'high&noadapt&air=0' + (extra ? '&' + extra : '') },
+  async ({ page, errs }) => {
   await page.waitForFunction(() => !!window.__game, null, { timeout: 420_000 });
   await page.evaluate(() => window.__game.begin());
   await page.waitForTimeout(2500);
