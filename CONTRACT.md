@@ -4380,9 +4380,13 @@ exposes `rungs` and `setRung` and `bench.mjs` prints both tables.
 >   costing 0.24 ms, not 6. See item 1 of "The ladder as a player walks it", which lists the
 >   confounds already eliminated so nobody redoes them.
 >
-> **The gap between this table's 16.95 and the delivery run's 23.06 on the same commit is
-> unexplained and is recorded as unexplained.** Do not quote either the growth story or the
-> contention story; both were confident and both were wrong, in that order, within one morning.
+> **The gap is unexplained and is recorded as unexplained.** Stated on the one cell where both
+> tools measured the same thing: `bench.mjs` read `wash_mid` at **16.80 ms** and `_regress.mjs`
+> read **23.06** — same station to the degree, same timing method, same commit `fa8b9ec`, same
+> machine state. Do not quote either the growth story or the contention story; both were
+> confident and both were wrong, in that order, within one morning. Note also that this table is
+> `sun_gap` per rung while the delivery table's `held` column is `wash_mid`; the spread *between*
+> stations is wider than four rungs of the ladder, so do not read the two tables row against row.
 
 Per rung at `sun_gap`, 2560×1440, RTX 4060, median of seven blocks of thirty:
 
