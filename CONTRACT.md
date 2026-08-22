@@ -503,8 +503,19 @@ have three different answers.
 **Reach is correct, and was checked rather than assumed.** The height channel runs 24 mm
 peak to peak with an sd of 4.0 mm, so at a 15° sun the tallest thing in the map casts 90 mm
 and one sd casts 15 mm. The shipped march reaches 88 mm. A reference march run out to
-300 mm at one sample per texel finds **exactly** what 88 mm finds, to four decimals. Nobody
-should spend time lengthening it.
+300 mm at one sample per texel finds **exactly** what 88 mm finds, to four decimals.
+**Nobody should ever spend time lengthening it.** This was a live hypothesis — a march
+tuned for a higher sun cannot produce a long shadow at 15° however sharp its samples — and
+it is a good hypothesis, which is why it needs closing in writing rather than leaving to be
+re-raised. It is closed. The march cannot be short for the map, because the map has nothing
+further out to find.
+
+**And the near-end fix worked, was free, and changed nothing visible — which is evidence,
+not failure.** Geometric spacing is strictly more correct and took shadowed area from 11.6%
+to 14.4% for the same eight fetches. Rendered, it moved `ground` floor `hf` from 0.0555 to
+0.0557 and `grad/L` not at all. A fix that is right and invisible is the strongest possible
+pointer at the real cause: it eliminates the whole class of explanation it belongs to. Both
+of these negatives cost one offline probe between them and no renders.
 
 **Sampling was wrong at the near end, and that fix is free.** The tile is 2.54 mm per texel
 and the march stepped 11 mm, so its first sample landed 4.3 texels out and stepped clean
@@ -4367,3 +4378,107 @@ by quantising `pen` to a few discrete steps so neighbours agree.** If it survive
 exonerated too and the remaining candidate is the per-pixel `rot` interacting with a shadow-map
 feature finer than the disc. Attempted once and lost to a page error from another agent's file; it
 needs a clean tree, which is the same thing everything else here needs.
+
+## Verification: the fill lift is safe, it fixes the slab's real defect, and it does not close the shade-colour finding
+
+Measured with `tools/_filllift.mjs s4v1 sys7final`, both captures 2560×1440, `wall_shade` /
+`wall_lit` / `shade_far`. **The comparison is same-tone-curve**: `post.js` did not move between
+them, and the only renderer commits in between are the two occlusion twins
+(`terrain` 2548d04, `rock` 25c93fb), the rock joint-block follow-up 0609843, and the terrain
+rake-march spacing 0dbd81d. That check is not a formality — the last three chroma readings this
+project trusted were all taken across a tone-curve edit or a broken shader.
+
+### 1. Shaded saturation did not move toward 0.468. It moved away.
+
+| `wall_shade` rock window | before | after |
+| --- | --- | --- |
+| saturation, whole window | 0.714 | 0.723 |
+| saturation, pixels with chroma headroom | 0.625 | **0.638** |
+| headroom share of window | 41% | 43% |
+
+Target was 0.468 and the delivered figure was 0.625, so this is **+0.013 in the wrong direction**.
+The mechanism is not a bug, and it is visible in one line of per-channel means:
+
+| `wall_shade` rock window | R | G | B |
+| --- | --- | --- | --- |
+| mean code value, before | 22.1 | 9.2 | 6.8 |
+| mean code value, after | 25.9 | 10.8 | 7.7 |
+| lift | **+17.2%** | **+17.4%** | **+13.2%** |
+
+**A purely proportional lift cannot change HSV saturation at all — `(max-min)/max` is
+scale-invariant.** Saturation rose because the lift is *warm-biased*: B/R falls from 0.308 to
+0.297. And that is exactly what the change is specified to do. Tinting occlusion toward albedo
+re-illuminates the surface with **its own colour**, and this surface is red.
+
+So the conclusion is stronger than "the fix underdelivered". **An occlusion term cannot reach
+0.468 in principle.** 0.468 is the saturation this face has when the *sky* lights it; the albedo
+tint adds red rock light, so pushing it harder moves shade further from the target, not closer.
+Reaching 0.468 requires the *illuminant* in deep shade to be bluer, which is the astern-aperture
+work already landed and already sitting at the corridor's geometric limit. **The critic's number
+one finding is not closed, and no amount of occlusion tuning will close it.**
+
+### 2. Crush: down on the rock, and the frame-level figure is contaminated
+
+In the rock window every channel decrushed, which is the result the change was for:
+
+| under 10 cv, rock window | R | G | B |
+| --- | --- | --- | --- |
+| before | 29.5% | 59.1% | 70.4% |
+| after | **20.7%** | **51.8%** | **65.1%** |
+
+All-channel black fell 0.38% → **0.06%**, the rock twin of System 1's terrain result.
+
+Whole-frame `wall_shade` min-channel-under-10 reads **40.8% → 44.4%, up 3.6 points**, and
+**that figure must not be quoted as this change's effect.** The frame's foreground lost its
+juniper and gained soft diagonal cast shadows across the pebble field — mid-floor V drops from
+114.8 to 38.7 in one 120-row band — and `juniper.js` and `vegetation.js` were both uncommitted
+while the capture ran. `shade_far`'s floor over the same interval is essentially unchanged, which
+is what says the darkening is local vegetation and not a terrain regression. **Frame-level crush
+cannot serve as a verification statistic while vegetation is in flight**, because a plant moving
+out of frame changes it by more than the fix does. The rock window is the attributable measurement
+and it is unambiguous.
+
+### 3. The lit guardrail is clean
+
+| | before | after | band | verdict |
+| --- | --- | --- | --- | --- |
+| lit rock saturation, brightest 40% | 0.618 | **0.621** | 0.615–0.626 | holds |
+| lit rock hue | 20.9° | **21.2°** | 18.9–21.1° | holds at the edge |
+| sunlit wash floor saturation | 0.567 | **0.564** | 0.47–0.56 mean | holds |
+
+System 1 flagged that the change is an exact identity only at full visibility, so a sunlit pixel
+at 0.8 visibility does take slightly more indirect light. **That is real and it measures +0.003
+saturation** — about a fifth of the band — so the flag was correct and the cost is affordable.
+
+### 4. What this did fix is the slab, by the route that was predicted
+
+The slab is unchanged: same bright quadrilateral, same stippled edge. But the corollary that
+justified standing down on the filter was that **filter off or filter on, the patch reads as
+artificial because it sits against a wall carrying no tone.** Cropping the same 547×240 region
+from both captures, the wall goes from a flat dark brown mass to a surface with **visible
+horizontal bedding and vertical joints running through it.** The commit title said "the joints
+get to exist" and they now do.
+
+So the highest-value work on that artifact was indeed not in the shadow filter, and the stipple
+was correctly abandoned. Recording it plainly: **the filter was the wrong place to fix a defect
+whose visibility was set by the tone around it, and two attempts were spent there before the
+surrounding tone was measured.**
+
+### Lead, unverified: one occlusion factor is applied to two differently-occluded illuminants
+
+Recorded with its diagnostic and not implemented, in the form the previous entry asks for.
+
+Indirect light here is multiplied by a single `tAO` before the albedo tint. But it arrives from
+two sources with **very different visibility**: skylight from overhead, which a crevice floor
+still sees a good deal of, and escarpment bounce from the side walls, which a crevice occludes
+almost completely. Applying one factor to both and then tinting the remainder toward albedo will
+systematically warm deep shade, because it removes sky and wall light in the same proportion and
+then replaces the loss with red.
+
+The prediction that distinguishes it: **the deeper the occlusion, the warmer the error should
+get.** So bin `wall_shade`'s rock window by `tAO` and read B/R per bin — if B/R falls
+monotonically as `tAO` falls, the single factor is the defect and the fix is to occlude the sky
+probe and the bounce probe separately, which is cheap because both probes already exist. If B/R
+is flat in `tAO`, this story is wrong too. **It is a lead with a number attached, not a finding,
+and it is stated that way because the last two mechanisms published from this desk without one
+were both no-ops.**
