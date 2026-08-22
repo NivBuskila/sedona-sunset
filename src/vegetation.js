@@ -71,13 +71,73 @@ function addSun(g) {
     four-cell atlas so neighbouring tufts are not the same silhouette. */
 function grassTuftGeo(seed) {
   const rand = rng(seed);
-  return addWhite(cardGeometry((arr) => cardTuft(0, 0, 0, 0.62, 1.0, 4, rand, arr, 4, 1)));
+  return addSun(addWhite(
+    cardGeometry((arr) => cardTuft(0, 0, 0, 0.62, 1.0, 4, rand, arr, 4, 1))));
 }
 
+/* Four bench silhouettes instead of one.
+ *
+ * A critic counted "the same shrub outline at the same size roughly fifteen
+ * times at near-regular intervals" along the right bench in `far_170`, and the
+ * same repeat along the terrace in `bend`. The interval is a placement problem,
+ * dealt with in `planVegetation`; the identical *outline* is this. The tier is
+ * one instanced geometry, so every plant on every bench in the scene was
+ * literally the same nine cards, and rotating a radially symmetric arrangement
+ * about its own axis does not change what the eye sees.
+ *
+ * The atlas is fixed and no new art is affordable, so the variation has to come
+ * from arrangement. These four differ in the axis ratio and in where the mass
+ * sits, which is what a silhouette is: an upright column, a broad dome, a low
+ * sprawling mat, and a two-lobed shrub with a notch in its crown instead of a
+ * single apex. Between them they also answer part of the "one species
+ * everywhere" note — a mat and a column read as different plants at fifty
+ * metres far more than any amount of detail on one of them would.
+ *
+ * Every one of them keeps the skirt invariant: the first `skirt` cards start at
+ * negative y, so the tier has geometry below its own origin and buries into
+ * whatever it stands on. That is not decoration — cards that start at positive y
+ * is exactly the bug that shipped as junipers with severed trunks.
+ */
+const MID_SHAPES = [
+  { skirt: 4, n: 9, rad: [0.21, 0.32], up: [0.03, 0.43], w: 0.70, h: 0.60 },
+  { skirt: 3, n: 7, rad: [0.09, 0.17], up: [0.06, 0.88], w: 0.54, h: 0.78 },
+  { skirt: 6, n: 11, rad: [0.32, 0.56], up: [0.00, 0.14], w: 0.86, h: 0.40 },
+  { skirt: 4, n: 10, rad: [0.14, 0.30], up: [0.02, 0.60], w: 0.62, h: 0.66,
+    lobe: 0.26 },
+];
+
+function midTuftGeo(seed, s) {
+  const r = rng(seed);
+  return addSun(addWhite(cardGeometry((arr) => {
+    for (let i = 0; i < s.n; i++) {
+      const a = i / s.n * TAU + r() * 0.42;
+      const skirt = i < s.skirt;
+      const rad = s.rad[0] + r() * (s.rad[1] - s.rad[0]);
+      /* Two lobes rather than one mass, so the crown carries a notch. */
+      const lob = s.lobe ? (i % 2 ? s.lobe : -s.lobe) : 0;
+      cardTuft(Math.cos(a) * rad + lob,
+               skirt ? -0.20 - r() * 0.12 : s.up[0] + r() * (s.up[1] - s.up[0]),
+               Math.sin(a) * rad,
+               skirt ? s.w * 1.20 : s.w,
+               skirt ? s.h * 1.27 : s.h,
+               1, r, arr, 2, 2);
+    }
+  })));
+}
+
+/* The near shrub, three ways, for the same reason and on the same principle:
+   the one in the foreground of `wash_low` and `wash_mid` is the most magnified
+   plant in the set after the hero, so a repeat there is the most visible. */
+const SHRUB_SHAPES = [
+  { lo: [0.95, 1.00, 5], hi: [0.70, 0.78, 3], lift: 0.09 },
+  { lo: [1.34, 0.54, 7], hi: [0.92, 0.40, 3], lift: 0.04 },
+  { lo: [0.66, 1.34, 4], hi: [0.48, 1.02, 3], lift: 0.22 },
+];
+
 /** A low grey-green shrub. Same trick: cards with near-vertical normals. */
-function shrubGeo(seed) {
+function shrubGeo(seed, s = SHRUB_SHAPES[0]) {
   const rand = rng(seed);
-  return addWhite(cardGeometry((arr) => {
+  return addSun(addWhite(cardGeometry((arr) => {
     /* Two tiers, so it has a silhouette rather than being one slab — but eight
        cards, not five, and the upper tier lifted 0.09 rather than 0.18.
        At five cards each is offset by up to 35% of its own width and the second
@@ -85,9 +145,9 @@ function shrubGeo(seed) {
        with clear air between it and everything else: "several cards floating
        detached" in the nearest shot of this shrub. Overlap is cheap here — this
        geometry is instanced once and drawn a few hundred times. */
-    cardTuft(0, 0, 0, 0.95, 1.0, 5, rand, arr);
-    cardTuft(0, 0.09, 0, 0.70, 0.78, 3, rand, arr);
-  }));
+    cardTuft(0, 0, 0, s.lo[0], s.lo[1], s.lo[2], rand, arr);
+    cardTuft(0, s.lift, 0, s.hi[0], s.hi[1], s.hi[2], rand, arr);
+  })));
 }
 
 /**
@@ -376,13 +436,28 @@ export function planVegetation(path, terrain, rocks) {
       if (dh < 5.5) continue;
 
       const roll = rand();
-      if (roll < p * 0.62) {
+      /* Species mix, and why these four numbers moved.
+         A critic's last note was "one species everywhere", against real Sedona
+         benches that mix manzanita, agave, prickly pear, banana yucca and
+         juniper. The cause was not the habitat model: it was that prickly pear
+         was capped at four instances and agave at two, scene-wide. Those caps
+         were put in when both rendered badly — pear as "standing stones", agave
+         as broken geometry — and they were the right call then. Both were rebuilt
+         two rounds ago and given a real texture, and nobody went back for the
+         caps, so the scene has been carrying five succulents in total across
+         three hundred metres of wash. The windows widen too, because lifting a
+         cap does nothing when the probability slice behind it is 1.5% wide.
+         The caps stay, an order of magnitude up, as rails rather than as limits:
+         this loop's habitat term depends on `Terrain.facies`, which System 1 owns
+         and has changed twice, and a flood of cactus is a worse failure than a
+         shortage. */
+      if (roll < p * 0.60) {
         grass.push({
           x, y: y - 0.03, z, rot: rand() * TAU,
           sx: 0.38 + rand() * 0.32, sy: 0.32 + rand() * 0.34, sz: 0.38 + rand() * 0.32,
           r: 0.86 + rand() * 0.22, g: 0.82 + rand() * 0.20, b: 0.72 + rand() * 0.18,
         });
-      } else if (roll < p * 0.94) {
+      } else if (roll < p * 0.88) {
         shrub.push({
           x, y: y - 0.04, z, rot: rand() * TAU,
           sx: 0.55 + rand() * 0.48, sy: 0.46 + rand() * 0.44, sz: 0.55 + rand() * 0.48,
@@ -393,7 +468,7 @@ export function planVegetation(path, terrain, rocks) {
            slickrock there is nothing to root in. The habitat test above admits
            bar at 0.34 and talus at 0.55 weight, which is right for a bunch grass
            and wrong for this, and it put several pads on bare rock. */
-      } else if (roll < p * 0.955 && pear.length < 4 && f.terr > 0.55) {
+      } else if (roll < p * 0.94 && pear.length < 60 && f.terr > 0.55) {
         pear.push({
           x, y: y - 0.05, z, rot: rand() * TAU,
           sx: 0.62 + rand() * 0.30, sy: 0.60 + rand() * 0.32, sz: 0.62 + rand() * 0.30,
@@ -401,7 +476,7 @@ export function planVegetation(path, terrain, rocks) {
              already too pale. */
           r: 0.70 + rand() * 0.12, g: 0.84 + rand() * 0.10, b: 0.68 + rand() * 0.12,
         });
-      } else if (roll < p * 0.975 && agave.length < 2) {
+      } else if (roll < p * 1.00 && agave.length < 110) {
         agave.push({
           x, y: y - 0.03, z, rot: rand() * TAU,
           sx: 0.78 + rand() * 0.30, sy: 0.78 + rand() * 0.34, sz: 0.78 + rand() * 0.30,
@@ -503,11 +578,54 @@ export function planVegetation(path, terrain, rocks) {
          their meshes. A rate is the wrong thing to tune blind, so this is set to
          land near a thousand — comfortably more than the 438 the critique called
          absent, and short of the closed woodland that 1525 would read as. */
-      const pAcc = shelf * (0.18 + 0.82 * cl) * (0.25 + 0.75 * alt) * 0.075;
+      /* `cl * cl` against a 0.06 floor, from `0.18 + 0.82 * cl`. The old floor
+         meant a sixth of the full rate fell everywhere the cluster field said
+         nothing, which is what filled the gaps in and left an even scatter along
+         every bench — and evenness is what a critic read as "placement rather
+         than plants". Squaring sharpens the field's own contrast, so growth
+         concentrates in the gullies where water collects and thins to nothing on
+         the interfluves, which is how pinyon-juniper actually distributes. The
+         rate rises to hold the count; see the note below on why a rate here is
+         not a stable thing to tune. */
+      const pAcc = shelf * (0.06 + 0.94 * cl * cl) * (0.25 + 0.75 * alt) * 0.120;
       if (rr() > pAcc) continue;
       const sz = 0.8 + rr() * 1.9;
       const dark = 0.72 + rr() * 0.5;
       const target = du < CARD_RANGE ? mid : far;
+      /* Break the lattice.
+         These candidates are mesh vertices, so they inherit the rock's
+         tessellation: marching a structured grid at a fixed stride returns points
+         at near-constant intervals along any one bench, and that periodicity
+         survives into the accepted set. It is the other half of "the same shrub
+         at near-regular intervals" — the first half being that they were all the
+         same shrub.
+         Displacing inside the local tangent plane decorrelates spacing from the
+         mesh without needing a surface query I do not have out here. The basis is
+         built against x-hat, which is safe because the slope gate has already
+         guaranteed `n.y >= 0.36`, so the normal is never near horizontal and the
+         cross product never degenerates. Scaled by flatness squared: the tangent
+         plane leaves the surface fastest on a steep face, so that is where the
+         displacement is smallest, and what error remains is inside the 0.35 to
+         1.40 m the skirt reaches below the seat. */
+      /* 1.4 m, down from 2.4. At 2.4 the seating probe found 3.4% of the bench
+         tier with its lowest vertex clear of the ground against 0% before, and
+         the mechanism is obvious once seen: a displacement of that size near a
+         bench edge walks the plant off it, and a juniper hanging over a drop is
+         the defect this tier was last fixed for. 1.4 m still decorrelates the
+         spacing — the repeat a critic counted was at intervals of a few metres —
+         and it is inside what the skirt absorbs. */
+      const jr = 1.4 * shelf * shelf;
+      const jd = Math.sqrt(rr()) * jr, ja = rr() * TAU;
+      let t1x = 0, t1y = -n3.z, t1z = n3.y;   // n x (1,0,0)
+      const t1l = Math.hypot(t1y, t1z) || 1;
+      t1y /= t1l; t1z /= t1l;
+      const t2x = n3.y * t1z - n3.z * t1y,    // n x t1
+        t2y = n3.z * t1x - n3.x * t1z,
+        t2z = n3.x * t1y - n3.y * t1x;
+      const jc = Math.cos(ja) * jd, js = Math.sin(ja) * jd;
+      p3.x += t1x * jc + t2x * js;
+      p3.y += t1y * jc + t2y * js;
+      p3.z += t1z * jc + t2z * js;
       /* Sink with the instance rather than by a fixed 0.12 m. A constant sink is
          a *shrinking* one in the geometry's own units — 0.12 of a unit-height
          tuft but 0.03 of a four-metre one — so the biggest and most visible
@@ -587,39 +705,89 @@ export function buildVegetation(path, terrain, rocks) {
     return im;
   }
 
-  /* Analytic coverage in place of the binary cutout. `alphaToCoverage` alone did
-     nothing on these for two rounds because the stock alpha test discards and
-     leaves every surviving fragment fully opaque, so the multisample mask had a
-     constant to interpolate. Dividing the distance to the cutoff by alpha's
-     screen-space derivative gives a ramp one pixel wide at any mip level, which
-     the mask can resolve. See the longer note in `makeFoliageMaterial`. */
-  const coverageEdge = (mat) => {
-    mat.onBeforeCompile = (sh) => {
-      sh.fragmentShader = sh.fragmentShader
-        .replace('#include <alphatest_fragment>', /* glsl */`
-          {
-            float aw = max( fwidth( diffuseColor.a ), 1e-5 );
-            float cov = ( diffuseColor.a - alphaTest ) / aw + 0.5;
-            if ( cov <= 0.0 ) discard;
-            diffuseColor.a = min( cov, 1.0 );
-          }`);
-    };
-    mat.customProgramCacheKey = () => 'veg-coverage-edge';
-    return mat;
+  /* Spread one placement list across several geometries, so a tier can hold more
+     than one outline.
+     Each variant becomes its own `InstancedMesh` and so its own draw call. That
+     is the whole cost, and on a frame the governor measures as fill-bound at 122
+     fps with all vegetation at 0.58 ms, three extra draw calls to stop a bench
+     reading as a row of stamps is not a trade that needs thinking about.
+     Names are suffixed `-a`, `-b` and so on. Anything looking for a tier has to
+     match the `veg-mid` *prefix* rather than the whole name — `tools/vegval.mjs`
+     and `tools/_seat.mjs` both do. */
+  const instanceVaried = (geos, mat, list, name, shadow) => {
+    const buckets = geos.map(() => []);
+    const pick = rng(90210);
+    for (const o of list) buckets[(pick() * geos.length) | 0].push(o);
+    buckets.forEach((b, i) =>
+      instance(geos[i], mat, b, `${name}-${String.fromCharCode(97 + i)}`, shadow));
   };
 
-  const grassMat = coverageEdge(new THREE.MeshStandardMaterial({
-    map: grassTex(), alphaTest: 0.40, side: THREE.DoubleSide,
-    roughness: 0.95, metalness: 0, vertexColors: true,
-    color: new THREE.Color(0.90, 0.85, 0.78), dithering: true,
-    alphaToCoverage: true,
-  }));
-  const scrubMat = coverageEdge(new THREE.MeshStandardMaterial({
-    map: scrubTex(), alphaTest: 0.40, side: THREE.DoubleSide,
-    roughness: 0.92, metalness: 0, vertexColors: true,
-    color: new THREE.Color(0.80, 0.84, 0.72), dithering: true,
-    alphaToCoverage: true,
-  }));
+  /* Grass and scrub move onto the hero crown's BRDF, and the reason is the same
+     defect that was diagnosed on the crown two rounds ago and never carried
+     across to the near field.
+     A critic measured these shrubs as the brightest objects in `wash_low` and
+     `wash_mid` — "clipped to pure white against a dark cliff" — and separately as
+     "flat two-tone cutout blades ... with no midtone between". Those are one
+     cause. Both materials were plain `MeshStandardMaterial`: a Lambertian sheet
+     with an alpha cutout, no transmission, and no bound on the direct term. So a
+     card whose normal happens to point at the sun returns full irradiance, and
+     with the key at 15 degrees that is about 3.9x what the grazing-lit wash floor
+     beside it receives — while the leaf albedo is roughly half the sand's. Net
+     four to eight times too bright, which is the level claim. And a sheet with no
+     transmission has exactly two states, full key or ambient alone, which is the
+     distribution claim. `makeFoliageMaterial`'s own comment describes this
+     arriving on the crown as "cream popcorn measuring (240, 227, 211)", and it
+     was diagnosed twice as an alpha-cutout artefact before turning out to be a
+     BRDF one. Same mistake, one object later.
+     What that path brings: the saturating knee on direct diffuse, so a card
+     standing in for a volume of leaves cannot out-run the ground it grows on; a
+     forward-scatter and isotropic transmission term, which is what puts a
+     midtone between the lit and shaded faces of something two leaves thick; and
+     specular cut to 0.28, because a dielectric F0 at this grazing an angle is a
+     white veil on a surface with no coherent facet. It also carries the same
+     analytic coverage ramp `coverageEdge` was providing, so nothing is lost. */
+  const grassMat = makeFoliageMaterial(grassTex());
+  grassMat.alphaTest = 0.40;
+  grassMat.roughness = 0.95;
+  grassMat.color = new THREE.Color(0.90, 0.85, 0.78);
+  {
+    const u = grassMat.userData.uniforms;
+    u.uDirCap.value = 0.22;
+    u.uAmbScale.value = 0.52;
+    /* Dry grass transmits straw rather than the crown's dead-scale amber, and a
+       dead blade is thinner and leakier than a live leaf. */
+    u.uTrans.value = new THREE.Color(1.40, 1.16, 0.62);
+    u.uTransAmt.value = 0.34;
+    u.uTransIso.value = 0.30;
+  }
+  const scrubMat = makeFoliageMaterial(scrubTex());
+  scrubMat.alphaTest = 0.40;
+  scrubMat.roughness = 0.92;
+  scrubMat.color = new THREE.Color(0.80, 0.84, 0.72);
+  {
+    const u = scrubMat.userData.uniforms;
+    /* The three levers, and which defect each one answers.
+       `uDirCap` and `uAmbScale` are the level: a card presenting a full-facing
+       normal to a 15-degree key takes about 3.9x what the grazing-lit floor
+       beside it takes, and with no baked occlusion it also sees the whole sky.
+       Both are wrong for something standing in for a volume of leaves, and
+       together they are why a critic measured these as the brightest objects in
+       two frames. The knee alone could not fix it — swept over 7.5x it moved the
+       level 14%, because with direct clamped the remaining energy is ambient.
+       The transmission pair is the midtone. `uTransIso` is the one that matters
+       here: an isotropic leak lifts the back-facing cards, which is exactly the
+       population that measured 45% of plant pixels inside the bottom tenth of
+       their own range and read as "black silhouette leaves ... with no midtone
+       between". `uTransAmt` is kept modest on purpose — forward scatter brightens
+       the backlit rim, which is the part that was already too bright.
+       Greener and less amber than the crown's, which is tuned for dead scale.
+       Light through a live grey-green desert leaf comes out yellow-green. */
+    u.uDirCap.value = 0.18;
+    u.uAmbScale.value = 0.46;
+    u.uTrans.value = new THREE.Color(1.22, 1.14, 0.64);
+    u.uTransAmt.value = 0.30;
+    u.uTransIso.value = 0.40;
+  }
   /* Cactus and agave are succulent: waxy, so a touch glossier than anything
      else in the frame, and a pale glaucous blue-green — much lighter and bluer
      than juniper, which is most of what distinguishes them at a distance where
@@ -636,44 +804,55 @@ export function buildVegetation(path, terrain, rocks) {
     roughness: 0.74, metalness: 0, vertexColors: true, dithering: true,
     side: THREE.DoubleSide,
   });
+  /* The same level fix as the foliage tiers, and it became necessary *because* of
+     the count change above: at two agaves scene-wide this material was never
+     large in a frame, and at seventy-three it is the brightest thing in the
+     foreground of `wash_mid` — pale mint paddles reading as cut paper. Lifting a
+     population is not a neutral act; it promotes whatever that population's
+     material gets wrong.
+     A knee and a sky-visibility term, and deliberately not the transmission:
+     an agave blade is a centimetre of water-filled tissue and does not glow when
+     backlit, which is one of the few things that distinguishes it from the scrub
+     beside it. Kept as its own small injection rather than by borrowing
+     `makeFoliageMaterial`, because that path has no normal map and the normal map
+     is what stops these being flat sheets — which is the other half of what they
+     were criticised for. */
+  {
+    const u = { uSuccCap: { value: 0.30 }, uSuccAmb: { value: 0.62 } };
+    succMat.userData.uniforms = u;
+    succMat.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, u);
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>',
+          '#include <common>\nuniform float uSuccCap;\nuniform float uSuccAmb;')
+        .replace('#include <lights_fragment_end>', /* glsl */`
+          #include <lights_fragment_end>
+          reflectedLight.directDiffuse =
+            uSuccCap * ( 1.0 - exp( -reflectedLight.directDiffuse / uSuccCap ) );
+          reflectedLight.indirectDiffuse *= uSuccAmb;
+          reflectedLight.indirectSpecular *= uSuccAmb;`);
+    };
+    succMat.customProgramCacheKey = () => 'veg-succulent';
+  }
 
   instance(grassTuftGeo(1001), grassMat, grass, 'veg-grass', true);
-  instance(shrubGeo(1002), scrubMat, shrub, 'veg-shrub', true);
+  instanceVaried(SHRUB_SHAPES.map((s, i) => shrubGeo(1002 + i * 71, s)),
+                 scrubMat, shrub, 'veg-shrub', true);
   instance(pricklyPearGeo(1003), succMat, pear, 'veg-pear', true);
   instance(agaveGeo(1004), succMat, agave, 'veg-agave', true);
 
   /* ── mid-distance junipers on the terraces and lower slopes ──────────────
      Close enough that a blob would read as a blob, far enough that a real tree
-     is not affordable: nine foliage cards on the same texture as the hero. */
-  /* `cardTuft` grows each card *upward* from the `cy` it is given — `py = cy +
-     hh * sy` with `sy` in {0, 1} — so `cy` is the card's foot and not its
-     centre. This tier used to pass `cy = 0.06 + r() * 0.46`, which put its
-     lowest vertex at local y 0.074 and left the tuft with no geometry at all at
-     or below its own origin. Against a 0.12 m seat sink that is fine on the
-     smallest instances and hovers on every large one: 0.06 m of air at sy 2.5,
-     0.18 m at sy 4.0, with the bulk of the seven cards a metre higher again.
-     Read at the wall foot, where the rock behind is in shadow, that is foliage
-     floating over a black gap — a juniper with a severed trunk. The near shrub
-     tier passes `cy = 0` and seats correctly, which is why it never showed this.
-     So the lowest ring now starts *below* the origin and buries into whatever
-     the instance stands on, the way the shrub does. */
-  const midGeo = addSun(addWhite(cardGeometry((arr) => {
-    const r = rng(2002);
-    for (let i = 0; i < 9; i++) {
-      const a = i / 9 * TAU + r() * 0.42;
-      /* Four of the nine are skirt: wider, splayed further out, and rooted
-         under the seat so the ground line cuts across them instead of passing
-         beneath them. On a bench that is not level the uphill side buries
-         deeper and the downhill side still reaches, which is what the extra
-         radius buys. */
-      const skirt = i < 4;
-      const rad = skirt ? 0.21 + r() * 0.11 : 0.17;
-      cardTuft(Math.cos(a) * rad,
-               skirt ? -0.20 - r() * 0.12 : 0.03 + r() * 0.40,
-               Math.sin(a) * rad,
-               skirt ? 0.84 : 0.70, skirt ? 0.76 : 0.60, 1, r, arr, 2, 2);
-    }
-  })));
+     is not affordable: a handful of foliage cards on the same texture as the
+     hero, in four different arrangements. See `MID_SHAPES` for why four, and for
+     the skirt invariant every one of them has to keep.
+     `cardTuft` grows each card *upward* from the `cy` it is given — `py = cy +
+     hh * sy` with `sy` in {0, 1} — so `cy` is the card's foot and not its centre.
+     This tier once passed `cy = 0.06 + r() * 0.46`, which put its lowest vertex
+     at local y 0.074 and left it with no geometry at or below its own origin: at
+     the wall foot, over shaded rock, that shipped as foliage floating over a
+     black gap and was reported as junipers with severed trunks. */
+  const midGeos = MID_SHAPES.map((s, i) => midTuftGeo(2002 + i * 97, s));
   const midMat = makeFoliageMaterial(foliageTex());
   midMat.vertexColors = true;
   /* Much darker than the hero's foliage, and deliberately so. These stand in
@@ -704,7 +883,7 @@ export function buildVegetation(path, terrain, rocks) {
     flatShading: false,
   });
 
-  instance(midGeo, midMat, mid, 'veg-mid', false);
+  instanceVaried(midGeos, midMat, mid, 'veg-mid', false);
   instance(blobGeo(3003), farMat, far, 'veg-far', false);
 
   return out;

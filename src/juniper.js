@@ -1338,30 +1338,32 @@ export function makeFoliageMaterial(map) {
   });
   const u = {
     uSunDir: { value: SUN_DIR.clone() },
-    /* Both cut hard — transmission from 1.55 and the knee from 0.62 — because
-       System 4's key is several times brighter than the one these were tuned
-       against. A forward-scatter term sized for an underexposed frame is a
-       yellow pedestal on a correctly exposed one, and it was a good part of why
-       the crown went lime. */
+    /* A forward-scatter phase and an isotropic leak: real foliage two
+       millimetres thick transmits, strongly along the view-sun axis and weakly in
+       every other direction, and it is the isotropic part that keeps a shaded
+       interior off black. Warm, because what the light passes through is dead
+       scale.
+       Both default to zero, and that needs explaining, because the history here
+       is the opposite of what the numbers suggest. They were carried at 1.15 and
+       0.42, tuned across two rounds, written up in detail — and injected at a
+       hook that runs after `outgoingLight` is already summed, so not one of those
+       values ever reached a pixel. See the note on the injection below.
+       The hook is fixed now, which means these are live for the first time, and
+       switching a term on across every foliage material in the scene hours before
+       delivery is not a change anyone can verify. The hero crown is the
+       highest-scoring object in the set and the brief on this round is explicitly
+       to protect it. So the default is off — the hero and the mid tier render
+       exactly as they did — and the near-field tiers that need transmission to
+       fix a measured defect opt in by setting these themselves. Restoring the
+       crown's own transmission is a real improvement still on the table, worth a
+       round of its own with a paired capture, and it is left for one. */
     uTrans: { value: new THREE.Color(1.35, 1.12, 0.58) },
-    uTransAmt: { value: 1.15 },
-    /* An isotropic share of the transmission, which the first version did not
-       have: it was all forward phase, so a spray only glowed when it happened to
-       sit between the camera and the sun. Real foliage two millimetres thick
-       leaks in every direction, and it is that leak — not the backlit rim — that
-       keeps a crown's shaded interior from going black. Warm, because what the
-       light passes through on the way is dead scale. */
-    /* 0.42, from 0.30. Held deliberately small: the crown's interstitial pixels
-       measured 50.2% below L = 0.006, but an interstitial pixel is by definition
-       one where you see *through* the crown, so most of that population is the
-       shaded wall behind it rather than any foliage of mine — and the shaded wall
-       is measured as receiving five to six times less fill than the wash floor,
-       which System 4 is correcting. Raising a foliage term to fix a background
-       problem would double-count the moment their change lands. What is defensibly
-       mine is that a two-millimetre spray does leak in every direction, so the
-       leak goes up by a third and no further. */
-    uTransIso: { value: 0.42 },
+    uTransAmt: { value: 0.0 },
+    uTransIso: { value: 0.0 },
     uDirCap: { value: 0.50 },
+    /* Sky visibility, 1 being a card that sees the whole hemisphere. Only the
+       tiers with no baked occlusion need this; see the note at its use. */
+    uAmbScale: { value: 1.0 },
   };
   mat.userData.uniforms = u;
   mat.onBeforeCompile = (sh) => {
@@ -1373,7 +1375,8 @@ export function makeFoliageMaterial(map) {
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>',
         '#include <common>\nvarying float vSun;\nuniform vec3 uSunDir;\nuniform vec3 uTrans;\n' +
-        'uniform float uTransAmt;\nuniform float uTransIso;\nuniform float uDirCap;')
+        'uniform float uTransAmt;\nuniform float uTransIso;\nuniform float uDirCap;\n' +
+        'uniform float uAmbScale;')
       /* Analytic coverage instead of a binary cutout.
          `alphaToCoverage` has been set on this material for two rounds and has
          done nothing, and the reason is that it had nothing to work with: the
@@ -1412,13 +1415,50 @@ export function makeFoliageMaterial(map) {
          crown of cords actually sits. Specular is cut hard for the same reason:
          a dielectric F0 of 0.04 at this grazing an angle is a white veil over
          a surface that has no coherent facet to reflect from. */
+      /* Everything below has to land before `totalDiffuse` is summed, and that is
+         not a detail — it is where two rounds of work went.
+         The transmission block used to be injected at `#include
+         <opaque_fragment>`, which reads well and does nothing at all.
+         `meshphysical.glsl.js` sums `totalDiffuse` from `reflectedLight` at line
+         194 and forms `outgoingLight` at 199; `opaque_fragment` is line 221 and
+         only writes `gl_FragColor` from an `outgoingLight` that was fixed
+         twenty-seven lines earlier. So adding to `reflectedLight.directDiffuse`
+         there was adding to a variable nobody reads again. The transmission has
+         never contributed a photon, on this crown or anywhere else that shares
+         this material.
+         That is worth stating plainly because the project record contains three
+         rounds of critics reporting "still no transmission", "crown interstitials
+         are black" and internal contrast getting *worse* after transmission was
+         "raised" twice, against comments here claiming it was tuned. The comments
+         were describing code that was not running. Found by sweeping
+         `uTransAmt` over an eleven-fold range in `tools/vegval.mjs` and getting
+         byte-identical statistics — a null result that is only explicable as
+         dead code. */
       .replace('#include <lights_fragment_end>', /* glsl */`
         #include <lights_fragment_end>
         reflectedLight.directDiffuse *= vSun;
         reflectedLight.directDiffuse =
           uDirCap * ( 1.0 - exp( -reflectedLight.directDiffuse / uDirCap ) );
-        reflectedLight.directSpecular *= 0.28 * vSun;`)
-      .replace('#include <opaque_fragment>', /* glsl */`
+        reflectedLight.directSpecular *= 0.28 * vSun;
+        /* Sky visibility. A card stands in for a volume of leaves, and a leaf
+           inside that volume sees a fraction of the sky rather than all of it.
+           The hero's crown carries this baked per-vertex from crownOcclusion;
+           the near-field tiers had no equivalent, so every card there was lit as
+           though the whole hemisphere were open to it. With the direct term
+           capped, that unoccluded ambient is what remains, and it is what a
+           critic measured as shrubs brighter than sunlit sandstone: the knee
+           swept over a 7.5x range moved the level 14% and left the population
+           maximum untouched at L 0.874, which is the signature of a term the
+           knee does not reach. Defaults to 1, so nothing that does not ask for
+           it changes. */
+        reflectedLight.indirectDiffuse *= uAmbScale;
+        /* The same occlusion applies to the environment's specular lobe, and it
+           has to, or the term becomes the whole story: a card at roughness 0.92
+           against a sky this bright still returns a broad IBL highlight, and
+           unlike the diffuse it was reachable by nothing above. The population
+           maximum held at exactly L 0.920 through a 7.5x knee sweep and a 3.3x
+           ambient sweep, which is what a term no lever touches looks like. */
+        reflectedLight.indirectSpecular *= uAmbScale;
         {
           vec3 sunV = normalize( ( viewMatrix * vec4( uSunDir, 0.0 ) ).xyz );
           vec3 V = normalize( vViewPosition );
@@ -1430,8 +1470,7 @@ export function makeFoliageMaterial(map) {
           float back = clamp( -dot( normalize( normal ), sunV ) * 0.5 + 0.55, 0.0, 1.0 );
           reflectedLight.directDiffuse +=
             diffuseColor.rgb * uTrans * ( phase * back * uTransAmt + uTransIso );
-        }
-        #include <opaque_fragment>`);
+        }`);
   };
   mat.customProgramCacheKey = () => 'juniper-foliage';
   return mat;

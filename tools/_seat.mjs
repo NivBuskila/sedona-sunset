@@ -36,26 +36,48 @@ const probe = () => {
   const out = { solidNames: solid.map(o => o.name), tiers: {} };
 
   out.geoLo = {};
+  /* Tiers are several draw calls now — the bench tier is split across four
+     silhouettes named `veg-mid-a` upward, and the near shrub across three — so
+     these are prefixes and every mesh matching one is walked. Looking the whole
+     name up with `getObjectByName` would have found nothing at all for the split
+     tiers and reported them absent, which is the quiet kind of instrument
+     failure: a seating probe that says "absent" reads as "nothing to check". */
+  const tiersOf = (pre) => {
+    const hit = [];
+    g._scene.traverse(o => {
+      if (o.isInstancedMesh && (o.name === pre || o.name.indexOf(pre + '-') === 0))
+        hit.push(o);
+    });
+    return hit;
+  };
   for (const tier of ['veg-mid', 'veg-shrub', 'veg-far']) {
-    const im = g._scene.getObjectByName(tier);
-    if (!im || !im.isInstancedMesh) { out.tiers[tier] = 'absent'; continue; }
-    /* The tier's own lowest vertex, in the geometry's units. */
-    im.geometry.computeBoundingBox();
-    out.geoLo[tier] = im.geometry.boundingBox.min.y;
+    const meshes = tiersOf(tier);
+    if (!meshes.length) { out.tiers[tier] = 'absent'; continue; }
+    /* The lowest vertex across the tier's variants, in geometry units. Taking
+       the deepest of them is the conservative choice: it is the one that decides
+       whether the *shallowest* skirt still reaches. */
+    let lo = Infinity;
+    for (const im of meshes) {
+      im.geometry.computeBoundingBox();
+      lo = Math.min(lo, im.geometry.boundingBox.min.y);
+    }
+    out.geoLo[tier] = lo;
     const m = new THREE.Matrix4(), p = new THREE.Vector3(),
       qq = new THREE.Quaternion(), s = new THREE.Vector3();
     const rows = [];
-    for (let i = 0; i < im.count; i++) {
-      im.getMatrixAt(i, m);
-      m.decompose(p, qq, s);
-      p.applyMatrix4(im.matrixWorld);
-      rc.set(new THREE.Vector3(p.x, p.y + 120, p.z), down);
-      const hit = rc.intersectObjects(solid, false);
-      if (!hit.length) { rows.push({ i, air: null, y: p.y, sy: s.y }); continue; }
-      /* First hit from above is the silhouette edge the viewer sees against. */
-      rows.push({ i, air: +(p.y - hit[0].point.y).toFixed(3), y: +p.y.toFixed(2),
-        sy: +s.y.toFixed(2), x: +p.x.toFixed(1), z: +p.z.toFixed(1),
-        on: hit[0].object.name });
+    for (const im of meshes) {
+      for (let i = 0; i < im.count; i++) {
+        im.getMatrixAt(i, m);
+        m.decompose(p, qq, s);
+        p.applyMatrix4(im.matrixWorld);
+        rc.set(new THREE.Vector3(p.x, p.y + 120, p.z), down);
+        const hit = rc.intersectObjects(solid, false);
+        if (!hit.length) { rows.push({ i, air: null, y: p.y, sy: s.y }); continue; }
+        /* First hit from above is the silhouette edge the viewer sees against. */
+        rows.push({ i, air: +(p.y - hit[0].point.y).toFixed(3), y: +p.y.toFixed(2),
+          sy: +s.y.toFixed(2), x: +p.x.toFixed(1), z: +p.z.toFixed(1),
+          on: hit[0].object.name, mesh: im.name });
+      }
     }
     out.tiers[tier] = rows;
   }
