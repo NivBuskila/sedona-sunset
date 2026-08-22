@@ -947,6 +947,11 @@ function installProbeHeightLerp(A) {
     return `vec3(${(c.x * f).toFixed(7)},${(c.y * f).toFixed(7)},${(c.z * f).toFixed(7)})`;
   };
   const sky9 = abso(A.shSky);
+  /* A radiance, not a set of SH coefficients: the band's geometric factor is applied in
+     the shader, so this is only the excess the sunlit floor carries over the shadowed
+     floor the probes already model. SCALE, same as everything else that reaches the
+     shader from the atmosphere. Zero under #noband, which makes the ablation exact. */
+  const bandRGB = `vec3(${A.bandExcess.map((x) => (x * SCALE).toFixed(7)).join(',')})`;
   const bnc = (() => {
     /* Escarpment and ground bounce together: both are red rock lit mostly by the
        sun, both sit near or below the horizon, and nothing downstream needs them
@@ -1060,6 +1065,38 @@ function installProbeHeightLerp(A) {
     vS = clamp( vS, 0.0, 1.0 ); vW = clamp( vW, 0.0, 1.0 );
     return ( vS * Es + vW * Eb ) / max( ao * ( Es + Eb ), vec3( 1e-6 ) );
   }
+  /* ---- the sunlit floor beyond the shadow line ----
+     The probes above carry the lower hemisphere as one radiance, the near self-shadowed
+     floor. That is what a surface sees looking *down*, and it is wrong about what it sees
+     looking *out*: any long occluder's shadow ends at a depression equal to the sun's
+     elevation, so from there to the horizon the floor is the open sunlit wash. Irradiance
+     is cosine-weighted and a near-vertical facet's weight peaks exactly there, so that
+     thin band carries a third of such a facet's downward irradiance - the arithmetic and
+     the reasoning error it corrects are in src/atmos.js beside FLOOR_OPEN.
+     Delivered here rather than in the probe because it can be delivered *exactly* here.
+     The radiance is uniform within each zone, so on any normal the band's contribution is
+     just bandExcess * F(ny), where F is its cosine-weighted geometric factor - a
+     one-dimensional function, the band being an annulus about the vertical axis,
+     integrated and fitted by tools/_bandfit.mjs to 0.59% of peak. Routing the same
+     environment through the SH probe instead tracked that to 1.0% on a vertical, so this
+     is not a fix for a broken projection; it is an identity used in place of an
+     approximation, and it buys the structural zero below.
+     Two properties make this safe to add to a delivered build. It is **exactly zero on an
+     up normal**, structurally - the fit is (1 - ny) times a polynomial - so no lit floor
+     or lit rock pixel can move, which is the guardrail lit rock's 0.614 sits behind, and
+     which the probe route did not give: through SH the same term lifted up-facing normals
+     by 2%, and an up-facing normal is every sunlit floor pixel in the frame. And
+     it peaks at ny = -0.20, just below horizontal, with 2.45 times the weight it gives an
+     underside, so it lands on the facets the finding is about rather than on shade
+     generally. It is added before the occlusion chain, so a facet down in a crevice is
+     still denied it, which is correct: the band is what an *exposed* facet sees. */
+  float s4BandF( float ny ) {
+    return ( 1.0 - ny ) * ( 0.512659 + ny * ( 0.406724 + ny * ( 0.115671 + ny * ( 0.108816
+      + ny * ( 0.229111 + ny * ( 0.247205 + ny * 0.013122 ) ) ) ) ) );
+  }
+  vec3 s4GroundBand( vec3 n ) {
+    return ${bandRGB} * max( s4BandF( n.y ), 0.0 );
+  }
   float s4ProbeOpen( float wy, float ny ) {
     /* The free-exponent fit wanted 1.46 and 1.12; pinning them to 1.5 and 1.125
        gives the same residual to three decimals (0.045 and 0.029), so the two
@@ -1075,6 +1112,7 @@ function installProbeHeightLerp(A) {
      Any material compiled without them has no fill for this to correct, and a
      gain of one is the honest answer rather than a compile error. */
   vec3 s4AoTint( vec3 n, float ao ) { return vec3( 1.0 ); }
+  vec3 s4GroundBand( vec3 n ) { return vec3( 0.0 ); }
 #endif
 `;
   /* Rebuild from the pristine chunks every time rather than appending to
@@ -1116,6 +1154,10 @@ function installProbeHeightLerp(A) {
         vec3 s4wn = inverseTransformDirection( geometryNormal, viewMatrix );
         float s4open = s4ProbeOpen( vFogW.y, s4wn.y );
         irradiance += s4ProbeDelta( s4wn ) * s4open;
+        /* The sunlit floor beyond the shadow line. Not scaled by the height or astern
+           lerps: those open the *sky* aperture, and this is the ground half, which a
+           surface high on a wall sees as much of as one down in the wash. */
+        irradiance += s4GroundBand( s4wn );
         /* Scaled by what the height lerp has not already opened. Above the rim
            shOpen has no escarpment left in it at any bearing, so there is no
            up-canyon window left to open and crediting one would double-count it.

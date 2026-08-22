@@ -110,8 +110,18 @@ console.log(`    agree to ${(100 * skew).toFixed(1)}%` +
 }
 
 /* ── the three readings of the side/top ratio ─────────────────────────────── */
+/* The band no longer travels in the SH probe - it is delivered analytically in sky.js,
+   because an order-2 projection cannot hold a thin annulus. So the model's fill is the
+   probe plus the band, and this must mirror the shader or the prediction is of a build
+   that does not exist. F is the fitted geometric factor from tools/_bandfit.mjs. */
+const bandF = (ny) => Math.max(0, (1 - ny) * (0.512659 + ny * (0.406724 + ny * (0.115671 +
+  ny * (0.108816 + ny * (0.229111 + ny * (0.247205 + ny * 0.013122)))))));
+const fillOn = (Ax, n) => {
+  const E = irr(Ax.sh, n), f = bandF(n[1]);
+  return [0, 1, 2].map((k) => E[k] + Ax.bandExcess[k] * f);
+};
 const rModel = (Ax) => {
-  const E = irr(Ax.sh, nSide);
+  const E = fillOn(Ax, nSide);
   return [0, 1, 2].map((k) => E[k] / Etop[k]);
 };
 const topLin = inverse(TOP.map((x) => x / 255), EXPOSURE);
@@ -206,7 +216,7 @@ console.log(`    the critic's ask                    ${WANT.map((x) => Math.roun
   console.log(`\n  the two-zone ground, against the same build with it ablated`);
   console.log('  normal                       fill lum  off -> on    side/top R       hue      sat');
   for (const [label, n] of Object.entries(NRM)) {
-    const eo = irr(OFF.sh, n), en = irr(ON.sh, n);
+    const eo = fillOn(OFF, n), en = fillOn(ON, n);
     const qo = chroma(eo), qn = chroma(en);
     console.log(`  ${label.padEnd(28)}${lum(eo).toFixed(4)} -> ${lum(en).toFixed(4)}` +
       `  x${(lum(en) / lum(eo)).toFixed(2)}` +
@@ -214,6 +224,53 @@ console.log(`    the critic's ask                    ${WANT.map((x) => Math.roun
       `  ${qo.h.toFixed(0).padStart(4)}->${qn.h.toFixed(0).padStart(4)}` +
       `  ${qo.s.toFixed(3)}->${qn.s.toFixed(3)}`);
   }
+  /* Can an order-2 SH probe hold the band, or does it have to be delivered analytically?
+   *
+   * The first version of this check said the probe lost 63% of it, and that figure was
+   * wrong in a way worth leaving on the record. It integrated the environment by brute
+   * force using the *sunlit fraction* as the radiance - 0.70 in the band against 0.05
+   * below it, a ratio of fourteen. The actual radiances are
+   * albedo * (frac * sun * sin(el) + skyIrradiance) / pi, and that additive sky term does
+   * not scale with the fraction at all, so the real ratio between the two zones is about
+   * 3.3, not 14. The toy model inflated the band's contribution by four and the "loss"
+   * was the gap between a delivered truth and an invented target. A mechanism that
+   * explains a number - order-2 SH cannot hold a thin annulus, which is true in general -
+   * is not evidence that the number is real.
+   *
+   * Done properly there is no integral to do. The band's radiance is uniform over the
+   * band and the floor's is uniform below it, so for any normal the exact irradiance is
+   *     E_on = E_off + bandExcess * F(ny)
+   * where F is the band's own cosine-weighted geometric factor from tools/_bandfit.mjs.
+   * That identity *is* the analytic term sky.js evaluates, so the analytic delivery is
+   * exact by construction and the only open question is how closely the probe tracks it. */
+  /* Measured SH figures from commit 0b4f84d, where the same environment was routed
+     through the probe instead: vertical x2.06, underside x1.26, up normal x1.02. */
+  const SH_WAS = {
+    'clast side, near-vertical': 2.06,
+    'wall face, across canyon': 2.14,
+    'wall face, away from sun': 2.14,
+    'underside, looking down': 1.26,
+    'floor / slab top, up': 1.02,
+  };
+  console.log(`\n  the band's effect on the ground term, exact against the SH route`);
+  console.log('  normal                       exact    via probe (0b4f84d)   probe error');
+  for (const [label, n] of Object.entries(NRM)) {
+    const g0 = irr(OFF.shGround, n)[0];
+    if (g0 < 1e-7) {
+      console.log(`  ${label.padEnd(28)} an up normal sees no ground: exact is x1.000 exactly,` +
+        ` the probe returned x${SH_WAS[label].toFixed(2)}`);
+      continue;
+    }
+    const ex = 1 + ON.bandExcess[0] * bandF(n[1]) / g0;
+    const sh = SH_WAS[label];
+    console.log(`  ${label.padEnd(28)} x${ex.toFixed(3)}         x${sh.toFixed(3)}` +
+      `            ${(100 * (sh / ex - 1) >= 0 ? '+' : '') + (100 * (sh / ex - 1)).toFixed(1)}%`);
+  }
+  console.log('  The probe tracked the exact answer to a few percent on every normal that');
+  console.log('  sees ground. It is delivered analytically anyway, because the identity is');
+  console.log('  exact and because F(ny) is structurally zero on an up normal where the');
+  console.log('  probe returned x1.02 - a spurious lift on every sunlit floor pixel.');
+
   console.log(`\n  clast side facet in code values   ${cvAt(rModel(OFF)).join(' ')}  ->  ` +
     `${cvAt(rModel(ON)).join(' ')}    (ceiling ${cvAt(rPhysCeil).join(' ')}, ` +
     `critic's ask ${WANT.map((x) => Math.round(x)).join(' ')})`);

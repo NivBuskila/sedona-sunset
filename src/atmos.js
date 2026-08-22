@@ -760,18 +760,37 @@ export function computeAtmosphere(over = {}) {
      normal that sees no ground at all. A single constant applied to the entire lower
      hemisphere cannot express that and will be wrong for two of the three whatever it is
      set to - the same failure as the corridor modelled with one doorway.
-     So model the two zones the lower hemisphere actually has and let the SH projection
-     work out the normal dependence, which is what it is for. Below the shadow line the
-     floor is the near, self-shadowed kind at the old 0.05; above it the open wash at its
-     measured 0.70. An underside then keeps the warm dark bounce it had, a vertical picks
-     up the horizon band, and no constant has to serve both. */
+     So model the two zones the lower hemisphere actually has. Below the shadow line the
+     floor is the near, self-shadowed kind at the old 0.05; above it, out to the horizon,
+     the open wash at its measured 0.70.
+     The band is delivered outside the SH probes, analytically, in src/sky.js, and the
+     reason is narrower than it first appeared. Because the radiance is uniform within
+     each zone, the exact irradiance on any normal is
+         E = E_uniform_shadowed_floor + bandExcess * F(ny)
+     where F is the band's own cosine-weighted geometric factor - a one-dimensional
+     function, since the band is an annulus about the vertical axis. That identity is
+     exact, so evaluating it directly cannot be improved on, and F is **structurally zero
+     on an up normal**, which the probe route was not: routed through SH the term returned
+     a x1.02 lift on up-facing normals, and an up-facing normal is every sunlit floor
+     pixel in the scene. F is integrated and fitted by tools/_bandfit.mjs to 0.59%.
+     What is *not* the reason, on the record because it was believed for an hour and
+     written into this comment as measured fact: that order-2 SH cannot hold a thin
+     annulus and was losing 63% of the band. The probe in fact tracked the exact answer
+     to 1.0% on a vertical and 4.8% on an underside. The 63% came from a brute-force
+     check that used the two zones' *sunlit fractions*, 0.70 against 0.05, as their
+     radiances - but radiance is albedo * (frac * sun * sin(el) + skyIrradiance) / pi and
+     that additive sky term does not scale with the fraction, so the true ratio between
+     the zones is 3.3 rather than 14. The instrument inflated the band fourfold and the
+     "loss" was the gap to an invented target. The general claim about order-2 SH is true
+     and it is not evidence about this band.
+     What stays here is the excess radiance the band carries, and the probes below keep
+     the uniform self-shadowed floor they had, so nothing is counted twice. */
   const FLOOR_SUNLIT = over.floorSunlit ?? 0.05;
   const FLOOR_OPEN = over.floorOpen ?? 0.70;      // fillprobe.mjs --floor, this sun
   /* The band edge is sharp for a long straight occluder and this wash is neither, so a
      few degrees of softness. It is not a tuning knob: the band's weight is set by the
      sun elevation, and smoothing a step at 15 degrees by +-4 moves the integral by well
      under a percent. It is here so the terminator is not a visible ring on undersides. */
-  const BAND_SOFT = (over.bandSoftDeg ?? 4) * DEG;
   const GROUND_BAND = over.groundBand !== false;
   const localGround = [0, 0, 0], openGround = [0, 0, 0];
   {
@@ -783,17 +802,15 @@ export function computeAtmosphere(over = {}) {
       specToRGB(s, out);
     };
     mk(FLOOR_SUNLIT, localGround);
-    mk(GROUND_BAND ? FLOOR_OPEN : FLOOR_SUNLIT, openGround);
+    mk(FLOOR_OPEN, openGround);
   }
-  /* Ground radiance for a downward direction: which side of the shadow line it falls on.
-     dy is the direction's y component, negative below the horizon, so the depression
-     angle is asin(-dy) and the line sits at the sun's own elevation. */
-  const groundAt = (dy, out) => {
-    const dep = Math.asin(Math.min(1, -dy));
-    const t = Math.max(0, Math.min(1, (dep - (SUN_EL - BAND_SOFT)) / (2 * BAND_SOFT)));
-    const w = t * t * (3 - 2 * t);                       // 0 in the lit band, 1 below
-    for (let k = 0; k < 3; k++) out[k] = openGround[k] + (localGround[k] - openGround[k]) * w;
-  };
+  /* The radiance the band carries *over* the self-shadowed floor the probes already
+     model. src/sky.js multiplies this by the band's geometric factor, so what leaves
+     here is a radiance and not an irradiance. Zero under the ablation, which makes
+     #noband exact rather than approximate. */
+  const bandExcess = GROUND_BAND
+    ? [0, 1, 2].map((k) => Math.max(0, openGround[k] - localGround[k]))
+    : [0, 0, 0];
   /* How much of the sky a surface down in the wash cannot see. The first
      estimate was 0.30 up to fifteen degrees, on the reasoning that this is a
      broad wash and not a slot canyon, and it was far too generous: from the
@@ -992,7 +1009,6 @@ export function computeAtmosphere(over = {}) {
   const basis = [0, 0, 0, 0, 0, 0, 0, 0, 0];
   const dir = new THREE.Vector3();
   const d3 = [0, 0, 0], env = [0, 0, 0], envA = [0, 0, 0], wall = [0, 0, 0];
-  const gnd = [0, 0, 0];
   const eH = [0, 0, 0], eVsun = [0, 0, 0], eVanti = [0, 0, 0];
   const eSkyH = [0, 0, 0];
 
@@ -1021,13 +1037,9 @@ export function computeAtmosphere(over = {}) {
         /* The environment for one astern skyline. Called twice, and the only
            thing that differs between the two calls is how much of the up-canyon
            bearing is rock rather than sky. */
-        /* One evaluation of the two-zone ground per direction, shared by every probe
-           below, because they all see the same floor. */
-        if (d3[1] < 0) groundAt(d3[1], gnd);
-
         const envFor = (astern, out) => {
           const cov = coverAt(d3, astern);
-          if (d3[1] < 0) { out[0] = gnd[0]; out[1] = gnd[1]; out[2] = gnd[2]; }
+          if (d3[1] < 0) { out[0] = localGround[0]; out[1] = localGround[1]; out[2] = localGround[2]; }
           else if (cov > 0) {
             wallRadiance(d3, wall, astern);
             out[0] = sky0 + (wall[0] - sky0) * cov;
@@ -1048,9 +1060,9 @@ export function computeAtmosphere(over = {}) {
           shAstern.coefficients[k].y += basis[k] * envA[1] * dw;
           shAstern.coefficients[k].z += basis[k] * envA[2] * dw;
         }
-        const op0 = d3[1] < 0 ? gnd[0] : sky0;
-        const op1 = d3[1] < 0 ? gnd[1] : sky1;
-        const op2 = d3[1] < 0 ? gnd[2] : sky2;
+        const op0 = d3[1] < 0 ? localGround[0] : sky0;
+        const op1 = d3[1] < 0 ? localGround[1] : sky1;
+        const op2 = d3[1] < 0 ? localGround[2] : sky2;
         for (let k = 0; k < 9; k++) {
           shOpen.coefficients[k].x += basis[k] * op0 * dw;
           shOpen.coefficients[k].y += basis[k] * op1 * dw;
@@ -1061,7 +1073,7 @@ export function computeAtmosphere(over = {}) {
           let sk0 = 0, sk1 = 0, sk2 = 0, wl0 = 0, wl1 = 0, wl2 = 0;
           let gr0 = 0, gr1 = 0, gr2 = 0;
           if (d3[1] < 0) {
-            gr0 = gnd[0]; gr1 = gnd[1]; gr2 = gnd[2];
+            gr0 = localGround[0]; gr1 = localGround[1]; gr2 = localGround[2];
           } else {
             const cov = coverAt(d3, SKYLINE);
             if (cov > 0) {
@@ -1098,7 +1110,7 @@ export function computeAtmosphere(over = {}) {
   return {
     lut, SKY_W, SKY_H,
     sunRGB, sunLum, sunSpec: SUN_SPEC,
-    mieTintRGB, groundRGB, groundSpec,
+    mieTintRGB, groundRGB, groundSpec, bandExcess, bandSoftDeg: over.bandSoftDeg ?? 4,
     sh, shOpen, shAstern,
     ...(decompose ? { shSky, shWall, shGround } : {}),
     irradiance: { horizontal: eH, vertSun: eVsun, vertAnti: eVanti, skyHorizontal: eSkyH },
