@@ -2817,6 +2817,19 @@ one-pixel scale — which is a function of how many pixels the wall is drawn int
 surface. It also explains a midwall/upper split on one wall with one material: the crops differ
 in framing.
 
+Four resolutions of the same `wall_lit` crop, chain on and off, now bracket it — and the last
+column matters, because the band floor is 0.54:
+
+| `wall_lit` hf/lf | 1600×900 | 1997×1123 (rung 4) | 2560×1440 | 3200×1800 |
+| --- | --- | --- | --- | --- |
+| midwall | 0.49 | 0.53 | **0.54** | 0.54 |
+| upper | — | 0.65 | 0.62 | — |
+
+**The midwall shortfall is a resolution artefact and it clears at the resolution that ships.**
+The chain is neutral on it at both delivery sizes — 0.54 against an ungraded 0.54 at 1440, 0.53
+against 0.53 at rung 4 — so the depth of field is not eating far-field detail, which was the
+0.55 gate's purpose.
+
 **So: quote the resolution with every `hf/lf` number, and only compare figures shot at the same
 one.** This applies retroactively to a good many recorded figures. Buying the number with
 amplitude at 60 mm per pixel would add metre-scale relief to please a pixel-scale statistic,
@@ -2838,6 +2851,51 @@ high-resolution frame box-downsampled in linear light so the content is identica
 native figure to 0.002. **Saturation and hue of the brightest 40% are resolution-stable**, so
 they cannot explain a 0.072 discrepancy, and the resolution caveat is specific to `hf/lf` and
 to the other pixel-scale statistics rather than general to the measurement suite.
+
+## Which post terms scale with resolution and which do not
+
+Two of these were got wrong before they were got right, in opposite directions, so the rule
+is worth stating rather than re-deriving:
+
+> **A term scales with resolution if it is a fixed fraction of the frame. A contrast threshold
+> on an edge that is one pixel wide at any resolution does not.**
+
+- **Scales.** The circle of confusion, because defocus is an optical size in the image plane —
+  a fixed fraction of the frame, and therefore a varying number of pixels. The grain plate,
+  because grain is a property of the stock: a 256-pixel tile on a 1440-line frame is a finer
+  grain than the same tile at 900 lines and would read as a different film.
+- **Does not scale.** The silhouette antialiasing gate. This one is counter-intuitive and was
+  briefly scaled by `h/900` on the reasonable-sounding inference that a silhouette covers more
+  pixels at higher resolution, so a 150-code-value step would spread out and stop clearing a
+  fixed 70–130 threshold. **A silhouette is a geometric edge and four coverage samples resolve
+  it to about one pixel wherever it is drawn**, so more resolution buys more edge pixels rather
+  than a softer edge. Measured on paired captures, the ungraded median largest one-pixel jump
+  across the skyline is **81.5 code values at 900 lines and 85.0 at 1440** — unchanged. Scaling
+  lifted the gate above the median edge, where it quietly stopped firing: median improvement
+  over the control fell **23% → 10%**, while p90 kept most of its 42–47% because only the
+  strongest edges still cleared it. Unscaled at 1440 the median is 64.9 against 85.0 (−24%) and
+  p90 111.2 against 207.3 (−46%), the 900-line behaviour to within a point on both.
+
+All three scalings are exact identities at 900 lines, so no figure recorded before them moves.
+
+The general lesson, which cost two errors to learn: **a pixel-scale term cannot be trusted to
+transfer between resolutions, in either direction, and the only way to know which way it goes
+is a paired capture at both sizes.** Shoot at the resolution that ships.
+
+## Shooting at 900 lines understated what the dither is doing
+
+The ungraded control's banding gets substantially worse with resolution, because the same sky
+gradient is spread over more rows and every tread lengthens. The dither does not care:
+
+| worst run, sky | 1600×900 | 1997×1123 (rung 4) | 2560×1440 |
+| --- | --- | --- | --- |
+| dithered | 7–10 | 7–8 | 7–9 |
+| ungraded control | 20–27 | 28–33 | 26–43 |
+| flat%, dithered / control | 42-44% / 86-91% | 43-44% / 90-92% | 42-44% / 90-94% |
+
+So the margin **widens from about 3× to about 5×** between capture and delivery resolution, and
+the pass matters more where it ships than where it was tuned. Any future judgement of the
+dither should be made at 1997×1123 or above.
 
 ## Triangles are not what this frame costs, and the frame costs 31 ms
 

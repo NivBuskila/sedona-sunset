@@ -35,6 +35,26 @@ import { decode } from './png.mjs';
 
 const a = process.argv.slice(2);
 const files = a.filter((x) => /\.png$/i.test(x));
+
+/* Every mode here is opt-in behind a flag, so a mistyped flag selected no mode and
+   the tool exited silently having measured nothing — which is indistinguishable from
+   a clean result if you are reading quickly. "--vig" for "--corner" cost a round of
+   confusion during the 1440p handoff. Refuse instead. */
+const MODES = ['--dsim', '--band', '--corner', '--attrib', '--black'];
+{
+  const flags = a.filter((x) => x.startsWith('--'));
+  const bad = flags.filter((x) => !MODES.includes(x) && x !== '--sat');
+  if (bad.length) {
+    console.error('_p7name.mjs: unknown flag ' + bad.join(' ') + '\n  modes: ' + MODES.join(' ') +
+      '   (--attrib also takes --sat)');
+    process.exit(2);
+  }
+  if (!flags.some((x) => MODES.includes(x))) {
+    console.error('_p7name.mjs: no mode given.\n  modes: ' + MODES.join(' '));
+    process.exit(2);
+  }
+  if (!files.length) { console.error('_p7name.mjs: no png paths given.'); process.exit(2); }
+}
 const load = (f) => { const { w, h, ch, px } = decode(readFileSync(f)); return { w, h, ch, px }; };
 const at = (im, x, y, c) => im.px[(y * im.w + x) * im.ch + c];
 const lum = (im, x, y) =>

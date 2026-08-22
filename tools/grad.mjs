@@ -92,6 +92,19 @@ for (let i = 0; i < argv.length; i++) {
   if (/\.png$/i.test(argv[i])) files.push(argv[i]);
   else { region = argv.slice(i, i + 4).map(Number); break; }
 }
+/* An unrecognised flag used to become a four-number crop of NaN, which silently
+   selected no pixels and printed a header with no rows under it. That reads as "the
+   measurement came back empty" rather than "you passed a flag that does not exist",
+   and this tool has no flags at all — hf/lf is always printed. Same failure mode as
+   the shadow ablation that reported 0.05 ms for three quarters of the frame: an
+   instrument that answers when it should refuse. */
+if (region && region.some((v) => !Number.isFinite(v))) {
+  console.error('grad.mjs takes png paths and an optional numeric crop "x y w h" in\n' +
+    'frame fractions. It has no flags; hf/lf is printed by default. Got: ' +
+    argv.filter((x) => !/\.png$/i.test(x)).join(' '));
+  process.exit(2);
+}
+if (!files.length) { console.error('grad.mjs: no png paths given.'); process.exit(2); }
 
 /* grad/L is reported beside grad because the two are not independent and reading
    grad alone gets the diagnosis wrong in exactly the way sat.mjs warns about for
