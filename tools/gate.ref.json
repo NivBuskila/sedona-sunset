@@ -1,0 +1,69 @@
+{
+  "blessed": "2026-08-22T04:08:22.937Z",
+  "hash": "high",
+  "w": 1024,
+  "h": 576,
+  "views": {
+    "floor": {
+      "groundAvg": 90,
+      "skyAvg": 0,
+      "median": 94,
+      "p99": 182,
+      "floorL": 99.6,
+      "floorRG": 1.728,
+      "triangles": 3883400,
+      "rockTris": 543836
+    },
+    "up": {
+      "groundAvg": 65.5,
+      "skyAvg": 189,
+      "median": 73,
+      "p99": 239,
+      "floorL": 97.2,
+      "floorRG": 1.625,
+      "triangles": 3980342,
+      "rockTris": 543836
+    },
+    "lit": {
+      "groundAvg": 50.8,
+      "skyAvg": 153.9,
+      "median": 26,
+      "p99": 177,
+      "floorL": 64.9,
+      "floorRG": 1.783,
+      "triangles": 3897348,
+      "rockTris": 543836
+    },
+    "shade": {
+      "groundAvg": 37.4,
+      "skyAvg": 139.9,
+      "median": 19,
+      "p99": 166,
+      "floorL": 61.1,
+      "floorRG": 1.831,
+      "triangles": 3862280,
+      "rockTris": 543836
+    },
+    "gap": {
+      "groundAvg": 63.7,
+      "skyAvg": 173,
+      "median": 66,
+      "p99": 233,
+      "floorL": 88.8,
+      "floorRG": 1.557,
+      "triangles": 3925464,
+      "rockTris": 543836
+    },
+    "far": {
+      "groundAvg": 45.1,
+      "skyAvg": 184.4,
+      "median": 24,
+      "p99": 231,
+      "floorL": 50.7,
+      "floorRG": 1.674,
+      "triangles": 1616684,
+      "rockTris": 543836
+    }
+  },
+  "commit": "43f136f"
+}
