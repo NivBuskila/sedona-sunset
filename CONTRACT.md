@@ -8434,3 +8434,129 @@ unexplained is only why halving the count destroyed the pattern without doubling
 its period. The per-instance UV rotation or offset already proposed is still the
 right first thing to try, and it is now aimed at a population rather than at an
 object.
+
+## Rows of windows: the varnish, not the alcoves
+
+The ship critic's second finding was a grid of soft-edged dark rounded
+rectangles, roughly equal in width and spacing, arranged in horizontal rows
+along the bedding, in `wash_mid`, `bend`, `far_220` and `shade_far`. It is
+**desert varnish**, established by ablation on a new declared `uVarnK`: with the
+term at zero the rectangles are gone and the dark shapes that remain are alcove
+geometry, which is irregular. The critic's guess that a real feature was being
+laid out on a lattice was right.
+
+Two placement faults, and neither was about strength.
+
+**Cells got by flooring a scaled station are a lattice no per-cell jitter can
+break.** The tongues sit in cells of 9.5 m and 3.33 m, and each carries one
+plate at a hashed position inside its own cell. That randomises where a plate
+sits *within* a cell but there is still exactly one per cell, so the spacing
+distribution stays narrow and the eye reads a rhythm. This is a general trap and
+it is worth stating as one: **jitter inside a cell does not remove the cell's
+period; only warping the coordinate before the floor does.** The cure is a
+monotone warp - amplitude times frequency times 1.5 held under 1 per term, or
+the coordinate folds and cells invert - which makes the cells unequal and, as a
+free by-product, varies each plate's world width.
+
+**The source height was the wrong horizon.** Every tongue hung from `lTop` with
+a couple of metres of jitter, and `lTop` is the top of the *lithological unit*,
+not of a bed. Units here are eight to twenty metres thick, so every tongue in a
+unit began inside the same two-metre band: one row per unit, and three units in
+a framing is the three rows that were counted. The source now scatters through
+the unit, snapped to a bed contact, because a lip is still what sheds a tongue.
+
+Also fixed in passing, and it is a shape fault rather than a distribution one: a
+plate of constant lateral width, held over the ten metres its darkness decays
+across, **is** a rounded rectangle. Width now tapers downward and the plate
+wanders laterally as it descends.
+
+Third time on this project that a regular period was the whole problem and a
+phase warp rather than an amplitude was the cure, after the crest that held one
+bed level for 50-100 m and the apron rows at a dead-regular pitch.
+
+### Two instrument notes, one of them a negative result
+
+`buildWalls` returns a **creased** mesh - `creasedMesh` splits vertices per face
+so hard edges can carry their own normals - so the `(column, row)` grid the
+generator wrote is *not* the vertex order that comes back, and index arithmetic
+on it returns nonsense. Bin by the station and column-height channels of `aRock`
+instead. This is almost certainly what made an earlier node-side scratch report
+no rock above y 0 on a wall that this same build puts at **y 67.1**: the layout
+was wrong, not the build. Offline rock measurement works.
+
+`tools/_blobrow.mjs` tried to score the complaint directly by finding the dark
+patches and measuring their row concentration and pitch. **It does not work**,
+and it is committed saying so. It finds eight to eleven patches per crop, so a
+pitch CV rests on three to six samples, and it scores the *before* frames at
+0.91-1.26 times chance for row concentration - no rows - on the crops where the
+rows are plainly visible. What settled the question was an ablation, because an
+ablation isolates a **term** and needs no feature recognition at all. Recognising
+the feature was the hard problem and it was never the problem that needed
+solving.
+
+## Vertical jointing is a rebuild, and here is the measurement that says so
+
+The critic's sharpest line - bedding "wraps around the form like grain on
+lathe-turned wood, instead of being cut by it" - is half right, and the half it
+gets wrong points at the wrong fix. Bedding *is* a function of height on a real
+cliff, beds being horizontal, and a horizontal bed exposed on a convex prow
+really does continue round it. What a real cliff has that this one does not is a
+**surface built of joint-bounded planar facets**, so the bedding trace is a
+polyline that kinks at every joint. "Cut by it" is a statement about the
+surface, not about the laminae.
+
+`tools/_jointstep.mjs` measures the surface off the built wall. Over 9074
+column-to-column steps on `wallL`:
+
+| lateral step over one 0.62 m column | share |
+| --- | --- |
+| median | 0.158 m, a face tilted 14 deg from the wall |
+| >= 0.6 m (44 deg) | 3.38% |
+| >= 1.0 m (58 deg) | 0.57% |
+
+Joint *planes* do exist - the steepest 2% of steps persist into the band below
+42% of the time against 6% by chance, so seven times chance - so the machinery
+is not absent. It is **sparse**: 52 near-vertical facets across 19 height bands
+of a 296 m wall is one per roughly 110 m, where this country has a joint every
+3 to 15 m. Ten to thirty times too few.
+
+That is also why ablating the whole joint system moves the line-anisotropy ratio
+by only 3%, from 0.77 to 0.75. The joints are a shading term painted on a smooth
+surface, and no shading term can terminate a lamina, because there is no break
+in the surface for it to terminate against. The 3% is not weak machinery; it is
+the correct answer to a different question.
+
+**And the density cannot simply be raised, because it was already tried.**
+`38b4a1a` found the previous form - a 0.040-wide threshold ramp with a 1.5 m
+offset, which is a near-vertical facet - and removed it, widening the ramp to
+0.090 and cutting the depth to 1.1 m, because adjacent columns differing by the
+full offset gave "the row of bright triangular notches along every shaded bench"
+and "the perfectly straight polygonal boundary that reads as a boolean cut
+rather than a fracture". The facets were traded away to kill those two artifacts.
+Raising density now reopens both.
+
+So what is actually being asked for is four pieces of new work, not a parameter:
+
+1. **Steps placed on column boundaries.** A discontinuity inside a column
+   aliases against the 0.62 m sampling, which is the barcode lesson; on a
+   boundary it is exactly representable as a near-vertical quad.
+2. **A fracture-face material path.** A joint face is fresh rock in shadow and
+   must read dark and matte. The existing `fresh` channel is the wrong sign - it
+   marks unweathered rock, no varnish and no dust, so it makes a facet
+   *brighter*, which is precisely the bright-notch artifact. This is a new
+   channel, not a reuse.
+3. **Coherence by construction.** A joint is a plane, so its station must not
+   depend on height. Today's driver is a 2-D noise in (station, height), which is
+   why coherence measures 42% and not ~100%.
+4. **Talus.** A joint-bounded block that has stepped out went somewhere, and the
+   critic names its absence separately: the cliffs meet the banks cleanly.
+
+Crossbedding, which the critic calls the single biggest reason the rock reads
+synthetic, is larger still and separate: it requires bedding to stop being f(y)
+and become f(y - x tan(dip)) inside bounded sets, which touches every reader of
+the bedding field including the CPU-side `subResist` that `bedResist` must match
+exactly.
+
+This is a rebuild of the wall's lateral-offset field plus a new material channel
+plus a bedding reparameterisation. It is more than today, and the honest thing
+is to say so rather than to spend the time moving 3% by another 3%.
