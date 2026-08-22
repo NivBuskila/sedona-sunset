@@ -1294,7 +1294,52 @@ vec3 bumpFrom(float hgt, vec3 N, float scale){
   vec3 r1 = cross(pdy, N), r2 = cross(N, pdx);
   float det = dot(pdx, r1);
   vec3 grad = sign(det) * (hdx * r1 + hdy * r2);
-  return normalize(abs(det) * N - scale * grad);
+  /* ---- bound the tilt, because det goes to zero at grazing incidence ───────
+     The line this replaces was normalize(abs(det) * N - scale * grad). Both
+     halves are correct: grad is perpendicular to N, det is the pixel
+     footprint's area projected onto N, and grad/det is the true surface
+     gradient of hgt, which is what a bump wants and is view-independent.
+
+     The trouble is that det is a *finite difference* estimate of that area, and
+     it collapses toward zero as the surface turns edge-on. When it does, the
+     abs(det) * N term shrinks out of the expression and the perturbation
+     dominates the result — the returned normal tends to grad's direction no
+     matter how small scale is. The tilt is tan(theta) = scale*|grad| / |det|,
+     with nothing bounding it. So on any grazing surface this function returns a
+     normal driven entirely by two derivatives that, at that incidence, are
+     sampling a scalar far below its Nyquist limit and are therefore not small
+     but *wrong* — and wrong with spatial regularity, because the wrap is
+     regular. That is the far_270 diamond lattice, and it is why every attempt
+     to fix it by fading the amplitude in front of the call failed: no value of
+     scale bounds a ratio whose denominator is going to zero.
+
+     Capping the tilt fixes it at the only place it can be fixed, and the cap is
+     an *exact* identity below it — the multiplier is 1.0 bit-for-bit, not merely
+     small — so the only surfaces it can touch are ones already returning a tilt
+     no legitimate call site produces.
+
+     MAXTILT was chosen by measurement rather than by argument. Painting the
+     multiplier into the albedo shows where it engages: at 0.45 it fires on the
+     lattice dots and on nothing else in any framing, which localises the defect
+     but is far too loose to cure it, because an 0.45 tilt near the terminator
+     still swings a pixel from lit to shadowed. At 0.10 it fires across the whole
+     lattice, across a striped patch on the bend right bank, and nowhere in
+     ground. That is the value here. Do not read the cap as an amplitude control:
+     it does not reduce the artefact, it removes it, because below the cap the
+     term is untouched and above it the estimate was never valid.
+
+     Verification, paired against this same function with MAXTILT set to 1e9,
+     which is an exact no-op: ground 0.002% of pixels differing at a mean of
+     0.0001/255, wash_mid 0.130%, and hf/lf and grad/L identical to four decimals
+     on ground, wash_mid and bend. Everything it does change, it improves — see
+     "bounding bumpFrom at grazing incidence" in CONTRACT.md for the surfaces
+     that turned out to be quietly carrying this. */
+  const float MAXTILT = 0.10;
+  vec3  p  = scale * grad;
+  float ad = abs(det);
+  float pl = length(p);
+  p *= min(1.0, (ad * MAXTILT) / max(pl, 1e-12));
+  return normalize(ad * N - p);
 }
 `;
 
@@ -1944,12 +1989,10 @@ if (bankW > 0.004) {
      step at every contact turns a bank into a flight of stairs. */
   gA *= mix(vec3(1.0), mix(vec3(0.88, 0.83, 0.80), vec3(1.13, 1.05, 0.93), coarse), bw * 0.34);
   gM.g = mix(gM.g, mix(0.99, 0.88, coarse), bw * 0.4);
-  /* This line is the far_270 diamond lattice. Commenting it out clears the
-     artefact completely, at 46.9% of pixels differing so the ablation is
-     unambiguously live. Left in place because the cause is understood and the
-     cure is not: see "the far_270 lattice" in CONTRACT.md before touching it,
-     and in particular do not reach for a footprint fade — that was tried, it
-     is live at 43% of pixels, and the lattice is untouched by it. */
+  /* This line was the far_270 diamond lattice, and the fix is not here — it is
+     the tilt bound inside bumpFrom. Do not reach for a footprint fade in front
+     of the call: that was tried, measured live at 43% of pixels, and left the
+     lattice untouched, for the reason written up at bumpFrom. */
   gWN = bumpFrom((coarse - 0.5) * inBed * bankW, gWN, 0.022 * platF);
 }
 
