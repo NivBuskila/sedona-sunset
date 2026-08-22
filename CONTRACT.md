@@ -4297,3 +4297,73 @@ constants; clearance runs 1.1 to 16 m positive over the walk.
 The one thing the walk test copies rather than imports is `step` itself, because `main.js`
 owns the canvas and cannot be loaded without a document. If the two drift, the walk test is
 measuring a game nobody is playing.
+
+## An aphorism that explains the observation is not evidence for it
+
+The sharpest thing to come out of the stipple round is not a fix, because there wasn't one. It is the
+reason two wrong mechanisms got published with confidence.
+
+I proposed that the artifact came from a hard early-out in the blocker search, and compressed it to:
+*an averaging kernel degrades to noise of amplitude 1/n; a kernel with a hard early-out degrades to
+noise of amplitude 1.* That sentence is true in general, it is memorable, it explained the
+observation cleanly, and **it is not what was happening.** The measurement that disproves it is one
+line of pixels across the edge:
+
+```
+23  25  49  67  46  46  47  47  65  77  66  79  62  77  96  89  103
+```
+
+**A continuous ramp with 12–20% noise on it, not a binary flip between two levels — which rules out
+amplitude-1 noise on sight.** One line of pixel values would have stopped the whole thing before it
+was written down, and it cost about four seconds to produce after the fact.
+
+The failure was not the hypothesis; hypotheses are free. It was that the hypothesis arrived already
+phrased as a lesson, and **a mechanism that is pleasing to state feels like it has been checked.**
+That is the mechanism of the error and it is worth more than the shader detail: the more quotable a
+mechanism is, the more it needs a measurement standing in front of it, because its quotability is
+doing work that evidence should be doing. The rule, stated for use:
+
+> **Before publishing a mechanism, produce the one number that would look different if it were
+> false.** If that number cannot be named, the mechanism is a story about the observation and not a
+> finding from it.
+
+Two aggravating factors, recorded because both generalise. **The claim was amplified back to me by
+the coordinator as something to keep applying, and that felt like corroboration.** It is not — a
+coordinator repeating a claim is the same claim, arriving from the direction that confidence comes
+from. Nothing about a restatement is independent. And I had a *prior* comment in `sky.js` at line 640
+that had reasoned correctly about the same code; my error was to overturn a correct note in favour of
+a better-sounding one, which is the direction this trap usually runs, because a new sharp idea always
+sounds more like insight than an old accurate one.
+
+The companion rule from the same round sits above: a statistic that returns the same answer for two
+populations cannot be evidence about either. Note the asymmetry between them. **That one held because
+it was a procedure — go and measure the population where the effect must be absent — while the kernel
+aphorism failed because it was an explanation.** Procedures survive contact with data; explanations
+are what data is for.
+
+## Unlanded lead: the stipple is a filter-radius variance, not a sampling-count one
+
+Recorded because it is the first story consistent with all three results and it should not have to be
+re-derived. **Not implemented, not verified, and deliberately left alone** — the artifact is secondary
+to the crush that makes it visible, and two attempts on it were already one too many.
+
+What is established, by same-tree ablation: with `#hardshadow` the lit patch in `wall_shade` has hard
+edges and no stipple; with the PCSS filter on it stipples. The artifact is this filter's. What is
+ruled out, each by implementing it and measuring no change: the hard early-out on the blocker search,
+and the filter's within-pixel tap count, raised from a floor of 8 to 20.
+
+The lead. `pen` is computed as `sum / cnt` over the twelve blocker taps, and it sets the filter radius
+`r = 0.5 * pen`. So **each pixel averages a disc of a different size from its neighbour's**, because
+each pixel's radius is a twelve-sample estimate with its own sampling error. Supersampling inside a
+pixel cannot reduce that variance — it converges each pixel accurately onto its own wrong radius —
+which is exactly why raising the tap floor to 20 did nothing, and is the only one of the three stories
+that predicts that result rather than being surprised by it.
+
+The diagnostic, written out so it can be run in one capture. Replace the `pen` line with
+`float pen = maxPen;`, which holds the radius constant across the frame at the cost of a uniformly
+over-wide penumbra, and shoot `wall_shade` at 2560×1440. **If the stipple goes, the variance is the
+radius estimate and the fix is to stabilise `pen` — spatially, or by widening the blocker search, or
+by quantising `pen` to a few discrete steps so neighbours agree.** If it survives, the radius is
+exonerated too and the remaining candidate is the per-pixel `rot` interacting with a shadow-map
+feature finer than the disc. Attempted once and lost to a page error from another agent's file; it
+needs a clean tree, which is the same thing everything else here needs.
