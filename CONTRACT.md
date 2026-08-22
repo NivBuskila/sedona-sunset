@@ -3846,3 +3846,163 @@ the ablation, so it was shot as well, and **it still ablates**: `#noastern` take
 from B/G 0.888 to 0.818 and its hue q25 from −3.0° to 0.0°, while moving the sunlit floor by 0.008.
 A flag that compiled to nothing would have read identical, which is the failure this whole section
 is about.
+
+## Arbitrating the final critic's shade-colour finding: the statistic is an artifact, the complaint is real
+
+The critic failed the build at 5.3/10 with shade colour as finding 1 in all thirteen frames, measured
+as mean hue, saturation and B/R in the lower 45% of a frame by luminance decile, showing the darkest
+decile redder and more saturated than the brightest. **The numbers reproduce, the reading of them does
+not survive a control, and the underlying complaint is nevertheless correct.** All three of those are
+true at once and they have different owners, so they are separated here.
+
+### The numbers reproduce
+
+`tools/_decile.mjs` on `sys7final_wall_shade`, lower 45%, the critic's own instrument:
+
+| decile | hue | sat | B/R | V | mean min channel | under 10 cv |
+| --- | --- | --- | --- | --- | --- | --- |
+| darkest 10% | 7.4° | 0.857 | 0.162 | 0.083 | **2.9 cv** | **100%** |
+| 10–20% | 8.1° | 0.754 | 0.255 | 0.120 | 7.3 cv | 76% |
+| 50–60% | 18.6° | 0.683 | 0.317 | 0.536 | 42.7 cv | 0% |
+| brightest 10% | 30.9° | 0.485 | 0.517 | 0.815 | 107.2 cv | 0% |
+
+Against their 7.1°/0.85/0.153 and 29.1°/0.49/0.514. This is not a measurement dispute.
+
+### The control says the statistic is not about the illuminant
+
+The two right-hand columns are why the instrument cannot support the conclusion. **HSV saturation is
+(max − min)/max, and both terms misbehave near black**: a pixel at R 20 cv, B 1 cv reads saturation
+0.95 whatever light produced it, because blue has run out of code values rather than because the
+illuminant was red. `tools/hue.mjs` has excluded V < 0.06 for exactly this reason since the day it
+was written. In the darkest decile the mean smallest channel is **2.9 code values** and every pixel
+is under ten.
+
+The decisive test is the `shade_far` paired window, because both rows are the same dirt:
+
+| | darkest 20% | brightest 20% | crush |
+| --- | --- | --- | --- |
+| `floor shade` — fill only | hue 1.1°, sat 0.758 | hue 1.3°, sat 0.493 | 98% → 2% under 10 cv |
+| `floor lit` — **sun only** | hue 14.7°, sat 0.696 | hue 30.1°, sat 0.471 | **5% → 0%** |
+
+**Sunlit dirt shows the same gradient at the same magnitude with no shade and no crush in it**
+— saturation 0.696 → 0.471 against the shaded row's 0.758 → 0.493, on 0–5% crush and a smallest
+channel running 29 to 112 code values. Sorting any surface by luminance and reading chroma off the
+ends produces "darker is redder and more saturated", because that is what a tone curve does to a
+warm-lit red substrate. A statistic that returns the same answer for a sun-only population as for a
+fill-only one is not evidence about either illuminant.
+
+### But the complaint underneath it is correct, and this part is ours
+
+Analytically, in scene-linear, no encoder involved — `tools/_litguard.mjs`, one face, one albedo:
+
+| | hue | saturation |
+| --- | --- | --- |
+| sunlit | 17.3° | **0.785** |
+| same face shaded | 4.5° | **0.468** |
+
+**Physics says shade should be forty percent less saturated than sun, which is precisely the
+critic's point.** The render delivers the two populations at roughly equal saturation — 0.63 lit
+against 0.64 shaded as window means. So the desaturation that skylit shade is supposed to have is
+not arriving, and saying "the metric is an artifact" does not dispose of that.
+
+The cause is **level, not chroma**. The shaded floor sits at V 0.099–0.193 with its smallest channel
+between 6 and 24 code values. On `sys7final_wall_shade`, **40.8% of the frame has its minimum channel
+under 10 cv**, 18.9% is under 10 by luminance — the critic's 13.5% is the same family — and 6.0% is
+black on every channel. The shade's true colour, hue 4.5° at saturation 0.47 and linear B/R 0.67,
+needs blue somewhere near 20 code values to be expressible. It has six. **The chroma is not wrong;
+there is no room left to put it in.**
+
+### A retraction of my own
+
+I reported the `shade_far` shaded floor at hue q25 −3.0° and called a quarter of it "wrapped past red
+into the magenta quadrant", offering it as the brief's purple shadows made measurable. **That was
+over-read and it is withdrawn.** At B/R 0.28 a negative hue angle is one code value of blue over
+green — it is the dither pattern, not a pigment. The critic is right that it does not read violet,
+and right about why in substance if not in mechanism: there is no blue signal to see. Hue angle
+requires a chroma magnitude to be meaningful and I quoted the angle without the magnitude, which is
+the same error as quoting saturation without the clipped fraction.
+
+### The critic's two findings are one defect, not a contradiction
+
+Finding 1 says shaded surfaces are too warm and too red. Their missing-qualities list says at number
+2 that the opposite shaded wall should be *drenched in orange reflected light* and that here "shaded
+walls just go black". Those look mutually exclusive and are not. **Both are symptoms of an
+underfilled shaded wall.** Raising the fill lifts the minimum channel off the quantisation floor,
+which *lowers* measured saturation and lets the 13° hue offset appear; and it simultaneously gives
+the wall the visible bounce-lit form that finding 2 is asking for. The instinct that the two
+illuminants need to be more **separated** rather than the shade uniformly cooler is the correct
+reading: separation is currently being destroyed by the encoder floor, not by the transport.
+
+### The gate and the crush are both right
+
+Raised as a contradiction — the gate says 0.211 in band while 13.5% of the frame is under 10/255.
+**Neither is wrong. A mean ratio cannot constrain the bottom of a distribution.** Measured on the
+frame: lifting every pixel whose maximum channel is under 10 cv up to 20/11/7 cv moves the region
+mean by **1.3%**, taking the gate from 0.211 to **0.214** — still mid-band. So the entire crushed
+tail can be fixed without the gate noticing, and the gate never had anything to say about it.
+
+### What this makes the fix, and what is not yet proven
+
+The leading candidate is `reflectedLight.indirectDiffuse *= tAO` — `src/rock.js:2602` and
+`src/terrain.js:2670`. A geometric occlusion term multiplying indirect light to zero is not physical:
+an occluded crevice is still lit by its own walls, and for red sandstone that inter-reflection is
+warm, which is the orange bounce the critic is asking for by name. A multi-bounce occlusion curve
+tints toward the surface's own albedo instead of toward black and never crushes, so it lifts exactly
+the pixels that are crushed and leaves open surfaces alone. **This is not yet measured**, because the
+instrument for it is a fill-only render and that could not be run — see below. It is a candidate with
+a mechanism, not a result.
+
+## The floating slab is not floating, is not a penumbra, and the stipple is mine
+
+Looked at rather than raycast this time, which was the right instruction. `tools/_crop.mjs` cuts the
+critic's own coordinates out of `sys7final_wall_shade` at 4x, nearest-neighbour, because a defect
+described as stippled is a per-pixel pattern and any smoothing filter destroys the evidence.
+
+**It is the wall.** The patch carries the wall's own bedding planes, and they are continuous with the
+strata either side of it — the same laminae enter the bright region and leave it at the same heights.
+The two smaller instances in `bend` settle it: one sits exactly along the top of a bench, the other
+down the edge of a buttress. **Those are grazing sun catching the tops of ledges on an otherwise
+shaded wall, which is correct, and it is a real Sedona look.** There is no floating quadrilateral and
+nothing is lit that should not be. The earlier raycast conclusion was right about the geometry.
+
+Two things are wrong with it anyway.
+
+**The stipple is a defect and it is mine, at `src/sky.js:700`.** The blocker search is twelve taps on
+a golden-angle spiral rotated per pixel, followed by `if ( cnt < 0.5 ) return 1.0;`. At the outer
+boundary of a penumbra the occluder covers only part of the search disc, so **whether any of twelve
+taps lands on it is decided by that per-pixel rotation** — and the consequence of missing is not a
+slightly-lighter sample, it is an immediate hard return of fully lit. A binary per-pixel decision
+driven by a hash is salt-and-pepper, which is exactly what the critic describes and exactly which
+edges carry it: stippled where the occluder is sparse across the search disc, smooth where it is
+dense. The comment at line 640 anticipated undersampling as *"noise at the 1/n step rather than
+concentric rings"* and that reasoning is sound for the filter loop, which averages; it does not hold
+for the search loop, which early-outs. **An averaging kernel degrades to noise of amplitude 1/n; a
+kernel with a hard early-out degrades to noise of amplitude 1.** Widening the penumbra from 3 px to
+27 px did not cause this and did not fix it; it enlarged the region over which it is visible.
+
+The fix is a confidence blend on `cnt / 12.0` in place of the hard early-out, so the outer boundary
+fades rather than flipping. It is a few instructions and it touches shadow values, so it needs a
+paired capture to clear the gate and lit rock — which is why it is not in this commit.
+
+**And it reads as floating because the wall around it has no tonal information.** 40.8% of that frame
+has its smallest channel under ten code values and 6.0% is black on every channel. A correctly lit
+ledge top against a wall carrying no form at all is a bright shape on a void, which is what a
+floating slab looks like. This is the same defect as the shade-colour finding above, and fixing the
+crush does more for the slab's appearance than anything done to the shadow filter — including the
+penumbra work already landed.
+
+## Two frames discarded, and the instrument that could not be run
+
+`tools/_fillonly.mjs` is the right instrument for every open question above and it could not be used.
+The pair it produced has the wash floor blown to near-white in a fill-only render, which is not
+physical, and the tree explains it: **`src/terrain.js`, `src/rock.js` and `src/vegetation.js` were all
+uncommitted while it ran.** The frames were discarded without a figure being taken off them.
+
+That is the second time this exact trap has caught this work — the first cost a published reading on a
+frame another agent had rendering lavender with debug stripes. The rule that came out of it held this
+time: **look at the frame before measuring it, and check `git status` before believing either.** The
+arbitration above therefore rests only on things that cannot be contaminated — `sys7final_*`, which is
+System 7's committed delivery record and the frames the critic actually judged; `s4w_shade_far`, whose
+figures were verified identical to a predecessor capture; and `_litguard`/`_coolshade`, which are
+analytic and render nothing. **Nobody can produce a same-build verification of a shaded-surface change
+until those three files land.**
