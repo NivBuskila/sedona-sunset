@@ -108,7 +108,22 @@ export class WashPath {
 
   /** Heading in radians at arc length s; 0 means straight down -Z. */
   headingAt(s) {
-    const a = this.posAt(Math.max(0, s - 3), this._ha || (this._ha = new THREE.Vector3()));
+    /* Clamped to where the path exists, which is `-sZero`, not to zero. The
+       backward sample was pinned at s = 0 while the forward one was free, so
+       below s = -3 the two straddled the origin backwards and the heading came
+       out reversed: -177.6 deg at s = -34 and -174.5 deg at s = -3.2 against a
+       true +5.7 deg, through a degenerate atan2(0, -0) = 180 deg at exactly
+       s = -3 where the two samples coincide.
+       That reversal flipped `cNx = cos(th) * side` in rock.js, so fifty columns
+       of the wall curtain were placed on the far side of the corridor and the one
+       transition column at s = -3 stretched a single quad eighty-three metres
+       across it, from x -42 to x +40 at a near-constant y 46.8. The interior of
+       that triangle is what draws `shade_far`'s ruler-straight skyline, and it is
+       why no crest variation and no rim planting could touch it: a silhouette
+       drawn across the middle of one triangle has no vertices to carry detail.
+       The only callers below s = 0 are the two in rock.js, so this corrects
+       geometry that was reversed and reaches nothing that was right. */
+    const a = this.posAt(Math.max(-this.sZero, s - 3), this._ha || (this._ha = new THREE.Vector3()));
     const b = this.posAt(s + 3, this._hb || (this._hb = new THREE.Vector3()));
     return Math.atan2(b.x - a.x, -(b.z - a.z));
   }

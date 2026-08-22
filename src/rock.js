@@ -371,6 +371,17 @@ const NBACK = 7;
    on the clamp. */
 const sEndOf = (path) => Math.min(S1, path.length - 6.0);
 
+/* And it cannot outrun it at the near end either, which is the same defect at the
+   other end of the same array and went unnoticed because nothing frames the start
+   of the walk head-on. The path's domain begins at `-sZero`, 11.99 m behind the
+   origin, and `posAt` clamps below that exactly as it clamps above `length`, so
+   the thirty-six columns from S0 = -34 to s = -12 were all placed at the one
+   point x 0.0, z 20.0 and fanned out by their lateral offsets into the same kind
+   of stack that put the ledge in `far_320`.
+   Six metres of margin, matching `sEndOf`, which also keeps `headingAt`'s
+   backward sample three metres inside the domain. */
+const sStartOf = (path) => Math.max(S0, -path.sZero + 6.0);
+
 /** Wash floor datum, used to find the foot of the wall. This has to track the
  *  ground, because the toe search asks where the apron has climbed three metres
  *  above the floor and the floor is what the terrain says it is. */
@@ -413,8 +424,8 @@ function toeAt(terrain, px, pz, nx, nz, dat) {
 }
 
 function wallGrid(path, terrain, side) {
-  const sEnd = sEndOf(path);
-  const nu = Math.round((sEnd - S0) / DS) + 1;
+  const sEnd = sEndOf(path), sStart = sStartOf(path);
+  const nu = Math.round((sEnd - sStart) / DS) + 1;
   const nv = COL.n + NBACK;
 
   const pos = new Float32Array(nu * nv * 3);
@@ -430,7 +441,7 @@ function wallGrid(path, terrain, side) {
   const p = new THREE.Vector3();
 
   for (let i = 0; i < nu; i++) {
-    const s = S0 + i * DS;
+    const s = sStart + i * DS;
     cS[i] = s;
     path.posAt(s, p);
     const th = path.headingAt(s);
@@ -575,7 +586,15 @@ function wallGrid(path, terrain, side) {
     /* Keyed to where the curtain actually ends rather than to the authored S1,
        which is past the end of the path — see `sEndOf`. Same 46 m walk-down; it
        now lands on the last real column instead of on the clamp. */
-    const endFade = (1 - smoothstep(sEnd - 46, sEnd - 3, s)) * (1 - smoothstep(S0 + 40, S0 + 3, s));
+    /* The near-end walk-down is now 20 m rather than 37, because the curtain
+       starts 28 m later than it used to and a 37 m run measured from the new
+       start would hold the wall below full height until s = 34 — which is
+       corridor that `wash_low` at d 8 stands in. Twenty metres from `sStart`
+       finishes by s = 14 and keeps the descent inside the path's domain, at 69
+       degrees rather than 55. Steeper is also more honest: the end of a curtain
+       wall is a spur nose, not a ramp. */
+    const endFade = (1 - smoothstep(sEnd - 46, sEnd - 3, s))
+                  * (1 - smoothstep(sStart + 20, sStart + 1.5, s));
     cCrest[i] = Math.max(1.5, crest * endFade);
   }
 
@@ -1509,15 +1528,21 @@ export function buildTalus(path, terrain, material) {
   for (let v = 0; v < VAR; v++) geos.push(talusBlock(3100 + v * 11, 0.46 + v * 0.12));
   const lists = geos.map(() => []);
   const rand = rng(4477);
+  const sStart = sStartOf(path);
   const p = new THREE.Vector3();
   const m = new THREE.Matrix4(), qt = new THREE.Quaternion(), e = new THREE.Euler();
   const sc = new THREE.Vector3(), tr = new THREE.Vector3();
 
   for (let n = 0; n < N; n++) {
-    /* Same clamp as the curtain: past the path's end every station is the same
-       point, so blocks drawn from beyond it were all landing in one heap on the
-       axis at the head. */
-    const s = S0 + 6 + rand() * (sEndOf(path) - S0 - 12);
+    /* Same clamp as the curtain, at both ends: outside the path's domain every
+       station is the same point, so blocks drawn from beyond it were all landing
+       in one heap on the axis at the head, and blocks drawn from behind the start
+       were landing in another with a reversed heading. */
+    /* Upper bound held at `sEnd - 6`, exactly where it was, so that correcting
+       the lower one does not quietly reshuffle every block on the wall: the
+       blocks in view from `wall_lit` and `bend` are a reviewed population and
+       this change has no business moving them. */
+    const s = sStart + rand() * (sEndOf(path) - 6 - sStart);
     const side = rand() < 0.5 ? 1 : -1;
     path.posAt(s, p);
     const th = path.headingAt(s);
