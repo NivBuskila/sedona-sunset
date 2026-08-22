@@ -7,8 +7,10 @@
 Where a measurement and the experience disagree, **the experience wins.** This project has
 proved that repeatedly and expensively: a shimmer that measured too weak and looked like
 melting; a soundscape whose quiet scored 8.5 and read as horror; a metric that could not see
-the one change that fixed the thing a user pointed at. Nine instruments have now been caught
-measuring the wrong thing.
+the one change that fixed the thing a user pointed at. **At least twelve instruments have now
+been caught measuring the wrong thing** — this sentence read "nine" for most of the project
+and was overtaken three times without being updated, which is itself an instance of the rule
+below that a figure outlives the day it was measured on.
 
 Measurement is still how we work — it is the only way to tell a real change from a hopeful
 one — but it is the instrument, not the goal. If a frame looks wrong while every number is
@@ -33,9 +35,17 @@ a real sunset photograph of Sedona. Not stylized, not low-poly, not "good for a 
   frame. Movement and atmosphere only.
 - **No forest and no water.** Exactly one juniper tree is the only significant vegetation,
   plus a few dead grasses at its base.
-- **Performance budget.** Target 120+ fps at 1440p on an RTX 4060 / Ryzen 5 7600X. The
+- ~~**Performance budget.** Target 120+ fps at 1440p on an RTX 4060 / Ryzen 5 7600X. The
   user games on the same machine, so the running app must not saturate CPU or GPU. Keep
-  draw calls under ~150 and triangles under ~3M. Use instancing for anything repeated.
+  draw calls under ~150 and triangles under ~3M. Use instancing for anything repeated.~~
+  **Struck as a set of numbers, kept as an intent.** The machine and the "do not saturate
+  it" clause stand. The three figures do not. The frame ships at **3.97 M triangles** and
+  the triangle ceiling was measured to be the wrong axis entirely — removing the far
+  ridgelines is worth 0.02 ms of a 30 ms frame, and the frame is fill-bound. **120 fps at
+  native 1440p is not reachable on this scene on this GPU**, at any rung, with the camera
+  moving. See "Triangles are not what this frame costs" and, for the figures to quote,
+  "The ladder as a player walks it" — every earlier fps table on this project was taken
+  with the camera held on a quiet machine and is not what a walking player gets.
 
 ## Performance budget, measured on the target machine
 
@@ -48,6 +58,9 @@ Two conclusions, both load-bearing:
 - **Geometry is not this project's problem.** At 2.19 M triangles and ~50 draw calls we are
   an order of magnitude inside a budget that scene met comfortably. Do not spend effort on
   LOD or draw-call reduction without a measurement saying otherwise.
+  *(The conclusion held and was later measured directly; the count did not. The build ships
+  at 3.97 M triangles, 2.25 M of them clast instances — see "Triangles are not what this
+  frame costs". Quote 3.97 M, not 2.19 M.)*
 - **The cost is fragment shading and bandwidth.** Terrain was doing 23 unconditional
   texture fetches per ground pixel; the shimmer pass draws the whole scene into RGBA16F at
   4× multisampling, which is ~66 MB of colour plus ~33 MB of depth written and resolved
@@ -83,9 +96,17 @@ brightest-40% within a single view, matches how `sat.mjs` and `hue.mjs` pick the
 populations but does not match where the number came from, and it reads systematically
 lower because both tails include partially-lit pixels.
 
-On the flat-face estimator the build has moved 0.514 → 0.344 against a 0.15–0.25 target, so
+~~On the flat-face estimator the build has moved 0.514 → 0.344 against a 0.15–0.25 target, so
 it is heading the right way and more occlusion is still wanted — **but see the constraint
-below before chasing it.**
+below before chasing it.**~~
+
+**Superseded. The estimator stands; the reading and the conclusion do not.** 0.344 was a
+reading taken while `terrain.js`'s shadow wrapper was still handing shaded banks a phantom
+sun, which inflated the ratio project-wide. On the fixed wrapper the gate measures **0.222,
+inside the band**, and it has since sat at 0.211–0.242 across the delivery captures. **More
+occlusion is not wanted and nothing should be tuned against this number again** — see "The
+gate is closed. Stop spending on it." Note also that the gate now depends on System 7's toe:
+the ungraded arm reads 0.255, over the ceiling, and the graded arm 0.234. Quote the arm.
 
 ## Shadow-to-sunlit ratio: defined in encoded sRGB
 
@@ -98,13 +119,23 @@ tools, and a photograph is encoded. Reading the same scene three ways gives 0.07
 0.30 encoded and 0.45 as an HSV-V ratio; only the encoded number is comparable with where
 the target came from. Quote the space whenever quoting the ratio.
 
-By that definition the current build sits at **0.30 against a target of 0.15–0.25** — the
-fill is too strong, but by less than the linear reading would suggest.
+The definition above is current and load-bearing. The two readings that followed it are not:
 
-Separately and unambiguously: the away-from-sun fill is **numerically grey**. Measured
+~~By that definition the current build sits at **0.30 against a target of 0.15–0.25** — the
+fill is too strong, but by less than the linear reading would suggest.~~
+**Superseded — 0.30 was measured through the phantom-sun leak. The gate is 0.211–0.242 and
+in band. The fill is not too strong; see "The gate is closed. Stop spending on it."**
+
+~~Separately and unambiguously: the away-from-sun fill is **numerically grey**. Measured
 irradiance [0.0294, 0.0300, 0.0330] is a 12% spread, while the brief and every critique
 call for violet. A neutral fill on red rock desaturates it, which is its own defect
-regardless of intensity.
+regardless of intensity.~~
+**Withdrawn. The fill is not grey.** That triplet is one normal — the one that averages the
+blue dome against the warm ground — and it was additionally inflated by `FLOOR_SUNLIT`. Read
+per normal, `tools/fillprobe.mjs` gives B/R **1.93** up-facing (hue 218), **1.29** on a
+vertical and **0.62** on an underside: a 3.1× warm-to-cool swing, which is both halves of
+what the brief asks for. See "Violet shadows on red rock cannot come from the fill". A single
+irradiance triplet is a reading on one normal and must never be quoted as "the fill".
 
 ## Vegetation colour, measured from real photographs
 
