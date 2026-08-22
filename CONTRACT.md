@@ -4969,3 +4969,95 @@ nothing of mine stands across the mouth of the wash head. That clamp is verified
 place. The remaining lip is the ramp, and the specified fix — pulling the notch onset upstream
 so the incision runs *through* the apron rather than beginning behind it — is a change to the
 same height field.
+
+## The probe split: diagnostic confirmed, landed, and the honest size of it
+
+### The diagnostic said yes, and not marginally
+
+The falsification condition recorded earlier was to bin a rendered window by `tAO` and read B/R.
+That test was replaced with a stronger one, and the substitution is worth stating: **the frame
+carries no per-pixel `tAO`, and the binning could not have answered the question that decided
+whether to spend the remaining time — how much blue is there to find at all.** The ceiling on any
+reweighting of occlusion is the sky-only case, so `tools/_probesplit.mjs` decomposes the fill into
+the three illuminants it is a sum of and reflects each off the rock albedo alone. `env` is
+`mix(sky, wall, cov)` above the horizon and local ground below it, so the split is exact rather
+than modelled, and the tool asserts the three probes close on the summed probe — 0.0000% — before
+printing anything.
+
+On a shaded lateral face, which is what `wall_shade`'s rock window is made of:
+
+| illuminant | share of fill, by luminance | hue | saturation |
+| --- | --- | --- | --- |
+| sky | **47.8%** | −23.9° | **0.252** |
+| escarpment | 25.1% | 8.6° | 0.920 |
+| ground bounce | 27.2% | 10.8° | 0.728 |
+| all three, as shipped | 100% | 5.9° | **0.635** |
+
+**The sky is already the largest of the three by luminance and still loses the chroma fight**,
+because the two warm terms are nearly three times as saturated as it is. And the mix lands at
+0.635 against the render's measured 0.638 — so **shade's colour is decided in the illuminant, and
+the encoder is exonerated.** The earlier suspicion that ACES or the toe was inflating it was
+wrong, and `post.js` says why in its own comment: contrast and toe act on luminance as a scalar,
+and a positive scalar cannot move saturation or hue at all.
+
+### What was landed, and why it cannot spend anything earned
+
+`s4AoTint` in `src/sky.js`, called from the one expression `rock.js` and `terrain.js` share.
+Two properties by construction rather than by measurement: **exactly `vec3(1)` at full
+visibility**, so no lit pixel moves, and **luminance-preserving**, because `vSky` is solved for
+whatever restores the luminance uniform occlusion would have delivered — so the shadow gate, being
+a luminance ratio, cannot move either. What is left is chroma alone.
+
+The physics is that **local relief cuts grazing directions long before it cuts the zenith** — a
+pit's own rim closes the horizon while the slot overhead stays open — and the two warm illuminants
+live at and below the horizon while the sky lives overhead. One scalar therefore over-occludes the
+cool term and under-occludes the warm ones at every depth.
+
+Measured at 2560×1440 on the `wall_shade` rock window, pixels with chroma headroom:
+
+| | pre-change | `#aok=1` (inert) | `#aok=1.5` | `#aok=2` shipped |
+| --- | --- | --- | --- | --- |
+| shaded saturation | 0.638 | **0.638** | 0.629 | **0.620** |
+| lit rock saturation | 0.621 | **0.617** | 0.615 | 0.614 |
+| shadow gate | 0.248 | 0.243 | 0.243 | 0.242 |
+| crush, min<10 whole frame | 44.4% | — | 42.6% | 42.2% |
+
+### The identity capture is the reason those numbers mean anything
+
+`#aok=1` is an exact algebraic identity — at an exponent of one the solve returns `vWall = vSky =
+ao` and the gain is `vec3(1)` at every depth — so it is a true ablation rather than an
+approximate one. Running it returned shaded saturation at 0.638 to the digit, which confirms the
+term is inert as claimed. **And it returned lit rock at 0.617, against the 0.621 measured ninety
+minutes earlier with the term absent entirely.**
+
+So 0.004 of what looked like this term's cost was an in-flight `textures.js` drift, and the real
+price of the shipped setting is **0.003 of lit saturation for 0.018 of shaded** — six to one in
+favour, where the uncontrolled reading said it was a losing trade about to be abandoned. It is
+also why lit rock sits a thousandth under its band floor at 0.614: **that thousandth is the
+texture drift, not this term**, and it belongs to the texture's owner.
+
+The general rule, third instance tonight and the first where the control was run *before* the
+report rather than after: **a baseline is a measurement and it expires.** Two figures taken ninety
+minutes apart in a tree with five files in flight are not a before and an after, they are two
+afters. The inert setting exists so the comparison can be made inside one build, and it paid for
+itself the first time it was used.
+
+### The honest ceiling, which is lower than the decomposition implies
+
+The decomposition says a shaded face could reach 0.335 saturation at the occlusion floor. The
+render moved 0.018. The gap is not a bug and it is worth writing down, because it bounds anything
+further in this direction:
+
+**`tAO` is a texture micro-occlusion, not slot geometry.** `rock.js` pulls it toward 0.88 with
+distance and `terrain.js` toward 0.80, and both clamp it well off zero. It represents the shading
+between grains, which is real — but the thing that makes a canyon crevice dark is metre-scale
+geometry that `tAO` never sees. **The lever is correct and the signal driving it is weak**, so the
+available gain is roughly a fifth of what the light transport offers. Driving it properly needs a
+geometric occlusion or a bent normal, which this frame does not carry and which is not a two-hour
+change.
+
+Second bound, and it is the one that has kept reappearing all night: **the shaded window is only
+44 to 48% chroma-headroom.** Better than half its pixels have a channel under ten code values, so
+whatever the illuminant does, the encoding cannot express it there. Crush remains the binding
+constraint on shade colour, and the shadow gate at 0.242 against a 0.25 ceiling says the obvious
+remedy — lifting shade — is spent. That corner is real and it is not System 4's to open alone.
