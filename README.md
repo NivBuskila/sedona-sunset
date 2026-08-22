@@ -65,10 +65,9 @@ it chooses how much smaller by watching how long frames are actually taking. Lef
 settles on an upscaled buffer somewhere around 1741×979 to 1997×1123, which on a 1440p
 monitor is hard to tell from native and is roughly twice as fast.
 
-**Give it a minute to find its level.** For the first three quarters of a minute after
-loading it runs at full 2560×1440 and about 55 fps, and only then steps down to the setting
-that holds 120. That is the one rough patch in the whole thing and waiting it out is all it
-needs.
+**Give it a couple of seconds to find its level.** It starts at full 2560×1440 and steps
+down to the setting it settles on within about two and a half seconds of the first frame.
+You will probably not notice it happen.
 
 If you would rather have the sharpest possible image and do not mind about 59 fps, load
 `http://localhost:8099/#high`, which pins it at full 1440p and turns the automatic
@@ -77,14 +76,15 @@ that is already open does nothing, because the setting is only read once at star
 
 One last thing. It will use as much of your graphics card as you let it, so if something
 else demanding is running at the same time it will notice and quietly drop its own quality
-to keep the frame rate up. It is slow to put that quality back afterwards, so if the picture
-ever looks soft for no reason, a reload will reset it.
+to keep the frame rate up. When that other thing finishes it climbs back on its own — it
+tries a step up every so often and keeps the one that fits — so nothing is lost permanently
+and you should not need to reload.
 
 ## Everything in it is generated in code
 
 There are no asset files of any kind in this project. No photographs, no models, no
-recordings, nothing downloaded at runtime. The only thing it installs is the Three.js
-library.
+recordings, nothing downloaded at runtime. The page's only dependency is the Three.js
+library, served from `node_modules`.
 
 That means the red rock, the layered cliff faces, the gravel underfoot, the sand ripples,
 the juniper and its shadow, the sky, the haze and the low sun are all written as
@@ -92,8 +92,8 @@ mathematics and drawn into memory the moment you open the page — which is what
 first load is buying you.
 
 The sound is the same. The wind, the grit skittering along the ground, your own footsteps
-changing as the surface under them changes, the wrens and sparrows, the echo off the canyon
-walls — none of it is a recorded sample. It is all synthesised live in the browser, and it
+changing as the surface under them changes, a canyon wren, a raven, a coyote somewhere off
+in the dark, the echo off the canyon walls — none of it is a recorded sample. It is all synthesised live in the browser, and it
 is genuinely quiet, because a desert wash at dusk is quiet. You may want to turn your
 volume up a little more than you would expect.
 
@@ -102,9 +102,9 @@ volume up a little more than you would expect.
 The walk is a corridor between canyon walls and it is now built like one. Walk hard at a
 cliff and the ground stops giving over the last stride or so rather than stopping you dead
 against something invisible; the same happens at the head of the wash and a little way back
-behind the start. It sits eight to eighteen metres either side of the channel depending on
-how wide the wash is at that point, which is far enough out that walking the walk — even
-wandering several metres off the line, which everyone does — never touches it. You have to
-go and look for it.
+behind the start. It sits about seven to eighteen metres either side of the channel
+depending on how wide the wash is at that point, which is far enough out that walking the
+walk — even wandering five or six metres off the line, which everyone does — never touches
+it. You have to go and look for it.
 
 Press **0** to get back to the start at any time.
