@@ -1229,6 +1229,14 @@ measurement you would make.
 
 ## far_320: the amphitheatre is built, and the player is standing 20 m short of its rim
 
+> **The defect described here is fixed — see "The arrival, landed: the apron is breached by
+> the channel that drained it".** The diagnosis below is correct and the measurement is the
+> one that found it, but the section closes with "the specified fix, not landed because it is
+> delivery morning", and that is no longer true: the highest point on the `far_320` ray is now
+> the headwall at 125 m rather than the 6.4 m mound at 20 m, and `far_270` is unmoved. The
+> arithmetic below about the onset being insufficient on its own also held — the landed fix
+> subtracts the apron term inside the channel rather than moving the onset.
+
 Measured with `tools/_headlook.mjs`, which marches the ground along the view ray from a
 station and reports each sample's elevation angle above the eye. No render. The critic
 read the arrival as "a low rounded gravel mound, not a canyon head", and the three
