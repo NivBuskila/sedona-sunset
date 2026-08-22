@@ -5067,6 +5067,66 @@ visibility. That is the handoff, with the arithmetic done.
 
 The `< 20 cv` regression in that table was the two-sided block field and is reversed.
 
+## A class of bug: check *both* ends of a domain-clamped array
+
+This has now produced two of the project's most conspicuous defects independently, from
+opposite ends of the same array, and neither was findable from the picture. It is a class, not
+two incidents, and the next person should check for it by construction rather than wait for a
+critic to frame it.
+
+**The shape.** `WashPath.posAt` clamps its parameter into the path's real domain, which is
+`[-sZero, length]` = `[-11.99, 332.3]` m. That is correct and defensive. The bug is in the
+*consumer*: a loop that walks `s` past either end gets the same clamped point back for every
+iteration, so N columns are placed on one point, and any lateral offset then fans that stack of
+coincident columns into a sheet standing where no landform is. A defensive clamp does not
+protect a caller that never asks whether it is inside the domain — it hides the fact that it is
+not.
+
+| | out-of-domain run | columns stacked | what it produced |
+|---|---|---|---|
+| far end | `S1 = 356` against `length = 332.3` | 39, at x 0.0, z -319.9 | the **`far_320` ledge** — aprons leaning on the stack met on the axis as a berm 14-16 m high, hiding a 24 m amphitheatre behind it |
+| near end | `S0 = -34` against `-sZero = -11.99` | 36, at x 0.0, z 20.0 | half of the **`shade_far` ruler** |
+
+Fixed by `sEndOf(path)` and `sStartOf(path)` in `rock.js`, six metres of margin each, so the
+end fades finish on real path rather than on the clamp.
+
+**The second failure mode, which is worse: a derived accessor clamped asymmetrically.**
+`headingAt` differences two `posAt` samples and clamped only the backward one, at zero rather
+than at `-sZero`. Below `s = -3` the two samples straddled the origin *backwards*, so the
+heading reversed — **-177.6° at `s = -34` against a true +5.7°** — through a degenerate
+`atan2(0, -0) = 180°` at exactly `s = -3` where they coincide. `cNx = cos(th) * side` therefore
+flipped and fifty columns were built on the far side of the corridor, with the single transition
+column stretching one quad **83 m** across it at near-constant height. So: a derived quantity
+must clamp to the same domain as the accessor it is built on, and it must clamp *both* samples,
+or it will return a confidently wrong value in the interior of a range where the underlying
+accessor is fine.
+
+**Why the far end was found first, and the near end took another night.** Nothing frames the
+start of the walk. The far end is the payoff shot and the defect there was described by a
+critic within hours; the near end is only visible from a station added late, looking back
+down-canyon, and even then it presented as a plausible landform — a "left mesa" with a straight
+rim — rather than as an error. **A defect out of frame is not a smaller defect, only a later
+one.**
+
+**The diagnostics, in the order that works.**
+
+1. `tools/_pixowner.mjs` — which mesh drew the pixel. Necessary, and *not sufficient*: it said
+   "`wallL`", which was true and cost four rounds of reasoning about the wall's crest.
+2. `tools/_rimtri.mjs` — which **triangle** drew the pixel, by taking the raycast hit's
+   `faceIndex` back through the index buffer, reported with its edge lengths. This is the one
+   that closes the gap, and the tell is unmistakable: **0.99 / 83.04 / 82.76 m** in a grid whose
+   columns are 0.62 m apart. Coincident or near-coincident corners, or one enormous edge, in an
+   otherwise uniform grid, means the generator ran outside its domain.
+3. `tools/_skystraight.mjs` — residual from a fitted line, on the PNG, in a second, for
+   iterating.
+
+**The symptom that should send you here first:** a silhouette or surface that **no parameter
+change can move**. Both instances presented that way — the crest term stepped ten times in
+200 m and measured 23, 18 and 15 px of residual in `bend`, `far_170` and `far_220` while
+measuring 0.50 px here, and five separate rim-planting strategies each measured 0.50 px. If a
+feature is insensitive to the parameter that generates it, stop tuning the parameter and ask
+what geometry is actually there. Usually the answer is that there is almost none.
+
 ## `far_320`: the blocking lip is in the height field, not in the talus
 
 Worth stating because the item arrived described as an apron problem and the apron cap is
