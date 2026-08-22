@@ -1949,7 +1949,52 @@ export function buildJuniper(terrain, tex) {
      by default, so a shaded spray receives nothing through it and crushes against
      a lit one. Internal contrast of 8.87:1 against a real juniper's 2.4:1 is the
      size of gap a missing term makes, not a mistuned one. */
-  const fol = new THREE.Mesh(foliageGeometry(clumps, 4242), makeFoliageMaterial(folTex));
+  const folMat = makeFoliageMaterial(folTex);
+  {
+    /* And that is what it was. Transmission on, forward scatter only.
+       Measured on the crown's own coverage mask in `tools/herotrans.mjs`, both
+       arms out of one page load so they cannot differ by a file that landed
+       between them: crown p90/p10 falls from 18.26 to 14.96 and the share of
+       crown pixels in the midtone band rises from 34.8% to 37.1%, while the
+       control population — every pixel outside the mask — holds at L 0.1666.
+       Still far from a real juniper's 2.4:1, and it was never going to reach it:
+       the deepest interstitials are genuinely occluded, folSunVis is zero there,
+       and a term gated on sun arrival cannot light them. What it does reach is the
+       spray facing away from the sun but standing in it, which is the "hard
+       lit/shade split within each spray" that was complained about, and at 3x the
+       right-hand crown mass now carries foliage structure where it read as one
+       black shape.
+       `uTransIso` stays at zero, alone among the tiers that carry transmission.
+       It is a flat lift on every unoccluded fragment, so it raises lit sprays as
+       much as shaded ones: over this sweep it bought 0.05 of ratio for triple the
+       hue shift. The near field needs it because in deep shade there is no direct
+       term for the shaped part to ride on. The crown is in open sun and does not.
+       The cost is hue, it is measured, and it is the reason `uTransAmt` stops at
+       0.35 rather than the 0.55 that scores slightly better. `uTrans` is warm at
+       (1.35, 1.12, 0.58), which is hue 42 — a dry cream grass blade, inherited
+       from the near-field tiers by default. The crown warms by 1.6 degrees in
+       `juniper` and 2.7 in `wash_mid` at 0.35, and by 2.1 and 3.6 at 0.55. A
+       critic verified this crown's rendered hue against its atlas to within 1.1
+       degrees and quoted a real juniper band of 49-65, so 0.55 is the arm that
+       risks leaving it. A term that fixes the split by turning the crown orange
+       has not fixed anything.
+       Those figures are over a population held fixed at the arm-0 one, and that
+       matters: transmission raises value, so the chroma-carrying population grows
+       when it is switched on — 59550 crown pixels to 64200 here — and the
+       arrivals carry the transmission's own tint, which moves a median with no
+       pixel changing colour. Measured both ways the two agree to 0.4 degrees, so
+       the warming is real and not that artefact. Worth stating because it was the
+       comfortable explanation and it was wrong.
+       The mitigation is queued rather than done: transmitted light is filtered by
+       the pigment it passes through, so this crown should not be using a grass
+       tint at all. Retinting toward its own foliage may close the split at near
+       no hue cost, and if it does, 0.35 is not the ceiling either. */
+    const u = folMat.userData.uniforms;
+    u.uTransAmt.value = 0.35;
+    u.uTransIso.value = 0.0;
+    u.uTransRim.value = 0.70;
+  }
+  const fol = new THREE.Mesh(foliageGeometry(clumps, 4242), folMat);
   fol.position.copy(trunk.position);
   fol.castShadow = true;
   fol.receiveShadow = true;
