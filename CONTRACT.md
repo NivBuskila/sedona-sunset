@@ -6662,3 +6662,76 @@ one-render test for any candidate is the `gWN` paint — if the upper slopes sto
 being glassy, it is working. This is the same 30 m detail cliff already
 documented as the mid-distance floor limit, arriving as a far-field defect on a
 steep surface, where it costs far more because the slope faces the light.
+
+## The fade was tried, and the blocker is the mip chain, not the weight
+
+Authorised, built, measured, reverted. `src/` clean. The result is the most
+useful thing in this thread because it rules out the whole family of fixes I had
+just recommended.
+
+**The change.** Inside the triplanar branch, `0.16 + 0.84 * grainF` became
+`0.16 + 0.84 * max(grainF, farG)` with `farG = smoothstep(0.014, 0.035, footG)`
+— an identity rather than a tuned number, restoring at distance exactly the
+weight the near field already gets. `max` makes the near field byte-identical
+*by construction*: `farG` is exactly zero below a 14 mm footprint, outside
+ground's mid band at 12.1 mm, so the expression is `grainF` there and nothing
+downstream can differ. Paired with the grit layer's slope-gate widening.
+
+**It did nothing to the headwall.** `far_320` is visually unchanged. The reason
+is not the weight and could not have been fixed by any weight:
+
+> The triplanar dirt normal is projected at world scale — `vWPos.zy * 0.3846`,
+> about 2.6 m per tile. At 125 m the footprint is of order 100 mm, which is
+> roughly twenty texels per pixel, so the mip chain has already averaged that
+> map to flat before the blend weight is applied. **Raising the weight of a
+> texture the filter has already removed recovers nothing.**
+
+That is a different limit from the one in the record. The documented 30 m cliff
+was about `grainF` fading the term out. This says that even with `grainF`
+defeated, a **world-locked** texture cannot carry detail at that distance, because
+its screen-space frequency falls with range by construction. The fade is not the
+cause; it is downstream of the cause, and removing it changes nothing.
+
+**What this implies for the fix, and it is a redirection.** Detail at 125 m has
+to come from a **footprint-locked** layer — one whose UV scale tracks the
+footprint so its features stay a constant size in screen space. The project
+already has exactly one: the grit layer, whose `gLod`/`gSc` do precisely this and
+which is faded *in* with footprint for this reason. It is the right mechanism
+and it is in the right place. **It has no normal component** — it drives an
+albedo mottle and a socket term only, and the streaks are a shading defect that
+albedo cannot reach, as the clean `gA` paint showed.
+
+So the fix is: give the footprint-locked grit layer a normal contribution on far
+steep ground. That is a real change to the surface shader, not a constant, and
+it wants measuring against the gradient band and the binary-field trap. It is
+not a delivery-morning change, and it is now specified.
+
+**Near-field gate, reported precisely rather than as a verdict.** Against a
+same-HEAD clean baseline, `ground` differs on 0.38% of pixels confined to y
+0.00–0.08 — the far skyline — and `wash_mid` on 8.44% at y 0.33–0.76, the mid
+distance and its banks. Both measured floor bands are unchanged to four decimals
+on every column. So the near field held, and the change did reach the mid
+distance; it simply did not help where it was aimed. Reverted regardless, because
+the frame it was authorised for is unchanged and an unverified 8% of `wash_mid`
+is not something to ship at 11:15 against a record already shot.
+
+## The rule: three naming coincidences in one night
+
+**A comment that describes the symptom is evidence about the author's intent,
+not about the current behaviour** — and the code most likely to carry that
+description is the code written to *prevent* it. Three instances tonight:
+
+1. `rill` and `gully` — the latter's comment names converging gullies, and the
+   critic reported streaks converging at the base of a gully. Ablated: innocent.
+2. The **triplanar branch**, whose own comment reads *"every feature smears into
+   a long streak, all of them parallel, and the bank ends up looking brushed"* —
+   the complaint almost verbatim, beside code that measured at full weight and
+   working correctly. It exists for this artefact. It is not causing it.
+3. The **24 cm** that matched the sand ripple wavelength and the bed spacing
+   exactly, and was neither.
+
+The numeric and the verbal case are the same failure. In all three, an
+observation that discriminated between *categories* was available and outranked
+by one that matched *vocabulary*: here, "no shadow terminator inside them" said
+shading rather than geometry before any ablation was run. Rank the discriminating
+observation first; a matching name is the weakest evidence in the room.
