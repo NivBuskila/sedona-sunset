@@ -8223,3 +8223,55 @@ by removing grain from exactly the faces the grit normal was added to serve,
 trading the far-field detail that took the last forty metres from the weakest
 part of the route to the most detailed. That is a worse frame, not a better one.
 This is a decision on the evidence, not an unfinished item.
+
+## What the gate is blind to: a sparse population inside the band
+
+**A banded-mean instrument cannot see a change carried by a sparse population
+within its band.** This is a property of the gate, not an incident, and it should
+be read alongside every green verdict it ever gives.
+
+The worked example is the delivery build. The transported lithology mix was
+thinned — pale share 0.320 down to 0.215, about 18% relative delivered because
+the census criterion is post-jitter albedo — and `FAR_COL` moved with it,
+luminance −4.6% and saturation 0.601 to 0.628. The `far` framing looks straight
+at that colour. It came back **identical to every digit**: median, p99, sky,
+ground, floor luminance and floor chroma all unchanged. The `floor` framing did
+move, and in the right direction — luminance 99.6 to 99.1, R/G 1.728 to 1.733,
+slightly darker and slightly redder, which is what removing pale material does.
+
+Nothing was wrong. `uFarCol` is applied to the *scattered clasts* as they
+converge at range, so the pixels carrying the change are a thin scatter inside a
+band whose statistic is a mean over everything else. **The gate certified that
+nothing moved outside its bands. It did not certify that the far-field colour
+change looks right, and it could not have.**
+
+This is the third instrument this week to fail in the same shape, and naming the
+shape is worth more than the three fixes:
+
+- `hf/lf` is blind to a regular mid-frequency pattern, because the ratio spans it.
+- A patch chosen by eye is not a population, so it cannot speak for one.
+- A banded mean is blind to a sparse population inside the band.
+
+Each time, the measurement window did not match the question. It is a different
+failure from a wrong bound and it does not announce itself: the instrument
+returns a confident number that is true about the thing it measured and silent
+about the thing you asked. When a change is known to be carried by a minority of
+pixels, **look at the frames.** A green gate is assurance that nothing broke
+loudly, not that an intended change landed well.
+
+And note that `FAR_COL` is *derived* from `MIX_TRANSPORTED` in `scatter.js`, not
+set beside it. The palette shift and the lithology thinning are one edit with two
+consequences and they are not separately tunable — anyone reaching for one of
+them is reaching for both.
+
+## `rockTris` is the ablation check, and it earned its column
+
+`rockTris` reads 544k identically across all six framings and unchanged from the
+morning's run. It is easy to read that as a column of scenery, so name what it
+does: three ablations were forced and restored in `scatter.js`, `rock.js` and
+`terrain.js` during one afternoon's investigation, and a forced ablation that
+survives its revert is a stray literal suppressing geometry. That is precisely
+what a scene-graph-wide count of rock triangles refuses, and it is why the count
+is taken over the whole graph rather than over what the frustum happened to keep.
+It was added to catch `rock missing`, which frustum culling had let past a
+per-frame triangle count; the afternoon gave it a second and more likely job.
