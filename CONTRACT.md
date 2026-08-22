@@ -1453,7 +1453,13 @@ one. It would be natural to spend geometry or sun position on that. Measured, ne
 would work on its own.
 
 **Occlusion.** `tools/sundisc.mjs` raycasts five rays across the disc's true angular width
-from each viewpoint's eye. At the shipped azimuth −9°, elevation 11° the disc is in frame
+from each viewpoint's eye. *(**The sun has since moved.** It ships at azimuth −9°, **elevation
+15°** — see "The gate was a geometry problem". Every "shipped" in this section and the two
+around it means elevation 11, which was shipped when they were written. The occlusion verdicts
+here were also fired from `sundisc.mjs`'s stale `VIEWS` table, four degrees off the real eye;
+see "`tools/sundisc.mjs` was raycasting from a camera nobody photographs". The section's
+conclusion — that contrast and not geometry is what hides the disc — survives both, and was
+re-reached independently afterwards.)* At the shipped azimuth −9°, elevation 11° the disc is in frame
 in all four views and blocked in all four — by `butte0` at 469–493 m in the two wash views,
 and by `wallL` at **58 m** in `sun_gap` and `bend`. Two different occluders, and the one
 guarding the composition view is a near wall, not a distant butte. Candidates, all measured
@@ -1461,7 +1467,7 @@ on the same worktree at HEAD:
 
 | candidate | disc | floor sunlit | floor grad/L | wall sat | wall V | wall grad/L |
 |---|---|---|---|---|---|---|
-| az −9, el 11 (shipped) | blocked, all 4 | 0.735 | 0.180 | 0.615 | 0.589 | 0.132 |
+| az −9, el 11 (shipped *at the time*) | blocked, all 4 | 0.735 | 0.180 | 0.615 | 0.589 | 0.132 |
 | az −4, el 11 | **clear, all 4** | 0.800 | 0.147 | 0.545 | **0.247** | 0.143 |
 | az −10, el 18 | **clear, all 4** | 0.961 | **0.098** | 0.512 | 0.805 | 0.153 |
 
@@ -2327,6 +2333,21 @@ bands equally), so it measures the thing we actually care about and cannot be bo
 amplitude.
 
 **Pass condition for rock: `hf/lf` ≥ 0.55**, the bottom of the real range.
+
+> **Two later corrections to this whole section, both load-bearing.** First, **`hf/lf` is
+> resolution-dependent**, and neither the render column above nor the 0.54–0.75 reference band
+> carries a resolution. The band came from photographs at *their own* pixels per metre; the
+> same byte-identical rock measures midwall 0.49 at 1600×900 and 0.54 at 2560×1440. **Quote
+> the resolution with every `hf/lf` figure and compare only figures shot at the same one** —
+> see "Quote the resolution beside any `hf/lf` figure". This applies retroactively to most
+> `hf/lf` numbers recorded in this file, including the sys2g row above. Second, **`hf/lf` is
+> blind to a regular mid-frequency pattern**: a two-band ratio reads a tiling defect as
+> healthy texture, and the near-field quilting in the delivery set sits on a floor measuring a
+> perfectly respectable 0.45. It is the right gate for "has this gone to wax" and the wrong
+> one for "is the spectrum the right shape" (use the octave table) and for "is it tiling" (use
+> your eyes). Note also that the gate is written as 0.55 here and the band floor as 0.54
+> elsewhere in this file; the difference has never been reconciled and is inside the
+> instrument's own sensitivity to framing.
 
 #### `hf/lf` moves with render resolution, so quote the resolution with the number
 
