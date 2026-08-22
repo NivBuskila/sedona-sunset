@@ -10443,3 +10443,137 @@ byte-identical brightest pixels across an A/B that changed the atlas, and a colo
 sample that matched the critic's own sky value to one code value were all *this*
 failure. Ask what the instrument would print if it were broken, and if the answer
 is "something plausible", check it against a second measurement that must move.
+
+# The lens ghosts: a hundredfold background range, and a disc that could not move
+
+Decided offline before any capture, on the ablation and the placement geometry alone.
+Recorded as decisions rather than tuning because two of them are judgement calls that
+a later reader would otherwise mistake for physics or for arbitrary constants.
+
+## The comment asserting the feature never fires was false
+
+The note above `flareScale` claimed the sun sits below the butte skyline from every
+standard viewpoint, so the ghosts "correctly never fire". Ablation against `#ghost=0`
+at 1280x720 says otherwise: the ghost path changes **4.92%** of pixels in `juniper`,
+**4.89%** in `bend`, **4.71%** in `sun_gap`, **4.32%** in `wash_mid`, and **exactly 0**
+in `wall_shade` and `ground`. Occlusion is doing precisely the right thing — dead
+where the sun is behind rock, live in the four framings that see sky.
+
+The discs were never missing, they were **inaudible**. Source ceiling 4.0 against
+`ghostGain` 0.0014 puts their peak near 0.004 scene-linear where lit rock sits at
+0.36, three orders down. The comment was corrected in place and not deleted: a comment
+asserting that a feature never fires is how a working system gets removed later.
+
+## Recovering the sun's screen position, which nothing records
+
+Each ghost sits at `mix(uSun, CTR, t)`, so a blob centroid and its known `t` invert to
+`uSun = (gp - t*CTR) / (1 - t)`. Blob radii come back within a few pixels of the
+predicted `r * height`, and the discs agree on the sun to **±0.001** in `juniper` and
+`bend`. Sun at uv (0.328, 0.340) in `sun_gap`, (0.221, 0.274) in `juniper`,
+(0.716, 0.270) in `bend`, (0.484, 0.190) in `wash_mid`.
+
+This is why the proposal has numbers where the previous flare work had adjectives.
+With the sun known every footprint is analytic, so what each disc overlays and its
+amplitude against that background are both computable without rendering anything.
+
+## The `t = 1.00` disc cannot move with the camera
+
+It landed at **exactly (0.500, 0.499) in all four views**. At `t = 1` the interpolation
+reaches frame centre regardless of where the sun is, so the disc is nailed to the
+centre of the image and does not shift when the camera does. That does not read as a
+lens ghost; it reads as dirt on the sensor. It was also the loudest disc in the
+shipped build, at 9.19% of local background in `bend` at the shipped gain.
+
+Obvious only once stated, which is the general lesson: a placement parameterised by
+interpolation has a degenerate value, and `t = 1` was in the table.
+
+## No single additive gain can serve a bright sky and a shaded wall
+
+The local background under the discs spans **0.018 to 1.798 scene-linear, a
+hundredfold range**. Calibrated from unclipped rim pixels of the `#ghost=0.5` arm and
+extrapolated by the known alpha profile:
+
+| gain | over bright sky (bg 0.42–1.80) | over shaded rock (bg 0.024–0.12) |
+| --- | --- | --- |
+| 0.0014 shipped | 0.05–0.22% | 0.9–3.4% |
+| 0.03 | 1.1–4.7% | 20–73% |
+| 0.075 | 2.8–12% | 50–183% |
+
+Making a disc reach 3% of bright sky requires gain 0.075, at which the same disc over
+shaded rock sits at **183% of its background** — nearly tripling the rock. Turn it
+down until the wall is safe and the sky gets nothing. **This is the real reason the
+ghosts never looked right, and it is not a gain problem.**
+
+## Two discs, and the case for dropping `t >= 1`
+
+The three discs at `t >= 1` land at frame-y 0.57 to 0.77 in every live view, below the
+horizon in all of them — terrain in twelve of twelve cases. They are also the largest,
+`r = 0.118` being an 85px radius at 720p and 170px at 1440p, so they are big soft blobs
+on rock, the worst available combination. `t = 1.00` goes for the degeneracy above.
+
+Kept: `t = -0.34` and `t = 0.63`. Dropping `t = 0.30` is register, not safety — it is
+the smallest and dimmest, it sits between the other two on the same axis, and three
+evenly spaced discs on a line read as a deliberate graphic where two read as an
+accident of the glass. One either side of the sun makes the axis legible without
+spelling it out.
+
+## The background gate is a register choice, not a physical model
+
+**Recorded as a decision, with the argument against it, because it is non-physical and
+must not be "fixed" back to physics later.**
+
+A real ghost over a dark subject *is* visible — that is the classic flare look — so
+attenuating the disc where the background is dark is not optics. It is taken anyway,
+for two reasons. The bar for this project is a **restrained National Geographic frame,
+not a dramatic or cheap-lens look**, and ghosts riding over shadowed foreground belong
+to the second. And decisively: **a flat untextured disc over textured rock reads as a
+decal in a render even where it would be plausible in a photograph** — the failure
+mode here is not implausibility, it is looking synthetic.
+
+The alternative was gain 0.0075 with no gate, which keeps everything under about 5%
+everywhere and makes the feature a whisper in every framing. That was rejected because
+it fails the actual request: the user asked to see something.
+
+Settled: **two discs, gain 0.03, gate crossing over near 0.15 scene-linear**, which
+puts the kept discs at 1–5% of the sky they overlay and near zero over shaded rock.
+
+## Dispersion and shape
+
+Dispersion in a real ghost comes from the coating's wavelength-dependent reflectance,
+so near-sun reflections carry the source's own colour and deeper element groups drift
+complementary. `t = -0.34` stays warm at `(1.00, 0.62, 0.34)`, close to the scene's own
+sunlight, because **a ghost warmer than the sun reads as a coloured light rather than a
+reflection**. `t = 0.63` moves from near-white `(1.00, 0.86, 0.56)` toward a faint
+green-gold: near-white on a warm sky is the one thing that will look like a UI element,
+green-gold is what magnesium-fluoride coatings actually throw, and it lands in the gap
+between the scene's oranges and the shadows' teal, so it reads as *not belonging to the
+scene* — which is what a lens artefact should do.
+
+Soft discs, not polygons. At 1–5% contrast a polygon's edges and corners do not
+survive; you get a slightly lumpy circle that reads as a mistake rather than an iris.
+An iris polygon is also only correct stopped down, and the existing rim-brightened
+profile (0.72 core rising to 1.32 at the edge) already gives the bright-ring cue that
+makes a soft disc read as an aperture image rather than a blur.
+
+## What is already proven, and the gap in my own coverage
+
+**Proven, not argued:** the ghost path changes exactly zero pixels in `wall_shade` and
+`ground`, because the sun is behind rock and occlusion kills the term. The shadow gate
+at 0.212 and the black-clipping fractions are read from those two framings, so they
+**cannot** move. A measured zero, not an estimate.
+
+**The gap, flagged before it was found:** the six-view ablation did not include
+`wall_lit` or `shade_far`, and those are precisely where lit rock at 0.615 / 20.5° and
+both paired floor rows are measured. That ablation runs **first, before any tuning**.
+If it returns a measured zero the proof closes the way `wall_shade` and `ground`
+already have. If it does not, the proposal needs rethinking rather than adjusting.
+
+**Banding will be measured, not predicted.** The runs are read on `sun_gap` and
+`wash_mid` sky rows, the ghosts fire in both, and a disc overlaying those rows adds a
+smooth low-amplitude gradient that could plausibly help by acting as extra dither or
+hurt by giving the run detector a new shallow ramp. Runs, step density and flat
+percentage on both arms at both buffers. This is the one place a prediction would be
+worthless.
+
+**Then judged by eye at full resolution before it is final.** If two discs at 0.03 read
+as a graphic rather than an accident of the glass, drop to one.
