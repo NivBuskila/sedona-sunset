@@ -106,6 +106,10 @@ const STATIONS = [
   { name: 'up the talus',     d: 300, yaw: 40, hold: null,    walk: true  },
   { name: 'at the wash head', d: 329, yaw: 0,  hold: null,    walk: true  },
   { name: 'sprinting',        d: 120, yaw: 0,  hold: 'Shift', walk: true  },
+  /* Turbo is the 12 m/s cheat, so a 0.6 s arc carries seven metres. The walker
+     simulation proves the corridor holds at this speed; this is here for how far
+     it throws you and whether the landing survives arriving that fast. */
+  { name: 'turbo',            d: 170, yaw: 0,  hold: 'Turbo', walk: true  },
 ];
 
 console.log(`\n  jump: g 9.81, apex 0.45 m by construction — measured at ${W}x${H}\n`);
@@ -119,14 +123,15 @@ for (const st of STATIONS) {
   const y0 = await page.evaluate(() => window.__game._camera.position.y);
 
   await startTrace();
-  if (st.hold) await page.keyboard.down(st.hold);
+  const holds = st.hold === 'Turbo' ? ['Shift', 'Control'] : st.hold ? [st.hold] : [];
+  for (const h of holds) await page.keyboard.down(h);
   if (st.walk) { await page.keyboard.down('w'); await page.waitForTimeout(500); }
   await page.keyboard.down('Space');
   await page.waitForTimeout(90);
   await page.keyboard.up('Space');
   await page.waitForTimeout(1400);
   if (st.walk) await page.keyboard.up('w');
-  if (st.hold) await page.keyboard.up(st.hold);
+  for (const h of holds) await page.keyboard.up(h);
   const tr = await stopTrace();
 
   /* Airborne is read off the player's own flag, and the apex and the fall speed
