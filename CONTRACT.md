@@ -3532,11 +3532,14 @@ The frame is **30.5 ms → 15.7–16.9 ms at 2560×1440 on the top tier** and th
 ladder reaches 120 fps at rung 4 and 182 fps at its floor. Full account in `PERF.md` §9;
 what belongs here is the method and the two instrument failures, because both recur.
 
-*(Both figures in that sentence were true of `fa8b9ec` with the camera held and are true of
-neither the current tree nor a walking player. The frame is 23.3 ms held and 26.9 moving on
-`2548d04`, and no rung reaches 120 fps moving. See "The ladder as a player walks it" below —
-which adds a third instrument failure to the two this section names, of the same kind: an
-instrument that could not be pointed at the thing being measured.)*
+*(Both figures in that sentence were measured with the camera held, on a machine that was much
+quieter than the one every later number in this file was taken on, and neither is what a walking
+player gets. On a contended machine the same cell is 22.6 ms held and 24.9 moving, and no rung
+reaches 120 fps moving. The frame did not grow — a fourteen-commit bisect puts it flat to within
+0.83 ms — so the difference between 16.8 and 22.6 is the GPU, not the scene. See "The ladder as a
+player walks it" below, which adds two more instrument failures to the two this section names, both
+of the same kind: an instrument that could not be pointed at the thing being measured, and a
+measurement recorded without the conditions it was taken under.)*
 
 **An object ablation cannot price a shader.** Every ablation `bench.mjs` had hides a *mesh*,
 which is the wrong instrument twice over: hiding the terrain does not price the terrain
@@ -3611,10 +3614,12 @@ exposes `rungs` and `setRung` and `bench.mjs` prints both tables.
 
 ### The ladder, measured, and the numbers to quote
 
-> **Superseded for the delivery note. See "The ladder as a player walks it" below.** This table
-> is a true record of `fa8b9ec` and is not the current tree — the frame has since grown 6.5 ms at
-> rung 0 — and it is measured with the camera held, which does not pay the shadow-cascade redraw
-> that a walking player pays on every frame. Both columns of the corrected table are here.
+> **Superseded for the delivery note. See "The ladder as a player walks it" below.** This table is
+> a true record of `fa8b9ec` **on a quiet machine**, and both of those qualifications matter. It is
+> measured with the camera held, which does not pay the +3.2 ms a walking player pays; and it was
+> taken before the GPU acquired a 65–100% utilisation floor from other work on this box, which
+> costs another 6 ms and is nothing to do with the scene. An earlier revision of this banner said
+> the frame had "grown 6.5 ms at rung 0"; a fourteen-commit bisect says it did not grow at all.
 
 Per rung at `sun_gap`, 2560×1440, RTX 4060, median of seven blocks of thirty:
 
@@ -3747,50 +3752,101 @@ spending the first forty seconds at half the target. All three reproduced on an 
 one of them is much larger than reported. `tools/govern.mjs` is the instrument; `PERF.md` §11 is
 the account. **The four things to know before quoting a number from this file:**
 
-**1. The frame moved 39% under the measurement, and this is the headline.** `bench.mjs` on
-`2548d04` reads `wash_mid` at **24.48 ms** against **16.80** on `fa8b9ec` two hours earlier. Same
-tool, same machine, same seven blocks of thirty; `govern.mjs`, a different instrument in a
-different page, independently reads 23.34 at the same station and rung. Deliberately not
-attributed here — an indirect-light fix in `rock.js` and `terrain.js`, cliff jointing and
-vegetation all landed in that window and three of those files were dirty while this ran — but
-anyone bisecting should start with the indirect-light change, because it lands on the two heaviest
-fragment shaders in the scene. **The table above is a true record of `fa8b9ec` and is not the
-current tree.**
+**1. The frame did not move 39%. The machine did, and this entry said otherwise for three hours.**
+`bench.mjs` read `wash_mid` at **16.80 ms** on `fa8b9ec` around 05:00 and **24.48** on `2548d04`
+around 07:45, and a second instrument in a different page agreed with the second figure. Both
+instruments were right; the inference — that the only thing which had changed between two
+measurements two hours apart was the code — was wrong. `tools/_regress.mjs` measures bench's own
+top-left cell from a detached worktree, and **every source commit in the window reads 22.4–23.2 ms,
+a spread of 0.83 across fourteen commits**, with the endpoints alternated three times each and
+differing by 0.18. What had changed is that the GPU now sits at a **65–100% utilisation floor**
+from an animated desktop wallpaper, the vendor overlay, the editor and fourteen `chrome`/`node`
+processes belonging to other agents. 22.8/16.8 is 1.36, which is the shape of a scene being given
+two thirds of a GPU. **The lesson for this file: a millisecond recorded without the machine's state
+beside it cannot be compared with one taken two hours later.** `_regress.mjs` now prints GPU
+utilisation next to every number it reports, and `bench.mjs` should.
 
-**2. A walking player pays a shadow-cascade redraw that no bench has ever measured.** Both
-cascades redraw only when the rig moves, and `bench.mjs` holds the camera still. It is a flat
-**+3.4 ms** at every rung, and it does not shrink as the tier steps the maps from 4096/2048 down
-to 1024/512 — so it is the terrain and rock redraw, not the depth fill.
+**1b. The indirect-light fix costs 0.6 ms of a 23 ms frame** — priced by paired ablation in one
+page load, three runs, with the site count checked so a stale pattern cannot read as a free
+feature. The Jimenez cubic is 0.2 and `s4AoTint` is 0.5. Cliff jointing is 0.1 and is gated off at
+the station where that was measured, so treat it as a lower bound. **Nothing in the visual work of
+that window is worth negotiating**; ALU does not register against this shader's twenty-odd
+dependent fetches, which §7 above already established.
+
+**2. A walking player pays +3.2 ms that no bench has ever measured, and it is two things.** Both
+cascades redraw only when the rig moves and `bench.mjs` holds the camera still. Suppressing only
+the shadow passes splits it: **+0.8 ms is everything else walking does** and **+2.4 ms is the two
+cascade redraws**. It does not shrink as the tier steps the maps from 4096/2048 to 1024/512 —
+sixteen times less depth for the same milliseconds — so it is the caster walk, not the depth fill,
+and the only thing that removes it is not walking them.
+
+**2b. So one of those milliseconds has been taken, at no cost to the picture.**
+`renderer.shadowMap.needsUpdate` is one flag for the whole pass, so raising it redrew *both*
+cascades — but the grids are quantised at very different pitches, and while walking the fine
+cascade moves on nearly every frame while the coarse one, which is four times the map, moves on
+about one frame in five and was redrawn on all five. Scheduling them apart takes the redraw penalty
+from **+2.43 to +1.43 ms** with held, walk and every pixel unchanged: a cascade is skipped exactly
+on the frames where redrawing it would write the same texels, which is the argument the global flag
+was already making one level up. **That is a bigger number than the entire indirect-light fix
+costs**, so the frame is 0.4 ms ahead of where giving up the picture would have left it.
+
+**2c. For System 4: the eight warnings are gone, and here is the control.** `eba1fc0`'s
+`texture2DLodEXT` removes all of them — `tools/govern.mjs --warnonly` reports 8 distinct X3595 at
+`eba1fc0^` and **0** at `eba1fc0`, both in the same minute through the same probe, which is the part
+that matters since a zero from a probe that has stopped working looks exactly like a zero from a
+fix that worked. `--warnonly` also takes `--root` now, so it can be pointed at a committed worktree
+instead of a tree with files mid-edit. It bought no measurable frame time, which is the expected
+result and not a disappointing one: this is a derivative whose value is *discarded*, not one whose
+value is unbounded, so asking for level zero stops the compiler computing something nobody read. It
+is not the bug class that produced the grazing lattice. The conditional `getShadowCascade` guess was
+not needed — nothing remains to attribute.
 
 **3. `bench.mjs`'s three stations are not the expensive ones.** `wash_mid`, `wall_lit` and
 `sun_gap` are all at 46 m or beyond. The spread *between* stations is wider than four rungs of the
 ladder: at rung 0, `ground` is 13.9 ms and `wash_mid` is 23.3. Anything tuned on those three
 framings cannot say what the walk costs.
 
-### The corrected table — 2560×1440, RTX 4060, `2548d04`
+### The corrected table — 2560×1440, RTX 4060, on a machine that was 65–100% busy
+
+> **Read the condition before quoting the numbers.** Every figure below was measured with the GPU
+> already 65–100% occupied by work that has nothing to do with the project: an animated desktop
+> wallpaper, the vendor overlay, the editor, and up to fourteen `chrome`/`node` processes belonging
+> to the other agents in this repo. The same cell measured **16.8 ms** at 05:00 when fewer of those
+> existed, and the bisect in §11.1 of `PERF.md` proves the scene itself did not change between the
+> two. **These are a floor on what the user gets, not an estimate of it**, and nothing in this
+> project can currently take the measurement that would replace them — the render lock serialises
+> captures against each other but nothing serialises them against a desktop wallpaper.
 
 `held` is the bench's own method and is directly comparable with the table above. `moving` is what
 a walk pays. Both are at `wash_low`, near the mouth, which is where a player boots and is within
-0.5 ms of `mouth`, `wash_mid` and `sun_gap` at every rung.
+0.5 ms of `mouth`, `wash_mid` and `sun_gap` at every rung. The last two columns take the measured
+1.00 ms cascade-scheduling saving off the moving figure — measured once at rung 0 and flat across
+the ladder for the same reason the penalty itself was flat, and marked as arithmetic rather than
+presented as a fresh sweep.
 
-| rung | tier | scale | buffer | held ms | held fps | **moving ms** | **moving fps** |
-|---|---|---|---|---|---|---|---|
-| 0 | high | 1.00 | 2560×1440 | 23.3 | 43 | **26.9** | **37** |
-| 1 | high | 0.88 | 2253×1267 | 20.7 | 48 | **24.6** | **41** |
-| 2 | medium | 0.88 | 2253×1267 | 18.2 | 55 | **21.5** | **47** |
-| 3 | medium | 0.78 | 1997×1123 | 16.6 | 60 | **19.8** | **51** |
-| 4 | low | 0.78 | 1997×1123 | 13.8 | 73 | **16.7** | **60** |
-| 5 | low | 0.68 | 1741×979 | 12.4 | 81 | **15.2** | **66** |
-| 6 | potato | 0.68 | 1741×979 | 10.9 | 91 | **14.6** | **69** |
-| 7 | potato | 0.58 | 1485×835 | 9.9 | 101 | **13.5** | **74** |
-| 8 | potato | 0.50 | 1280×720 | 9.2 | 109 | **12.7** | **79** |
+| rung | tier | scale | buffer | held ms | held fps | moving ms | moving fps | **moving, cascades scheduled** | **fps** |
+|---|---|---|---|---|---|---|---|---|---|
+| 0 | high | 1.00 | 2560×1440 | 23.3 | 43 | 26.9 | 37 | **25.9** | **39** |
+| 1 | high | 0.88 | 2253×1267 | 20.7 | 48 | 24.6 | 41 | **23.6** | **42** |
+| 2 | medium | 0.88 | 2253×1267 | 18.2 | 55 | 21.5 | 47 | **20.5** | **49** |
+| 3 | medium | 0.78 | 1997×1123 | 16.6 | 60 | 19.8 | 51 | **18.8** | **53** |
+| 4 | low | 0.78 | 1997×1123 | 13.8 | 73 | 16.7 | 60 | **15.7** | **64** |
+| 5 | low | 0.68 | 1741×979 | 12.4 | 81 | 15.2 | 66 | **14.2** | **70** |
+| 6 | potato | 0.68 | 1741×979 | 10.9 | 91 | 14.6 | 69 | **13.6** | **74** |
+| 7 | potato | 0.58 | 1485×835 | 9.9 | 101 | 13.5 | 74 | **12.5** | **80** |
+| 8 | potato | 0.50 | 1280×720 | 9.2 | 109 | 12.7 | 79 | **11.7** | **85** |
 
-The cheapest station in the walk, `ground`, reaches 8.33 ms held at rung 4 and never reaches it
-moving. **No rung reaches the 120 fps budget at any station with the camera moving, and the top
-tier is 37 fps.** That is the number for the delivery note. It is not a regression in the
-governor and it is not a regression in anything this pass touched — §10's table was accurate when
-it was taken, and the frame has since grown by 6.5 ms at rung 0 with another 3.4 ms of it always
-having been invisible to the instrument.
+**What to tell the user, plainly.** On a contended machine the walk runs **39 fps at native 1440p
+on the top tier** and the governor will settle near the bottom of the ladder at **80–85 fps**. On a
+machine doing nothing but running the scene the same cell measured 16.8 ms rather than 23.3, which
+is **60 fps at the top tier** and puts most of the ladder past 100; that figure is two hours old and
+was itself taken with several agents live, so it is a better estimate of the user's experience than
+the table and still not a measurement of it. **The honest statement is 40–60 fps at 1440p on the
+top tier, and the governor finding a rung in the 80s–100s.** 120 fps at native 1440p is not
+reachable on this scene on this GPU and no rung reaches it at any station with the camera moving.
+
+None of that is a regression. §10's table was accurate when it was taken; the frame has not grown;
+3.2 ms of the walk was always invisible to the instrument and 1.0 of that has now been recovered.
 
 Rung 8 is new: `RSCALE` gains a 0.50 step. It is worth 0.6–0.8 ms and that is said plainly rather
 than implied, because resolution has stopped being the strong lever it was — `@0.7res` takes

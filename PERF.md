@@ -1335,3 +1335,161 @@ derivative whose value is discarded. And it is not `fwidth` of a phase
 under-reporting, which is §10's note and still open. Nothing here is a correctness
 risk today: it is eight lines of console noise standing on a real one-token
 improvement.
+
+## 12. Pricing the suspects on today's scene instead of yesterday's build
+
+§11.1's bisect answers "did the frame move" and cannot answer "what does this term
+cost", because a checkout measures a whole build and the build kept changing:
+vegetation landed inside the window, which is visible in the counts as 64 draw
+calls becoming 70. So the terms were priced the way everything else in this file
+was priced — one page load, one build, one bit different — with the substitutions
+going in through `onBeforeCompile` and the active row folded into
+`customProgramCacheKey` so three relinks instead of returning the cached program.
+
+Two guards, both earned rather than precautionary.
+
+**Every row reports how many sites it hit, and zero prints `STALE PATTERN, not a
+free feature`.** This caught one immediately: an attempt to price System 4's
+`texture2DLodEXT` fix by putting `texture2D` back read 0 sites, because that code
+is in three's `shadowmap_pars_fragment` chunk and the chunk is still an
+unexpanded `#include` at `onBeforeCompile` time. Without the counter it would have
+printed +0.05 ms and read as a clean null on a term that was never touched — which
+is exactly how `-shadow` reported 0.05 ms for three quarters of the frame.
+
+**Every row is paired against a baseline measured immediately before it**, and the
+delta is against that baseline rather than against one measurement at the start of
+the run. The first attempt at this pass was unpaired and its closing `full again`
+row came back 3.6 ms above its opening `full` row while GPU utilisation swung
+between 58% and 100% inside the window. The effects here are two to six tenths of
+a millisecond. Unpaired, all of them are noise wearing a number.
+
+`eba1fc0`, served from a detached worktree so the two files that were mid-edit in
+the shared tree could not land inside a run. 2560×1440, `wash_mid`, top tier,
+median of four blocks of thirty, three independent runs:
+
+| removing | sites | ms saved | | |
+|---|---|---|---|---|
+| the Jimenez cubic | 3 | 0.22 | 0.22 | 0.41 |
+| `s4AoTint` | 3 | 0.45 | 0.48 | *(+10.18)* |
+| **both — `indirectDiffuse *= tAO`, the line as it stood** | 6 | **0.64** | **0.63** | **0.40** |
+| cliff jointing, all four `jointTrace` marches | 2 | 0.14 | 0.02 | 0.09 |
+
+**The indirect-light fix costs 0.6 ms of a 23 ms frame. Two and a half per cent.**
+There is no trade to bring and nothing to negotiate: the change that took
+all-channel black from 6% of the frame to 0.01% and gave the wall behind the
+floating slab tone is, for practical purposes, free. It was the right suspect on
+timing — it landed on the two heaviest fragment shaders in the hour the number
+moved — and the wrong one on arithmetic. A cubic and a normalised probe split are
+a few dozen ALU ops against twenty-odd dependent texture fetches; §7 already
+recorded that this shader's cost is fetches and shadow taps, and ALU does not
+register against them. Looking for a cheaper formulation of the curve would be
+optimising 2.5% of the frame, and there are two better milliseconds below.
+
+Three caveats, because each of these numbers has one:
+
+- **The `s4AoTint` +10.18 outlier is not a measurement of anything.** Removing an
+  expression cannot make a shader slower by 45%. It is the third row of a run in
+  which foreign GPU load moved between 59% and 100%, and it is reported rather
+  than dropped because the median of the row that matters — `ind.both`, three
+  paired measurements at 0.64, 0.63 and 0.40 — is the figure being quoted, and a
+  reader should be able to see how wide the tail on that instrument is.
+- **The jointing figure is a lower bound and station-specific.** `jointRes` gates
+  the marches on screen-space footprint, and at 46 m they are largely gated off,
+  so 0.1 ms is what jointing costs *where this was measured*. This is System 1's
+  branch-liveness lesson exactly: a gated branch measured outside its live region
+  reads free. It needs a close station before anyone calls it free everywhere.
+- **All of it was measured with the GPU 90-100% occupied by other work.** The
+  ratios are sound, being paired within a single load; the absolutes are a floor.
+
+## 13. The walking penalty was two things, and one of them is a free millisecond
+
+§11.2 measured a flat +3.4 ms that only a walking player pays and attributed it to
+the shadow cascade redraw. The attribution was three quarters right, and naming
+the whole of it after the larger half was the error. Suppressing only the two
+shadow passes while still paying everything `walkTo` does — height sampling,
+collision, the atmosphere and post walk clocks — splits it:
+
+| `wash_mid`, 2560×1440, top tier | ms |
+|---|---|
+| held | 22.55 |
+| moving | 25.77 |
+| of which everything walking does *except* the shadow passes | +0.79 |
+| of which the two cascade redraws | **+2.43** |
+
+And the redraw half was being paid about five times more often than it needed to
+be. `renderer.shadowMap.needsUpdate` is one flag for the whole pass, so raising it
+redraws both cascades — but the two are quantised to their own texel grids at very
+different pitches, so while walking the fine cascade moves on nearly every frame
+and the coarse cascade moves on roughly one frame in five. The coarse one was
+redrawn on all five, and it is the expensive one: 4096 against 2048, both passes
+walking the same ~2.1 M triangles of terrain and rock.
+
+three already gates each light on `shadow.autoUpdate === false &&
+shadow.needsUpdate === false`, so scheduling the two apart needed no patch of
+three's chunk — only that `syncShadow` raise each cascade's own flag when *that*
+cascade's quantised target moved, rather than raising one flag for both:
+
+| `wash_mid`, 2560×1440, top tier | before | after |
+|---|---|---|
+| held | 22.55 | 22.61 |
+| walk, excluding the shadow passes | +0.79 | +0.81 |
+| the two cascade redraws | +2.43 | **+1.43** |
+| moving | 25.77 | **24.85** |
+
+**A millisecond, and it costs no picture at all.** A cascade is skipped exactly on
+the frames where redrawing it would write the same texels, which is the argument
+the global flag was already making one level up — main.js has carried the note
+since the flag was introduced that the maps are a function of the *quantised*
+player position and are bit-identical between two frames that quantise the same.
+The harness's pixel-identical recapture is unaffected for the same reason.
+
+Two details that would have broken it and are handled:
+
+- A tier change resizes a map and disposes it, which is the one case where a
+  cascade must redraw without having moved. `perf.js` raises that light's own flag
+  there; without it the light whose map was just disposed would wait for the
+  player to cross a texel boundary before it had a map at all.
+- Four tools in `tools/` set `renderer.shadowMap.needsUpdate = true` directly to
+  force a redraw after changing a material, and none of them know cascades are
+  scheduled separately now. The public flag therefore still means "redraw
+  everything" — it forces both cascades through a property setter — while the
+  frame loop uses a private path that does not.
+
+**Weighed against the visual fixes: the cascade change buys 1.00 ms and the entire
+indirect-light fix costs 0.63.** Taking the free millisecond and keeping the
+picture leaves the frame 0.4 ms ahead of where it would be having given up the
+most valuable visual change of the night. That is the whole trade, and it is not
+close.
+
+There is more in the same direction for anyone continuing: the remaining +1.43 is
+the fine cascade redrawing on nearly every frame, and its grid is fine enough that
+coarsening it — or amortising the coarse cascade over a fixed cadence rather than
+a grid — would take more. Both cost picture, unlike this one, so both need a
+matched pair before they are proposed.
+
+## 14. The eight shader warnings are gone, confirmed with a control
+
+System 4 landed the one-token fix at `eba1fc0` — `texture2DLodEXT` in both tap
+loops of the penumbra filter — and could not verify it removed the warnings,
+because nothing in `tools/` surfaces shader warnings and the harness collects
+console errors only. `govern.mjs --warnonly` does, and now takes `--root` so it
+can serve a committed worktree rather than a tree with files mid-edit:
+
+| | distinct warnings | of which X3595 |
+|---|---|---|
+| `eba1fc0^` | 8 | 8 |
+| `eba1fc0` | **0** | **0** |
+
+The control is the point. A zero from a probe that has stopped working looks
+exactly like a zero from a fix that worked, and this file has already recorded two
+confident nulls from instruments that were not varying the thing they named. The
+parent commit still reports all eight through the same probe in the same minute,
+so the zero is the fix.
+
+It bought no measurable frame time. That is the expected result rather than a
+disappointing one: as noted when the warnings were attributed, this is a
+derivative whose value is *discarded* — the loop's iteration count varies within a
+quad, so the implicit gradient is undefined and was never used — not one whose
+value is unbounded. Asking for level zero stops the compiler computing something
+nobody read. It is not the bug class that produced the grazing lattice, and it was
+never going to be worth milliseconds.
