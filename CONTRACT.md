@@ -5061,3 +5061,97 @@ Second bound, and it is the one that has kept reappearing all night: **the shade
 whatever the illuminant does, the encoding cannot express it there. Crush remains the binding
 constraint on shade colour, and the shadow gate at 0.242 against a 0.25 ceiling says the obvious
 remedy — lifting shade — is spent. That corner is real and it is not System 4's to open alone.
+
+## The shade-colour deviation, with the bounds rather than the argument
+
+Recorded so the next person inherits measurements instead of a position. **Warm shade in this
+corridor is substantially correct for the geometry; the part of it that was a genuine modelling
+error has been corrected; and what remains is bounded by crush rather than by light transport.**
+Each clause is checkable.
+
+**Correct for the geometry.** Five of the eight original standard views sit inside a slot whose
+walls fill 45 to 80 degrees of their sky with sunlit red rock. On a shaded lateral face there, the
+exact three-way decomposition of the fill (`tools/_probesplit.mjs`, parts closing on the whole to
+0.0000%) reads:
+
+| illuminant | share of fill, by luminance | reflected hue | reflected saturation |
+| --- | --- | --- | --- |
+| sky | **47.8%** | −23.9° | **0.252** |
+| escarpment | 25.1% | 8.6° | 0.920 |
+| ground bounce | 27.2% | 10.8° | 0.728 |
+
+**The cool illuminant is already the larger one by luminance and still loses the chroma fight**,
+because the warm terms are close to three times its saturation. That is not a defect to be tuned
+out; it is what a red slot at 15° sun elevation does. The blue canyon shade the critique asks for
+belongs to a wider canyon open to the dome, and this scene does produce it where the geometry
+allows — which is why `shade_far` was added at 160 m, where the up-canyon aperture mix runs 0.93
+to 0.99 and the fill arrives at hue 317.
+
+**The genuine error, now corrected.** One occlusion scalar was multiplying all three of those
+illuminants, which preserves their ratio at every depth — so an occluded crevice received less
+light of exactly the same colour, when real relief cuts grazing directions long before it cuts the
+zenith and the two warm terms are the ones near the horizon. `s4AoTint` corrects it. Measured:
+shaded saturation 0.638 → 0.620, crush 44.4% → 42.2%, for 0.003 of lit saturation.
+
+**Bounded by crush, not by transport.** Two numbers set the ceiling, and both are the reason
+further work on the illuminant will not pay:
+
+- **`tAO` is texture micro-occlusion and cannot see the geometry that darkens a crevice.**
+  `rock.js` pulls it toward 0.88 with distance and `terrain.js` toward 0.80, both clamped well off
+  zero. It models shading between grains, which is real, while the thing that makes a canyon slot
+  dark is metre-scale. The decomposition says a shaded face could reach 0.335 saturation at the
+  occlusion floor; the render moved 0.018. **The lever is correct and the signal driving it is
+  weak** — roughly a fifth of the available gain. Doing better needs a geometric occlusion term or
+  a bent normal, neither of which this frame carries.
+- **The shaded window is only 44 to 48% chroma headroom.** More than half its pixels have a
+  channel under ten code values, so whatever the illuminant does, the encoding cannot express it
+  there. And the obvious remedy is spent: the shadow gate sits at 0.242 against a 0.25 ceiling, so
+  shade cannot be lifted to open that headroom without leaving its band.
+
+One correction to carry forward so it is not chased: **lit rock sitting a thousandth under its
+band floor at 0.614 is an in-flight `textures.js` drift, not `s4AoTint`.** The inert-setting
+control measured the term's own cost at 0.003 and the drift at 0.004. See below.
+
+## A baseline is a measurement, and it expires
+
+Promoted to a rule of its own because tonight produced three instances and only the last one was
+caught before it was published rather than after.
+
+> **A baseline is a measurement and it expires. Two figures ninety minutes apart in a tree with
+> five files in flight are two afters, not a before and an after.**
+
+The instance that earned the promotion. `s4AoTint` shipped with `#aok=1` as an exact algebraic
+identity — at an exponent of one the solve returns `vWall = vSky = ao` and the gain is `vec3(1)` at
+every depth — specifically so the term could be ablated inside one build. Run against the
+uncontrolled baseline, the term looked like it cost 0.007 of lit saturation to buy 0.018 of shaded,
+which is a bad enough exchange on a defended metric that **the recommendation to ship it inert was
+already drafted.** Run against the identity in the same tree, shaded saturation came back at 0.638
+to the digit, confirming inertness — and lit rock read **0.617, not the 0.621 measured ninety
+minutes earlier.** Four thousandths of the apparent cost belonged to a `textures.js` edit that
+landed in between. The real price is 0.003 for 0.018, six to one in favour, and the change is worth
+having.
+
+So the control did not merely improve a number's precision, it **inverted the decision.** That is
+the argument for building the ablation before the measurement rather than after an argument about
+it, and it is the specific thing that was missing from the two stipple mechanisms earlier tonight:
+both were measured against a tree that had moved, and neither had an inert setting to compare
+against.
+
+Two supporting notes, both already paid for in this file. The earlier `_fillonly` reading that
+showed a dramatic blue-violet shift was a cross-session comparison spanning a `post.js` edit *and*
+a corrupted frame — same failure, twice over. And the whole-frame crush figure could not be quoted
+either way, because the foreground lost a juniper and gained cast shadows while two vegetation
+files were uncommitted: **a plant leaving frame moved that statistic by more than the fix did.**
+
+## The instrument discipline worth keeping
+
+`tools/_probesplit.mjs` is the shape to copy. It decomposes the fill into three illuminants and
+**asserts that the parts close on the whole to 0.0000% before it prints a single number** — so the
+decomposition is verified rather than assumed, and any error in it is visible immediately instead
+of being laundered into a conclusion. That check cost four lines. It also exonerated the encoder as
+a byproduct: the analytic mix reads 0.635 against the render's 0.638, which is what located shade's
+colour in the illuminant rather than in ACES or the toe, and retired a suspicion that had survived
+several hours on plausibility alone.
+
+The general form, and the counterpart to the aphorism rule above: **an instrument should be able to
+fail out loud.** A tool that cannot report that it is wrong is only ever reporting that it ran.
