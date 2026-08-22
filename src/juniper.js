@@ -1930,6 +1930,25 @@ export function buildJuniper(terrain, tex) {
   trunk.name = 'juniper-wood';
   out.push(trunk);
 
+  /* The crown keeps the knee on albedo times irradiance, and this is a tested
+     decision rather than an oversight.
+     Moving it into irradiance space is what fixed the near field, where a sunlit
+     blade measured a 0.7% value range across its whole width on an albedo
+     carrying a deliberate 3.5x ramp, and the crown's remaining complaint — a hard
+     lit/shade split within each spray — reads as the same signature. It is not.
+     Switched over at the equivalent cap of 4.97, the frame changed by 1.18% of
+     pixels at a mean of one code value per channel, invisible at full resolution,
+     and internal crown contrast went the wrong way: 8.87:1 to 8.97:1 over crown
+     pixels. Of the pixels that moved, 41340 darkened and 1904 brightened.
+     The reason is that the two forms are identical below saturation and the crown
+     sits at value 0.08, so almost none of it was being clamped and there was
+     nothing to give back. The shrubs are in full sun and deep in saturation,
+     which is why the same change was worth several measured percent there.
+     So the split has another cause, and the candidate is in this file already:
+     this crown carries no transmission at all, uTransAmt and uTransIso both zero
+     by default, so a shaded spray receives nothing through it and crushes against
+     a lit one. Internal contrast of 8.87:1 against a real juniper's 2.4:1 is the
+     size of gap a missing term makes, not a mistuned one. */
   const fol = new THREE.Mesh(foliageGeometry(clumps, 4242), makeFoliageMaterial(folTex));
   fol.position.copy(trunk.position);
   fol.castShadow = true;

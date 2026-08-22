@@ -9468,3 +9468,112 @@ tone, and it does that.
 So the waterline stays straight and the near field ships as it is, with the lid
 fixed and the contact not. Shading cannot help here — a silhouette is geometry by
 definition — and both geometric routes have a number against them.
+
+# Two-tone blades: three causes fixed, the fourth recorded as a bounded deviation
+
+The complaint was that near-field blades are "either near-white or near-black with
+essentially nothing between", with "no gradient across the width of the blade".
+Four causes were stacked under it. Three are fixed in `875f0ba`; the fourth is
+the deviation below.
+
+Two corrections first, because both would have cost the next person the round.
+**The class is `veg-shrub`, not agave or yucca** — ablation puts every one of
+those pixels on it — and **the pale cream shapes are its stems**, magnified about
+twofold, not its blades. The stems were the one thing left at a single flat
+colour with full alpha, so they had been excluded from every shading fix made.
+And the reported region, (150-900, 550-1440), is **bottom-origin**: read from the
+top it is shadowed gravel with no plant in it.
+
+## What was fixed
+
+**Flat fills.** Every blade in `makeGrass` was one `stroke` and every leaf in
+`makeScrub` one `fill`, so a blade had no interior at any magnification. Each is
+now three passes across its width, widest and darkest first. Uniform RGB scaling
+cannot move hue or saturation at all — both are invariant under it — so the only
+figure at risk was value, and it was area-centred: grass +0.5 degrees hue, scrub
++1.1, saturation within 0.002 of each.
+
+**Alpha carried a silhouette, not a thickness.** This is why "a varying normal
+across the blade's short axis" cannot be implemented as stated: a card carries
+dozens of blades and the shader cannot know where one ends. Alpha now carries
+optical thickness, which *is* a per-blade cross-width coordinate. The silhouette
+is divided back out at the alpha test, because the profile alone thinned distant
+cards enough to lift `wall_lit`'s median 10% as rock showed through.
+
+**The knee was compressing in the wrong space**, and this is the finding worth
+keeping. Applied to albedo times irradiance it outputs its cap whatever goes in.
+Measured on a sunlit blade: **V mean 0.730, maximum 0.737, a 0.7% range across
+the whole width**, on an albedo carrying a deliberate 3.5x ramp. The atlas ramp
+was arriving and being destroyed at the knee. Its original argument was only ever
+about irradiance — a card presenting a full-facing normal to a 15-degree key
+takes 3.9x what the grazing-lit floor takes — so it now compresses irradiance and
+lets albedo through. A close cousin of the law about statistics taken in a space
+the viewer does not occupy: **compression applied in the wrong space destroys the
+variation the other factor was carrying.**
+
+Measured on the clump: midtone band V 0.35-0.65 grows from **7.06% to 8.82%** of
+plant pixels (7.06 to 8.33 from the atlas, to 8.82 from the material), and the
+largest single-pixel step across a blade falls from **0.408 to 0.376**. Lit rock
+**0.614 to 0.615** with p50, p95 and p99 identical.
+
+## The bounded deviation
+
+**These cards are mostly lit by a term that is identical for every card in a
+clump.** With the knee holding direct at a ceiling, what remains is ambient, and
+ambient has no orientation dependence, so the only distinction left between two
+blades is whether each is in sun. That is the two-tone read, and it is why no
+per-fragment shading term can reach it: a **7.5x sweep of the knee moved the
+level 14% and left the population maximum untouched at L 0.874**, which is the
+signature of a term the knee does not reach.
+
+Closing it means reducing the ambient share so orientation-dependent terms
+dominate, which re-opens the defect ambient and transmission were added to fix —
+the shrubs once called "burnt thistle", jet-black in deep shade. It spans these
+materials and System 4's fill and needs the shade framings re-judged. Not taken.
+
+## The hero knee: hypothesis tested and falsified
+
+The crown's remaining complaint, a hard lit/shade split within each spray, reads
+as the same signature. It is not, and the test is cheap to quote.
+
+| | frame | crown contrast p90/p10 |
+|---|---|---|
+| knee on albedo x irradiance (shipped) | — | **8.87:1** |
+| knee on irradiance, equivalent cap 4.97 | 1.18% of pixels, mean 1 code value | 8.97:1 |
+
+Invisible at full resolution, and the contrast went the **wrong** way. Of the
+pixels that moved, 41340 darkened and 1904 brightened. The two forms are
+identical below saturation and **the crown sits at value 0.08**, so almost none
+of it was being clamped and there was nothing to give back; the shrubs are in
+full sun and deep in saturation, which is why the same change was worth several
+measured percent there. Reverted — the crown ships as it was.
+
+So the split has another cause, and the candidate is already named in
+`makeFoliageMaterial`: **this crown carries no transmission at all**, `uTransAmt`
+and `uTransIso` both zero by default. A shaded spray receives nothing through it
+and crushes against a lit one. Internal contrast of 8.87:1 against a real
+juniper's 2.4:1 is the size of gap a missing term makes, not a mistuned one.
+Worth a round with a paired capture.
+
+## Three negative results, each worth its render
+
+**Killing the specular IBL on these materials is pixel-identical.** It is not the
+broad white veil it looks like, and the earlier note calling it "a term no lever
+touches" should not be read as calling it the dominant one.
+
+**Cross-blade shading built in the screen plane does nothing, even at an absurd
+3.0.** Shooting into the sun makes the sun's view-space direction almost pure -z,
+so its x and y are both near zero and a tilt inside the screen plane cannot
+change the cosine. The working version projects the gradient into the card's own
+plane and compares cosines as a difference, which cannot blow up edge-on.
+
+**Applying the rounding to the direct term alone is invisible**, for the reason in
+the deviation above. It has to scale the total.
+
+## And a measurement discipline note
+
+`src/sky.js` changed between the baseline and the finals, so the 2-7% frame-median
+lift across that pair is not attributable. A same-build A/B with only these
+material uniforms returned to their defaults gives **identical medians**, putting
+all of it on the sky edit. **Two figures from a tree that moved between them are
+two afters, not a before and an after.**
