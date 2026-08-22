@@ -32,6 +32,26 @@
 import * as THREE from 'three';
 import { fbm, ridged, clamp, smoothstep, mix } from './noise.js';
 import { SUN_DIR, SUN_EL } from './sky.js';
+import { DIRT_RELIEF_K } from './textures.js';
+
+/* The grain bed's depth, from the one place it is stated. 25 mm per height unit
+   times K. Both the sun's climb through the height field and the geometric
+   march's reach are derived from it, so a deeper bed automatically gets the
+   longer shadows it casts rather than the same short ones sampled differently. */
+const DIRT_RELIEF_M = 0.025 * DIRT_RELIEF_K;
+const RAKE_NEAR = 0.0025;                                  // metres, first sample
+/* 88 mm is what the height channel's full 24 mm range casts at this sun, and it
+   was measured rather than picked; a deeper bed casts further, so the reach
+   scales with K and the ratio with K^(1/7).
+   Written as a scaling of the hand-computed 1.663 rather than recomputed from
+   the reach, so that K = 1 emits the literal 1.66300 — the same value the
+   shipped shader had, exactly, and therefore an exact no-op. That is not
+   pedantry: `rake` is a max() over the samples, so it is a threshold, and
+   recomputing the ratio to five decimals instead of three moved the reach by
+   0.03 mm out of 88 and flipped 0.0945% of bytes in `ground` by up to 41/255.
+   A tiny change to a reduction is not a tiny change to its output. */
+const RAKE_RATIO = 1.663 * Math.pow(DIRT_RELIEF_K, 1 / 7);
+const RAKE_FAR = RAKE_NEAR * Math.pow(RAKE_RATIO, 7);      // for the comment only
 /* Tonight's wind, which is not the same quantity as the prevailing wind the
    juniper's lean records. A drift of sand was deposited this evening, so it
    belongs to tonight's wind along with the gust bed and the saltation, and
@@ -1743,11 +1763,11 @@ if (rakeW * grainF > 0.002) {
      Note what this does not fix, because it is worth not mistaking one for the
      other: the ceiling here is the bed's own depth. See tools/_rakeprobe.mjs and
      the note in CONTRACT.md. */
-  float t = 0.0025;
+  float t = ${RAKE_NEAR.toFixed(5)};
   for (int k = 1; k <= 8; k++) {
     float hs = texture2DGradEXT(uDirtM, d1 + uSunStep * t, ddx, ddy).b;
     rake = max(rake, hs - (dirtH + t * uSunRise));
-    t *= 1.663;                                      // 2.5 mm to 88 mm in eight
+    t *= ${RAKE_RATIO.toFixed(5)};                        // to ${(RAKE_FAR * 1000).toFixed(0)} mm in eight
   }
 }
 /* ---- and the part that must survive the footprint ----
@@ -2505,7 +2525,7 @@ export function makeTerrainMaterial(tex) {
        which is 5.6 height units. Both derived rather than tuned so they stay
        correct if the sun or the tile changes. */
     uSunStep: { value: new THREE.Vector2(SUN_DIR.x, SUN_DIR.z).normalize().multiplyScalar(0.3846) },
-    uSunRise: { value: Math.tan(SUN_EL) / 0.025 },
+    uSunRise: { value: Math.tan(SUN_EL) / DIRT_RELIEF_M },
     uWind: { value: new THREE.Vector2(Math.sin(TONIGHT_FALLBACK), Math.cos(TONIGHT_FALLBACK)) },
     uBedT: { value: BED_T },
   };

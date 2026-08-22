@@ -210,6 +210,65 @@ const GRAINS = [
 ];
 for (const G of GRAINS) G.hMax = G.hgt * G.flat;
 
+/* ---- how deep the grain bed is, stated once ────────────────────────────────
+ * A field unit of the dirt height channel is 25 mm of relief, and that number
+ * is asserted in two places that must agree or the surface lies: the normal map
+ * strength below, and `uSunRise` in terrain.js, which converts metres travelled
+ * along the sun azimuth into height units climbed. Divergence between them is a
+ * bed whose shadows and whose shading describe different surfaces, and nothing
+ * would report it. So it is a value, imported, not a number written twice.
+ *
+ * K scales it. The bed as authored is too shallow for its own feature size:
+ * grains reading 30-60 mm across in `ground` sit on a height field with 4.0 mm
+ * of sd, so a typical grain stands 4-8 mm proud and casts 15-30 mm at a 15
+ * degree sun — a shadow shorter than the grain is wide, which is exactly the
+ * "matte ellipsoids with no cast shadows" the critique names. Measured with
+ * tools/_rakeprobe.mjs over 40000 paired points on the real map; the tables are
+ * in CONTRACT.md.
+ *
+ * Note this cannot be done by scaling the height array: packARM renormalises
+ * the channel to its own min and max, so a deeper `h` produces a bit-identical
+ * texture. The depth lives entirely in how the channel is *interpreted*, which
+ * is what this constant is.
+ *
+ * The ceiling is the binary-field trap, and it was measured before the change
+ * rather than discovered after: steep grain normals under a low sun swing a
+ * texel from fully lit to fully shadowed, and a binary field scores well on
+ * every gradient metric while reading as salt and pepper. The fraction of the
+ * map past the terminator at mip 0 runs 7.8% at K=1, 13.1% at 1.5, 18.0% at 2
+ * and 25.2% at 3, with RMS tangent slope 0.452 / 0.678 / 0.904 / 1.356. The
+ * trap is on record at "a tangent slope near 0.8", so 1.5 sits under it and 2
+ * is over. Do not raise this without re-running that probe and looking at the
+ * patch — the number will not tell you.
+ *
+ * ---- and why it is 1.0, having been measured at 1.5 ----
+ * 1.5 was built, captured paired against 1.0 at the same commit, and reverted.
+ * It did not fail the way it was expected to. It is *not* the binary-field trap:
+ * hf/lf was unchanged to two decimals in all three framings (0.47, 0.58, 0.57),
+ * which is a flat contrast scaling rather than the spectral shift that trap
+ * produces, and the patch looks better rather than noisier — more pebble
+ * definition, no salt and pepper. Mean luminance barely moved.
+ *
+ * It failed on `ground` floor grad/L, 0.151 to 0.172, against a 0.12-0.16
+ * reference band. That is a real failure and not a bureaucratic one: it means
+ * the floor is now carrying more one-pixel gradient than a photograph of the
+ * real thing. The transfer is linear at about 0.042 of grad/L per unit of K, so
+ * the band admits **K = 1.21 at most**, worth about 18% shadowed area against
+ * the 31-42% a real wash floor has at this sun. Which is the actual result:
+ * there is not enough room in the band to buy real pebble shadows by scaling.
+ *
+ * The reason is a misallocation, and it is the useful thing here. Our floor sits
+ * at the *top* of the grad/L band while its 9-pixel high-frequency energy is
+ * 0.056 against a real arroyo photograph's 0.115-0.137 — half. So the frame
+ * already spends a photograph's entire gradient budget, and spends it at the
+ * finest scale, on grit, where a photograph spends it at pebble scale, on cast
+ * shadow. Scaling relief raises both bands together and runs out of budget long
+ * before the pebble band arrives. The move that works is a *rebalance* — take
+ * contrast out of the sub-pixel grit and put it into pebble-scale relief — not
+ * a multiplier on the whole map. That is a tuning pass with its own captures,
+ * and it is the right next piece of work on this surface. */
+export const DIRT_RELIEF_K = 1.0;
+
 export function makeDirt(size = 1024) {
   const N = size * size;
   const h = new Float32Array(N);
@@ -326,8 +385,9 @@ export function makeDirt(size = 1024) {
   return {
     albedo: dataTex(alb, size, true),
     /* 2.6 m tile at 1024 is 2.5 mm per texel, and a field unit is about 25 mm of
-       relief, which puts the strength near 10. */
-    normal: dataTex(normalFromHeight(h, size, size * 0.0102), size, false),
+       relief, which puts the strength near 10 — then scaled by DIRT_RELIEF_K,
+       which is the one place the bed's depth is stated. */
+    normal: dataTex(normalFromHeight(h, size, size * 0.0102 * DIRT_RELIEF_K), size, false),
     arm: dataTex(packARM(ao, rough, h, size), size, false),
   };
 }

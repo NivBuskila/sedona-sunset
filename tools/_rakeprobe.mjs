@@ -111,6 +111,43 @@ console.log('');
 console.log('and if the bed were not so shallow (geometric 8, reach scaled with it):');
 for (const k of [1.5, 2, 3]) stats(`relief x${k}`, geom(8, 0.0025, 0.088 * k), k);
 
+/* ---- will deepening the bed spring the binary-field trap? ----
+ * The trap, twice-earned on this project: steep grain normals under a low sun
+ * swing a texel from fully lit to fully shadowed, the field goes binary, and a
+ * binary field has an excellent one-pixel gradient. The metric improves while
+ * the surface goes to salt and pepper. The quantity that predicts it is not
+ * slope, it is the *fraction of the field past the terminator* — texels whose
+ * normal has turned far enough from the sun to receive no direct light at all,
+ * because those are the ones that go to a floor value and stay there.
+ *
+ * Computed at mip 0, which is the worst case: the shader fades the grain normal
+ * by 0.16 + 0.84 * grainF and reads it through the mip chain, so the shipped
+ * surface is gentler than this. Relative comparison between reliefs is the
+ * point, not the absolute figure.
+ */
+console.log('\nterminator crossing at mip 0, the binary-field predictor:');
+const el = sunEl, Lx = Math.cos(el) * SUN_DIR.x / sxz, Ly = Math.cos(el) * SUN_DIR.z / sxz, Lz = Math.sin(el);
+for (const k of [1, 1.5, 2, 3]) {
+  const s = (RELIEF_M * k) / texelM;              // height units to texel-widths
+  let dark = 0, grazing = 0, n = 0, sum = 0, rms = 0;
+  for (let y = 0; y < SIZE; y += 2) for (let x = 0; x < SIZE; x += 2) {
+    const i = (xx, yy) => H[(((yy % SIZE) + SIZE) % SIZE) * SIZE + (((xx % SIZE) + SIZE) % SIZE)];
+    const gx = (i(x + 1, y) - i(x - 1, y)) * 0.5 * s;
+    const gy = (i(x, y + 1) - i(x, y - 1)) * 0.5 * s;
+    const inv = 1 / Math.sqrt(gx * gx + gy * gy + 1);
+    const ndl = (-gx * Lx - gy * Ly + Lz) * inv;
+    if (ndl <= 0) dark++;
+    if (ndl > 0 && ndl < 0.05) grazing++;
+    sum += Math.max(0, ndl); rms += gx * gx + gy * gy; n++;
+  }
+  console.log(`  relief x${String(k).padEnd(4)} rms slope ${Math.sqrt(rms / n).toFixed(3)}  ` +
+    `past terminator ${(100 * dark / n).toFixed(1).padStart(5)}%  ` +
+    `within 3 deg of it ${(100 * grazing / n).toFixed(1).padStart(5)}%  ` +
+    `mean N.L ${(sum / n).toFixed(4)}`);
+}
+console.log('  A jump in "past terminator" is the trap: those texels take a floor value');
+console.log('  and stay there, which is the salt-and-pepper read, not deeper shadows.');
+
 console.log(`\n  Reach is not the problem: 300 mm finds exactly what 88 mm finds, because the`);
 console.log(`  map's whole range only casts 90 mm at this sun. Sampling is a little of it —`);
 console.log(`  eight linear steps find ${(100 * shipped / dense).toFixed(0)}% of what thirty-five over the same reach find,`);

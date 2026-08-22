@@ -548,15 +548,54 @@ march at eight geometric fetches and scaling its reach with the relief:
 | ×3 | 42.3% | 0.171 |
 
 A real wash floor under a 15° sun is somewhere in the ×2 to ×3 rows, which is also what the
-critic's "one to three times its own length" implies. **This was deliberately not landed**,
-and the reason is blast radius rather than doubt: the height array in `makeDirt` feeds the
-normal map (strength `size * 0.0102`, which encodes exactly the 25 mm per unit that
-`uSunRise` assumes — the two are already consistent and must move together), and it feeds
-AO and roughness through `packARM`. Doubling it doubles the grain normals across the whole
-near field, where `ground` floor `grad/L` already sits at 0.151 against a 0.12–0.16 band,
-and steep grain normals under a low sun are the documented binary-field trap: the metric
-improves while the surface goes to salt and pepper. That is a tuning pass with its own
-paired captures, not a delivery-morning edit.
+critic's "one to three times its own length" implies. Two people reaching the same number
+from photographs and from a height field.
+
+### It was then built at ×1.5, captured paired, and reverted — and it did not fail the way anyone expected
+
+The depth cannot be changed by scaling the height array: `packARM` renormalises the channel
+to its own min and max, so a deeper `h` produces a bit-identical texture. Depth lives
+entirely in the two constants that *interpret* the channel — the normal map strength in
+`makeDirt` and `uSunRise` in `terrain.js` — which must agree or the bed's shadows and its
+shading describe different surfaces, and nothing would report it. Those are now one
+exported value, `DIRT_RELIEF_K`, with the march's reach derived from it.
+
+Paired capture, both sides at commit `460acdd`, `ground` / `wash_mid` / `far_270`:
+
+| | grad/L ground | grad/L wash_mid | hf/lf ground | hf/lf wash_mid | L mean ground |
+|---|---|---|---|---|---|
+| K = 1.0 | 0.151 | 0.160 | 0.47 | 0.58 | 0.368 |
+| K = 1.5 | **0.172** | **0.192** | 0.47 | 0.57 | 0.362 |
+
+**It is not the binary-field trap.** `hf/lf` is unchanged to two decimals in all three
+framings, which is a flat contrast scaling and not the spectral shift that trap produces;
+mean luminance barely moves; and the patch looks *better* — more pebble definition, no salt
+and pepper. The pre-measurement predicted this: the terminator-crossing fraction goes 7.8%
+at K=1 to 13.1% at 1.5, with RMS tangent slope 0.452 to 0.678, and the trap is on record at
+"a tangent slope near 0.8". 1.5 is under it. ×2, at slope 0.904 and 18.0% past the
+terminator, is over it and should not be tried without re-running the probe.
+
+**It failed on `grad/L` leaving the 0.12–0.16 reference band, and that is a real failure**:
+it means the floor carries more one-pixel gradient than a photograph of the real thing. The
+transfer is linear at about 0.042 of grad/L per unit K, so the band admits **K = 1.21 at
+most**, worth roughly 18% shadowed area against the 31–42% a real wash floor has. Reverted
+to K = 1.0, which emits the literal `1.66300` for the march ratio and multiplies the other
+two constants by exactly 1.0, so it is a provable no-op rather than a measured-small one.
+
+### The actual result: the gradient budget is misallocated, and scaling cannot fix that
+
+This is the useful finding and it explains why the surface has resisted five rounds. Our
+floor sits at the **top** of the grad/L band while its 9-pixel high-frequency energy is
+0.056 against a real arroyo photograph's 0.115–0.137 — **half**. So the frame is already
+spending a photograph's entire one-pixel gradient budget, and spending it at the finest
+scale on grit, where a photograph spends it at pebble scale on cast shadow. Scaling the
+relief raises both bands together, so it runs out of budget long before the pebble band
+arrives — which is exactly what the paired capture measured.
+
+The move that works is therefore a **rebalance and not a multiplier**: take contrast out of
+the sub-pixel grit and put it into pebble-scale relief, so grad/L holds while hf9 climbs.
+That is the right next piece of work on this surface, and `tools/_rakeprobe.mjs` will
+predict the terminator-crossing cost of any relief before a render is spent on it.
 
 ## For System 2 and System 4: the occlusion change, and what it does and does not reach
 
