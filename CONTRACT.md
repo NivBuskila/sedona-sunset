@@ -8133,57 +8133,93 @@ recorded as such.
 
 ---
 
-## Reprojection applied harder: third failure. Stopping.
+## far_320 striations: SHIPPED AS A KNOWN DEFECT. Read this first.
 
-Gate narrowed from `smoothstep(0.14, 0.40, slope)` to `smoothstep(0.14, 0.24,
-slope)`, taking full reprojection weight from 53.1 degrees down to 40.5 - the
-inverse of the original proposal and following the ablation's empirical
-direction rather than a model. `pw` was deliberately **not** sharpened in the
-same render, because `pw` acts on all steep ground and would have destroyed the
-discriminating signature.
+**The positive finding, which is the one that matters to anyone editing this
+code: the grit reprojection is LOAD-BEARING. Do not remove it.**
 
-**Result: the striations are essentially unchanged.** Not a fix. Reverted.
+It is gated by `steep = smoothstep(0.14, 0.40, 1.0 - gN.y)` in `terrain.js` and
+it looks wrong - it opens at 31 degrees, saturates at 53, and a plausible
+geometric argument says it blends toward the *more* stretched projection below
+the 45 degree crossover. I made that argument, quantified it, and it is wrong.
+Ablating the reprojection makes the combing **dramatically worse**: the whole
+headwall goes to heavy fibre and the shipped frame is mild by comparison. The
+model was computing the geometric stretch of the texture on a tilted plane,
+which is real and is not the mechanism; what smears is the anisotropy of the
+*sample footprint* under a grazing view, and the vertical pair's footprint is
+far rounder on a steep face.
 
-### And the pre-registered prediction was badly designed again
+A pre-registered prediction that comes back **inverted** is the strongest form
+that result can take, and it is the reason this paragraph exists. If you are
+reading that gate and it looks wrong to you, it looked wrong to me too. Render
+the ablation before you touch it.
 
-I predicted two disjoint byte-identical regions - flat ground below 31 degrees
-and the steepest faces above 53 - on the grounds that the gate leaves weight at
-exactly 0 and exactly 1 there. The diff came back at 22-68% of pixels in every
-horizontal band.
+**The decision:** ship the mild combing. The fallback - a slope-gated attenuation
+of `GRIT_N` - would buy the combing back **only by removing grain from exactly
+the faces the grit normal was added to serve**, trading away the far-field
+detail that took the last forty metres from the weakest part of the route to the
+most detailed. That is a worse frame, precisely and not merely arguably. A
+defect with three eliminated hypotheses, a known-harmful fallback and a written
+account of what was tried is a legitimate thing to deliver.
 
-That looks like a falsification and is not one. **Only 3% of far_320's sloped
-samples are above 53 degrees** - 154 of 5163, in my own table two sections
-above. So I predicted identity in a region that barely exists in the frame, and
-the prediction could not have discriminated anything. It is the *same* error as
-the severity ordering, committed immediately after diagnosing it: **confidence
-calibrated against a prediction that cannot fail.** The first time the
-prediction was true under every rival; this time it was untestable for want of
-sample. Both feel like corroboration and neither is.
+### Pre-registering a prediction: BOTH halves, and the second is the skippable one
 
-This is the same shape as the performance gate that had been calibrated against
-a contended machine and therefore certified contention as rest. A threshold, or
-a prediction, checked against something that cannot contradict it inherits
-whatever was wrong and launders it into everything downstream. Nothing below a
-bad gate can detect a bad gate.
+Stated once and then broken twice in one afternoon, so it is written out in full:
 
-### Where the striations stand
+1. **The prediction must be able to distinguish.** A result every rival
+   hypothesis also predicts is not evidence. The severity ordering between
+   far_320 and far_270 followed from far_320 simply having more steep ground, so
+   it was consistent with every slope-driven mechanism, and I read it as support.
+2. **The prediction's region must carry enough sample to be observed.** This is
+   the half that is easy to skip. I predicted byte-identity above 53 degrees when
+   only **3% of far_320's sloped samples are above 53 degrees** - 154 of 5163, in
+   my own table earlier in this file. The prediction was untestable for want of
+   sample, and an untestable prediction returning a null reads exactly like a
+   confirmed one.
 
-Three hypotheses, each with a render and each dead:
+Both failures are the same thing: **confidence calibrated against a prediction
+that cannot fail.** It is the same shape as the performance gate calibrated from
+samples taken on a contended machine, which therefore certified contention as
+rest and survived a fourteen-commit bisect, an explicit A/B and two written
+corrections. **Nothing below a bad gate can detect a bad gate**, and a
+prediction is a gate on belief.
 
-1. **Reprojection is the stretcher** - falsified and *inverted*. Removing it makes
-   the combing much worse. It is load-bearing; do not remove it.
-2. **Rotated tangent frame** - real, measured at a mean 41.2 degrees off, fixed
-   correctly as `tsToWorldAx`, and visually null. Code recorded, not landed.
-3. **Reprojection under-applied** - this one. Full weight from 40.5 degrees
-   instead of 53.1 changes the frame substantially and the striations not at all.
+The second failure happened *immediately after* I diagnosed the first, which is
+the useful part rather than the embarrassing one: it demonstrates that rule 1
+alone is insufficient guidance.
 
-The remaining untried lever is the `pow(...,4)` sharpening of `pw` on its own,
-which is the only part of the reprojection path not yet varied. I have not run
-it: three failures is a complete answer for one afternoon and a fourth guess on
-a frozen tree is not worth the reshoot.
+## The three hypotheses, each with a render, each dead
 
-**Recommendation: ship the mild combing.** The fallback - a slope-gated
-attenuation of `GRIT_N` - would work only by removing grain from exactly the
-faces the grit normal was added to serve, trading the far-field detail that took
-the last forty metres from the weakest part of the route to the most detailed.
-That is a worse frame, not a better one.
+1. **The reprojection is the stretcher.** Falsified and *inverted* - see the
+   section above. It is load-bearing; do not remove it.
+2. **A rotated tangent frame.** Real and measured: `tsToWorld` builds its frame
+   from world X regardless of which projection supplied `gr.gb`, a mean 41.2
+   degrees off and up to a quarter turn. Fixed correctly as `tsToWorldAx` with
+   the axis matched to the dominant projection, byte-safe in the near field
+   because `gritNK` is zero there. **Visually null.** A correctness fix with no
+   demonstrable benefit is not worth a reshoot on a frozen tree, so it is not
+   landed; the code is recorded above for pickup.
+3. **The reprojection is under-applied.** Gate narrowed from `smoothstep(0.14,
+   0.40, slope)` to `smoothstep(0.14, 0.24, slope)`, taking full weight from 53.1
+   degrees down to 40.5 - the inverse of hypothesis 1 and following the
+   ablation's empirical direction rather than a model. `pw` was deliberately
+   **not** sharpened in the same render, because it acts on all steep ground and
+   would have destroyed the discriminating signature. **Striations essentially
+   unchanged.** Reverted.
+
+The one untried lever is the `pow(...,4)` sharpening of `pw` on its own, the
+only part of the reprojection path not yet varied. Not run: three failures is a
+complete answer and a fourth guess on a frozen tree is not worth the reshoot.
+
+A methodological note for whoever picks this up. The diff on hypothesis 3 came
+back at 22-68% of pixels in every horizontal band, which looks like a clean
+falsification of the byte-identity prediction and is not one - see the
+pre-registration section above for why. Do not read that number as evidence
+about the mechanism; it is evidence about the prediction.
+
+**Decision taken: ship the mild combing.** Recommended on the reasoning above and
+accepted. The fallback - a slope-gated attenuation of `GRIT_N` - would work only
+by removing grain from exactly the faces the grit normal was added to serve,
+trading the far-field detail that took the last forty metres from the weakest
+part of the route to the most detailed. That is a worse frame, not a better one.
+This is a decision on the evidence, not an unfinished item.
