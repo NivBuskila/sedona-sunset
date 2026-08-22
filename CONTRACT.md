@@ -1,5 +1,84 @@
 # Sedona Sunset — Build Contract
 
+## Delivery summary
+
+**What it is.** A first-person walk, about 330 m, up a dirt wash between red rock buttes in
+Sedona at golden hour. Seven systems — terrain and the wash, the buttes, the juniper, lighting
+and sun, atmosphere, sound, post — built and critiqued over several days. **Every mesh, every
+texture and every sound is generated in code at page load; there is not one asset file in the
+project**, and the only dependency is `three`. That constraint was held completely and it is
+the thing this build is proudest of.
+
+**What is genuinely good.** The wall rock is the best surface in the project and a critic
+singled it out — `wall_lit` and `sun_gap` are clean at full resolution and `far_270` is the
+strongest frame in the set. The arrival works now: the wash heads up into a real box canyon
+with a breached apron, a pour-off notch and distant land visible *through* it, where a month
+ago it read as "the trail ran out". Colour is measured against real photographs rather than
+asserted, and lit rock sits inside its bands on hue, value and B/G. The `shade_far` station
+carries the only paired window in the project — the same dirt in sun and in fill — and the
+2.4° of cooling it measures is the best colour evidence in the handoff. The sound is complete
+and its quiet is the feature. The corridor holds you without ever being felt: 4.2 minutes of
+driven wandering, 5.8 m off the centreline, zero frames touched. And the loading screen means
+the forty-second boot is a wait rather than a hung tab.
+
+**What is honestly still weak.** More than one would like on delivery morning, and none of it
+is hidden:
+
+- **Performance does not meet the brief and this is the largest open item.** The contract
+  asked for 120+ fps at 1440p. **That is not reachable on this scene on this GPU at any rung
+  with the camera moving.** The honest figure is 40–60 fps at native 1440p on the top tier,
+  with the adaptive governor settling somewhere in the 80s–100s. The frame is fill-bound, not
+  geometry-bound, and the last clean measurement was taken on a machine already 65–100% busy
+  with other agents' work — so the number is a floor rather than an estimate. A final benchmark
+  is running.
+- **Mid-distance floor detail.** Past the bed-grain fade at 30 m and past the clast scatter
+  radius, there is nothing left but smooth shading, and the channel floor and the low colluvial
+  slopes read waxy from about the middle of the frame outward. Three independent attempts to
+  move it were built, measured and reverted; the surface is now **bounded from three
+  directions** rather than merely unfixed, and the map is written up in "The wash floor,
+  bounded from three directions". The leading untested hypothesis is that both metrics are
+  reading clast silhouettes rather than the bed.
+- **A near-field quilted tiling pattern on rock, and pale flat angular slabs.** Both present in
+  the delivery set, both identical in the ungraded arm so neither is the grade's, and **both
+  being worked now.** The slabs read as untextured placeholder geometry and are new since the
+  previous build. `hf/lf` measured the quilted floor at a perfectly respectable 0.45 — see
+  rule 10.
+- **Warm shade in the corridor.** The brief imagined blue canyon shade. What the corridor
+  actually delivers is warm shade, and that is **physically correct rather than a defect**: on
+  a shaded lateral face the fill decomposes as 47.8% sky, 25.1% escarpment bounce, 27.2% ground
+  bounce, and the cool term is already the largest by luminance while losing the chroma fight
+  because the warm terms are three times its saturation. The genuine modelling error inside
+  that — one occlusion scalar applied to three differently-occluded illuminants — has been
+  corrected. What is left is bounded by **crush, not by transport**: the shaded window is only
+  44–48% chroma headroom, and the shadow gate at 0.242 against a 0.25 ceiling means the obvious
+  remedy of lifting shade is spent. `shade_far` at 160 m is where the scene does produce cool
+  shade, and it produces it honestly.
+- **Cliff jointing is weaker than real Sedona sandstone.** The vertical joint system exists and
+  was measured before anything was added: ablating all four sets moves the lit midwall's
+  vertical-to-horizontal line ratio only **0.77 → 0.75**. The termination phase was fixed so a
+  joint dies at a different height on each slab, but the walls still read more horizontally
+  banded than a real Supai/Coconino face. Wind-scoured **alcoves are not built at all** — a
+  genuine gap in the surface vocabulary rather than a defect in what is there.
+- **The sun disc is deliberately not visible**, and that is a knowing deviation from a brief
+  that asks for it three times. It is not a failure of effort: the disc is already
+  geometrically unoccluded in `wash_low` and measures 2.6% contrast against the sky around it,
+  and a defined disc requires roughly a 2 km visual range, which is exactly the air that
+  flattens the receding ridgelines. The disc and the depth ladder compete for one dial. **Do
+  not re-open this by carving a saddle in the skyline.**
+- **Smaller, named.** A stipple on wide penumbra edges — this filter's, confirmed by ablation,
+  with two published mechanisms both withdrawn and a third recorded as an unverified lead. A
+  masonry read on `wall_lit`, accepted as shipped because the same arrises are what make
+  `sun_gap`'s wall good. The slopes flanking the wash head are the smoothest geometry on the
+  route and the only statistical outlier among thirty-two stations. And **nobody in this
+  pipeline has heard the sound** — every judgement on it is from spectrograms.
+
+**Two things to know before quoting anything in this file.** Read **THE PROCESS RULES** below
+first; they are ten hard-won rules with the instances that earned them, and rule 3 in
+particular will stop you quoting a number against the wrong population. And several figures
+here were **superseded or retracted**, and are struck in place with a pointer rather than
+deleted, because each had already been quoted downstream. If a figure is struck, the pointer
+next to it is the current answer.
+
 ## The governing instruction
 
 > "just do whatever you find good and it should be a great experience for user that's it"
