@@ -122,9 +122,12 @@ a real sunset photograph of Sedona. Not stylized, not low-poly, not "good for a 
   the triangle ceiling was measured to be the wrong axis entirely — removing the far
   ridgelines is worth 0.02 ms of a 30 ms frame, and the frame is fill-bound. **120 fps at
   native 1440p is not reachable on this scene on this GPU**, at any rung, with the camera
-  moving. See "Triangles are not what this frame costs" and, for the figures to quote,
-  "The ladder as a player walks it" — every earlier fps table on this project was taken
-  with the camera held on a quiet machine and is not what a walking player gets.
+  moving. The shipped figure is **37 fps walking at native 2560×1440**, with a steady 60 at
+  the governor's reduced 1997×1123 buffer. See "Triangles are not what this frame costs" and,
+  for the one table to quote, **"The delivery table — 2560×1440, RTX 4060, machine gated
+  quiet"** — every earlier fps table on this project was taken with the camera held and is not
+  what a walking player gets, and every "120 fps", "123", "59 fps" and "55 fps" figure in this
+  file is one of those.
 
 # THE PROCESS RULES — read these before measuring anything
 
@@ -4106,9 +4109,12 @@ the frame and System 2's apron rows are 12 k of it.
 
 **The real finding is the time, and it is a contract-level problem rather than a system's.**
 The target is 120+ fps at 1440p and the top tier delivers **32**. The quality ladder does not
-rescue it either: `high` 31.04 ms, `medium` 24.62, `low` 20.38, `potato` 18.03 — so the
-bottom rung of the governor is 55 fps, and there is no tier in the ladder that reaches the
-brief. The lever is fragment cost and resolution, not vertices. From
+rescue it either: `high` 31.04 ms, `medium` 24.62, `low` 20.38, `potato` 18.03 — so ~~the
+bottom rung of the governor is 55 fps~~, and there is no tier in the ladder that reaches the
+brief. *(The 55 was potato at native resolution, which is a setting the governor never selects —
+see "A tier is not a rung" below. The conclusion in this sentence survived every correction since
+and is the one that stuck: the delivery run reads **37 fps moving at rung 0** and 89 at the floor
+of the ladder. The figures to quote are in "The delivery table" below.)* The lever is fragment cost and resolution, not vertices. From
 `tools/shadercost.mjs`: `terrain.js` is 41 fetches with 14 unconditional and 8 inside a
 loop, `rock.js` is 16 with 15 unconditional, `post.js` is 52 across five literals. Note that
 `wall_lit`, which is mostly wall, costs 18.9 ms against 30.5 for the two floor-and-sky
@@ -4130,8 +4136,8 @@ the maps. Shadows were 23 of those 30.49 ms.
 
 ## Where the frame actually went: 160 shadow comparisons per ground pixel
 
-The frame is **30.5 ms → 15.7–16.9 ms at 2560×1440 on the top tier** and the governor's
-ladder reaches 120 fps at rung 4 and 182 fps at its floor. Full account in `PERF.md` §9;
+The frame is **30.5 ms → 15.7–16.9 ms at 2560×1440 on the top tier** and ~~the governor's
+ladder reaches 120 fps at rung 4 and 182 fps at its floor~~. Full account in `PERF.md` §9;
 what belongs here is the method and the two instrument failures, because both recur.
 
 *(Both figures in that sentence were measured with the camera held, and neither is what a walking
@@ -4218,12 +4224,23 @@ exposes `rungs` and `setRung` and `bench.mjs` prints both tables.
 
 ### The ladder, measured, and the numbers to quote
 
-> **Superseded for the delivery note. See "The ladder as a player walks it" below.** This table is
-> a true record of `fa8b9ec` **on a quiet machine**, and both of those qualifications matter. It is
-> measured with the camera held, which does not pay the +3.2 ms a walking player pays; and it was
-> taken before the GPU acquired a 65–100% utilisation floor from other work on this box, which
-> costs another 6 ms and is nothing to do with the scene. An earlier revision of this banner said
-> the frame had "grown 6.5 ms at rung 0"; a fourteen-commit bisect says it did not grow at all.
+> **Superseded. The numbers to quote are in "The delivery table — 2560×1440, RTX 4060, machine
+> gated quiet" below.** This table is a true record of `fa8b9ec` as measured, and it is measured
+> **with the camera held**, which does not pay the +3.2 ms a walking player pays. That much still
+> stands. Two successive explanations for why it reads six milliseconds faster than every later
+> measurement of the same cell do not:
+>
+> - ~~the frame had "grown 6.5 ms at rung 0"~~ — a fourteen-commit bisect says it did not grow at
+>   all, flat to within 0.83 ms with the endpoints interleaved.
+> - ~~"it was taken before the GPU acquired a 65–100% utilisation floor from other work on this
+>   box, which costs another 6 ms and is nothing to do with the scene"~~ — **withdrawn.** A run on
+>   a machine gated quiet reads **23.06 ms held against 23.30 contended**. The foreign load was
+>   costing 0.24 ms, not 6. See item 1 of "The ladder as a player walks it", which lists the
+>   confounds already eliminated so nobody redoes them.
+>
+> **The gap between this table's 16.95 and the delivery run's 23.06 on the same commit is
+> unexplained and is recorded as unexplained.** Do not quote either the growth story or the
+> contention story; both were confident and both were wrong, in that order, within one morning.
 
 Per rung at `sun_gap`, 2560×1440, RTX 4060, median of seven blocks of thirty:
 
@@ -4238,9 +4255,13 @@ Per rung at `sun_gap`, 2560×1440, RTX 4060, median of seven blocks of thirty:
 | 6 | potato | 0.68 | 1741×979 | 6.50 | 154 |
 | 7 | potato | 0.58 | 1485×835 | 5.48 | 182 |
 
-The governor targets 8.33 ms and settles at rung 4, so the shipped experience on this machine
-is **120+ fps at an upscaled 1997×1123**, and `#high` pins 2560×1440 at 59. Quoting a
-scale-1.0 tier row as the fallback is the error the row above documents.
+~~The governor targets 8.33 ms and settles at rung 4, so the shipped experience on this machine
+is **120+ fps at an upscaled 1997×1123**, and `#high` pins 2560×1440 at 59.~~ **Struck: those are
+held-camera figures and neither survives.** The delivery run puts rung 4 at **63 fps moving** and
+rung 0 at **37 fps moving**; the governor targets a steady 60 and settles at rung 4 for that, not
+for 120. **No rung on this ladder reaches 120 fps with the camera moving.** Quoting a
+scale-1.0 tier row as the fallback is the error the row above documents — and quoting a
+held-camera row as the shipped experience is the error this sentence was.
 
 **What is left, and it is not a shader.** The terrain shader is now 9.1 ms, of which 4.0 is
 its centre shadow tap — carrying the penumbra, and not reducible without changing the picture
