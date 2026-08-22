@@ -328,9 +328,15 @@ try {
 
   out.frames = [];
   /* Early, so a white desert is caught before a hundred and fifty seconds are
-     spent tracing a governor's reaction to one. */
-  await page.waitForTimeout(3000);
-  out.frames.push(await shot('t=3s'));
+     spent tracing a governor's reaction to one — but not at three seconds, which
+     is where this used to be and where it produced a false alarm. The cold-start
+     fix makes the ladder take three rung changes in the first 3.3 s, each of
+     which resizes the drawing buffer and reallocates every render target, and a
+     screenshot that lands inside one catches an unpainted canvas and reports the
+     scene as 100% black. Eight seconds is after the ladder has settled and still
+     long before anything has been concluded from the trace. */
+  await page.waitForTimeout(8000);
+  out.frames.push(await shot('t=8s'));
 
   /* ---- --push: the aftermath of a transient, without the transient ----
    *
@@ -395,6 +401,25 @@ try {
 
   const samples = await page.evaluate(() => { clearInterval(window.__govId); return window.__gov; });
   out.samples = samples;
+
+  /* The other half of `#adapt`, tested rather than assumed. The flag exists so
+     this tool can watch the governor; the thing that must remain true is that
+     *not* passing it still pins a capture. A second page load with no flag at
+     all, asserting the harness clause fires — because the failure mode is silent
+     by construction, a rung change during a capture looking like a slightly soft
+     build rather than like a bug. */
+  const plain = await browser.newPage({ viewport: { width: 640, height: 360 }, deviceScaleFactor: 1 });
+  try {
+    await plain.goto(url.split('/#')[0] + '/', { waitUntil: 'domcontentloaded', timeout: 300_000 });
+    await plain.waitForFunction(() => !!window.__game, null, { timeout: 300_000 });
+    out.capturePin = await plain.evaluate(() => ({
+      adapting: window.__game.perf.adapting,
+      harness: window.__game.perf.harness,
+      tier: window.__game.perf.tier,
+      scale: window.__game.perf.scale,
+    }));
+  } catch (e) { out.capturePin = { error: String(e.message || e).slice(0, 120) }; }
+  await plain.close().catch(() => {});
   out.errors = [...new Set(errs)].slice(0, 10);
   out.warnings = [...new Set(warns)];
 
@@ -464,6 +489,15 @@ try {
       console.log(`  best rung climbed back to: ${rec == null ? 'n/a' : 'rung ' + rec}` +
         (back ? `, reaching rung ${settledBefore} again after ${(back.t - out.pushAt).toFixed(1)}s`
           : ' — DID NOT return to where it was'));
+    }
+
+    if (out.capturePin) {
+      const c = out.capturePin;
+      console.log('\n  ── and a capture, with no flag at all ──');
+      console.log(c.error ? `  ✗ could not check: ${c.error}`
+        : `  harness clause ${c.harness ? 'fired' : 'DID NOT FIRE'}, adapting ${c.adapting}, ` +
+          `pinned to ${c.tier} at scale ${c.scale.toFixed(2)}` +
+          (c.harness && !c.adapting && c.tier === 'high' && c.scale === 1 ? '  — captures unaffected' : '  ✗ CHECK'));
     }
 
     if (out.split) {
