@@ -40,6 +40,13 @@ export const SUN_DIR = ATMOS_SUN_DIR;
    solved on this line and the flag has to exist before it. See NO_BAND's comment there. */
 const NO_BAND = /(^|[#&,])noband(\b|$|[&,])/.test(
   (typeof location !== 'undefined' ? location.hash || '' : '').toLowerCase());
+/* Drops the restriction on the band rather than the band, so the three states the
+   term can be in — absent, unrestricted, restricted — are three arms of one build.
+   The middle arm is what shipped for a few hours this afternoon and what the shadow
+   gate's 0.021 was spent on; it is kept selectable because the restriction's whole
+   claim is a difference against it. */
+const BAND_ALL = /(^|[#&,])bandall(\b|$|[&,])/.test(
+  (typeof location !== 'undefined' ? location.hash || '' : '').toLowerCase());
 const A = computeAtmosphere({ decompose: true, groundBand: !NO_BAND });
 
 /* ── scene radiance scale ──────────────────────────────────────────────────
@@ -822,6 +829,89 @@ export function patchShadowChunk() {
     #endif
     return s;
   }
+#endif
+
+/* ── is this facet standing on sunlit floor? ───────────────────────────────
+ *
+ * s4GroundBand in lights_pars_begin is the light a facet gets from the floor
+ * *beyond its own occluder's shadow*, and whether any such floor is in view
+ * depends entirely on how long that shadow is. The integral is scale-free — a
+ * facet at height h on an occluder of height H sees sunlit floor at depressions
+ * below atan( (h/H) tan(el) ) whatever H is — so geometry alone cannot tell a
+ * stone from a cliff, and the unrestricted term gave both the same band. That is
+ * the error. What differs is *distance*: the sunlit floor begins at H/tan(el),
+ * which for a 50 mm clast is 190 mm of real wash floor and for a 40 m wall is
+ * 148 m, three times the corridor's width — so along that sightline there is no
+ * floor at all, only the far escarpment, which the probes already carry in
+ * shWall. Crediting a wall face with a band is double-counting the escarpment;
+ * crediting a clast facet with one is the term's entire purpose.
+ *
+ * So the discriminator is the length of the shadow the fragment stands in, and
+ * the shadow map is the only thing in the rig that knows it. Probe the coarse
+ * cascade a short way in the direction shadows fall: a clast's shadow has ended
+ * and the tap comes back lit, a wall's has not and it comes back dark.
+ *
+ * The coarse cascade is the right one to ask, and not merely the convenient one.
+ * At 208 m over 4096 it is 50.8 mm a texel, so a 50 mm clast casts into about
+ * one texel and its own shadow barely exists in that map — which is exactly the
+ * behaviour a length-scale test wants, since "shadowed in the coarse cascade"
+ * means "shadowed by something bigger than a hand". The fine cascade would
+ * resolve the clast's own 190 mm and report it standing in shade, which is true
+ * and useless: the question is what the floor around it is doing.
+ *
+ * Limits, both real. A strip within about half a metre of a rim reads lit,
+ * because air 2 m out from a rim *is* lit, and s4BandHeight is what removes it.
+ * And a fragment off the edge of the coarse map reads lit, which is the same
+ * answer getShadow gives there, so the band and the beam at least agree. */
+#if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
+  /* Declared again here because three declares it only in the vertex stage, in
+     shadowmap_pars_vertex, where it builds vDirectionalShadowCoord. Applied to a
+     *direction* rather than a position it gives the shadow-space displacement per
+     metre of world travel, which is what stepping a probe needs. Doing it this way
+     rather than deriving the offset analytically is deliberate: the analytic form
+     is two lines of trigonometry with a sign in it that would be wrong in a way
+     that still looked plausible in a render, since a probe stepped toward the sun
+     also reads dark on a wall and lit on a clast. Same name and type as the vertex
+     declaration, so this is one uniform read by two stages. */
+  uniform mat4 directionalShadowMatrix[ NUM_DIR_LIGHT_SHADOWS ];
+
+  /* Unit horizontal in the direction shadows fall — the sun's azimuth reversed and
+     flattened — plus a lift. The lift is not geometry: the probe asks about floor a
+     few metres off while sitting at the facet's own height, which on a clast is
+     30 mm, and the wash is not a plane. A tenth of a metre of rise per metre of run
+     clears any slope the floor has over five metres and is still far inside the
+     shadow volume of anything wall-sized, which needs only tan(15) of it. */
+  const vec3 S4_PROBE = vec3( 0.1564810, 0.1000000, 0.9876880 );
+
+  float s4LitAt( vec4 c, vec4 dc, float bias, float d ) {
+    vec4 q = c + dc * d;
+    vec3 p = q.xyz / q.w;
+    if ( p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0 ) return 1.0;
+    return step( p.z + bias,
+      unpackRGBAToDepth( texture2DLodEXT( directionalShadowMap[ 0 ], p.xy, 0.0 ) ) );
+  }
+
+  float s4FloorLit( ) {
+    DirectionalLightShadow sh = directionalLightShadows[ 0 ];
+    vec4 c = vDirectionalShadowCoord[ 0 ];
+    vec4 dc = directionalShadowMatrix[ 0 ] * vec4( S4_PROBE, 0.0 );
+    float b = sh.shadowBias;
+    /* Four taps on a geometric ladder, not one at a chosen distance. One test is a
+       step function, and a step function drawn across a floor is the hard edge post
+       spent this afternoon taking back out of the local lift; four give a ramp, and
+       a boulder whose shadow ends at three metres gets the partial credit it has
+       physically earned rather than all or nothing. The ladder puts three of the
+       four inside two metres because that is where a near-vertical facet's cosine
+       weight is — the band peaks just below horizontal, which is floor a few facet
+       heights away, not floor at the horizon. */
+    return 0.25 * ( s4LitAt( c, dc, b, 0.30 ) + s4LitAt( c, dc, b, 0.80 )
+                  + s4LitAt( c, dc, b, 2.00 ) + s4LitAt( c, dc, b, 5.00 ) );
+  }
+#else
+  /* No cascade means no way to ask the question. Returning zero rather than one
+     refuses the term instead of quietly restoring the unrestricted one, so a
+     #noshadow arm cannot come back brighter than the build it is ablating. */
+  float s4FloorLit( ) { return 0.0; }
 #endif`;
 }
 patchShadowChunk();
@@ -1097,6 +1187,20 @@ function installProbeHeightLerp(A) {
   vec3 s4GroundBand( vec3 n ) {
     return ${bandRGB} * max( s4BandF( n.y ), 0.0 );
   }
+  /* The second half of the restriction, and it is about what the band's directions
+     land on rather than about occlusion. From height h the band's near edge — the
+     shadow line, at depression equal to the sun's elevation — is floor h/tan(15) =
+     3.7h away. On the wash that is metres and it is floor. At 12 m up it is 45 m,
+     which is the corridor's width, so from there the band's own near edge is
+     already looking at the far escarpment and not at the ground; the escarpment is
+     in shWall and crediting it twice is what the unrestricted term did. World Y is
+     used raw for the same reason s4ProbeOpen does: the wash floor holds between
+     -1.56 and +1.51 m over the whole traverse, so a floor clast sits at 1.0 of this
+     and cannot be gated out by it. This also removes the rim strip that s4FloorLit
+     cannot see past. */
+  float s4BandHeight( float wy ) {
+    return 1.0 - smoothstep( 2.0, 12.0, wy );
+  }
   float s4ProbeOpen( float wy, float ny ) {
     /* The free-exponent fit wanted 1.46 and 1.12; pinning them to 1.5 and 1.125
        gives the same residual to three decimals (0.045 and 0.029), so the two
@@ -1113,6 +1217,7 @@ function installProbeHeightLerp(A) {
      gain of one is the honest answer rather than a compile error. */
   vec3 s4AoTint( vec3 n, float ao ) { return vec3( 1.0 ); }
   vec3 s4GroundBand( vec3 n ) { return vec3( 0.0 ); }
+  float s4BandHeight( float wy ) { return 1.0; }
 #endif
 `;
   /* Rebuild from the pristine chunks every time rather than appending to
@@ -1144,6 +1249,8 @@ function installProbeHeightLerp(A) {
      Keeping the comment wholly inside the literal removes the invariant instead of
      documenting it: the arms no longer contain comment text, so they cannot stop
      closing something they do not have. */
+  /* Assembled before the literal for the reason the paragraph above gives. */
+  const BAND_RESTRICT = BAND_ALL ? '' : '* s4FloorLit() * s4BandHeight( vFogW.y )';
   const ASTERN = NO_ASTERN
     ? '/* #noastern: the up-canyon aperture is off for this run. */'
     : 'irradiance += s4AsternDelta( s4wn ) * ( s4AsternOpen( vFogW.z ) * ( 1.0 - s4open ) );';
@@ -1154,10 +1261,19 @@ function installProbeHeightLerp(A) {
         vec3 s4wn = inverseTransformDirection( geometryNormal, viewMatrix );
         float s4open = s4ProbeOpen( vFogW.y, s4wn.y );
         irradiance += s4ProbeDelta( s4wn ) * s4open;
-        /* The sunlit floor beyond the shadow line. Not scaled by the height or astern
-           lerps: those open the *sky* aperture, and this is the ground half, which a
-           surface high on a wall sees as much of as one down in the wash. */
-        irradiance += s4GroundBand( s4wn );
+        /* The sunlit floor beyond the shadow line, restricted to the facets that have
+           one. Not scaled by the height or astern lerps — those open the *sky*
+           aperture and this is the ground half — but by its own two factors, which
+           are documented on s4FloorLit up in the shadow chunk and on s4BandHeight
+           above. The earlier note here claimed a surface high on a wall sees as much
+           of this as one down in the wash. That is true of the *geometry* and false
+           of the *scene*: the integral is scale-free but the distance is not, and at
+           148 m of shadow the wall face is looking at the far escarpment, which the
+           probes already carry. Spending 0.021 of a wall-face shadow gate on a
+           floor-facet defect was that sentence's fault.
+           #bandall drops the two factors and nothing else, which is the arm that
+           sentence describes, so the claim above is testable inside one build. */
+        irradiance += s4GroundBand( s4wn ) ${BAND_RESTRICT};
         /* Scaled by what the height lerp has not already opened. Above the rim
            shOpen has no escarpment left in it at any bearing, so there is no
            up-canyon window left to open and crediting one would double-count it.

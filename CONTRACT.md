@@ -2210,9 +2210,14 @@ infinite Lambertian plane collects radiance × π/2, so the coefficient is geome
 **The estimator matters more than the lighting.** On one build, shadow-to-sunlit reads 0.125
 comparing the darkest 40% against the brightest 40% within `wall_lit`, and 0.37 comparing a flat
 shaded face in `wall_shade` against a flat sunlit one in `wall_lit`. Three times, from the choice
-of population alone. `tools/fillprobe.mjs --ratio` uses the first, matching the 40/40 split
+of population alone. `tools/fillprobe.mjs --ratio` used the first, matching the 40/40 split
 `sat.mjs` and `hue.mjs` use, so a ratio and a colour always describe the same two populations —
 but the target's provenance is critics with image tools on photographs, which is the second.
+**`--ratio` is withdrawn and now refuses with a non-zero exit** (2026-08-22). Keeping it printing
+`in band` beside the right band was three faults compounding: the rejected estimator, on the
+retired floor population for five of its seven regions, against a band that describes neither. The
+paragraph below already said the floor rows were meaningless and the tool went on printing them for
+hours, which is the argument for a refusal header over a footnote. Use `tools/_gate.mjs`.
 Quote the estimator whenever quoting the ratio, and note that on a region more than about two
 thirds sunlit the darkest 40% is not shadow at all and the number is meaningless: `wash_mid` and
 `ground` read 0.33 to 0.39 for that reason alone.
@@ -9206,6 +9211,117 @@ cap on exactly that. This correction spent 0.021 of the 0.037 that was available
 Boynton frame twenty minutes before the sun leaves the rim plausibly sits above 0.25, so
 **further progress on this finding is a decision about the gate ceiling rather than a
 transport bug**, and that is not System 4's call to make.
+
+### It was not a decision about the ceiling. It was the wrong coupling.
+
+The paragraph above framed the next step as raising or holding 0.25, and that framing was
+wrong in a way worth keeping visible, because the provenance work that was supposed to
+settle it settled something else instead. The ceiling is honest — testimony from critics
+with image tools on photographs, corroborated by having been invoked twice against the
+build's own interest, and neither endpoint has ever been a reading this build occupied. But
+tracing it also established **what population it measures**, and it is a shaded rock *wall*
+face in `wall_shade` against a sunlit rock *wall* face in `wall_lit`. The finding's
+population is clast side facets on the open wash floor, in `ground` and `wash_low`. Those
+are different surfaces in different views.
+
+So the 0.021 was **wall-face headroom spent on a floor-facet defect, and the thing that
+coupled them was the term, not the contract.** `s4GroundBand` was global: every normal in
+the frame with a downward component got the band, because the band's geometry is
+scale-free — a facet at height h on an occluder of height H sees sunlit floor below
+`atan( (h/H) tan(el) )` whatever H is. Geometry alone genuinely cannot tell a stone from a
+cliff.
+
+**What differs is distance.** The sunlit floor begins at `H/tan(el)`: 190 mm for a 50 mm
+clast, and 148 m for a 40 m wall — three times the corridor's width, so along that
+sightline there is no floor at all, only the far escarpment, which the probes already carry
+in `shWall`. Crediting a wall face with a band double-counts the escarpment. Crediting a
+clast facet with one is the term's whole purpose. The discriminator is therefore the length
+of the shadow the fragment stands in, and the shadow map is the only thing in the rig that
+knows it.
+
+`s4FloorLit` in the shadow chunk probes the **coarse** cascade four times along the
+direction shadows fall, at 0.30, 0.80, 2.00 and 5.00 m, and returns the lit fraction. Three
+details are load-bearing:
+
+- **The coarse cascade is the right one to ask, not merely the convenient one.** At 208 m
+  over 4096 it is 50.8 mm a texel, so a 50 mm clast casts into about one texel and its own
+  shadow barely exists in that map. "Shadowed in the coarse cascade" therefore *means*
+  "shadowed by something bigger than a hand". The fine cascade resolves the clast's own
+  190 mm and would report it standing in shade — true, and the wrong question.
+- **Four taps, not one.** One test is a step function, and a step function drawn across a
+  floor is the hard-edged artefact post shipped and withdrew the same afternoon. Four give
+  a ramp, and a boulder whose shadow ends at three metres gets the partial credit it has
+  physically earned.
+- **The offset comes from `directionalShadowMatrix` applied to a direction**, declared a
+  second time in the fragment stage. Deriving the shadow-space offset analytically is two
+  lines of trigonometry containing a sign that would have been wrong *plausibly*: a probe
+  stepped toward the sun also reads dark on a wall and lit on a clast, so the render would
+  have looked right and the term would have been measuring the wrong side of itself.
+
+`s4BandHeight` is the second factor and it is about what the band's directions land on
+rather than about occlusion. From height h the band's near edge is floor `3.7h` away; at
+12 m that is 45 m, the corridor's width, so from there the band is already looking at the
+escarpment. It also removes the rim strip `s4FloorLit` cannot see past, because air two
+metres out from a rim genuinely is lit.
+
+### Measured, three arms of one build
+
+`#noband` removes the term, `#bandall` removes the restriction, default is shipped.
+`s4rn`/`s4ra`/`s4rb`, 1600x900, full resolution, no downscale anywhere in the reading.
+
+| figure | `#noband` | `#bandall` | restricted | band |
+| --- | --- | --- | --- | --- |
+| shadow gate (`_gate.mjs`) | 0.212 | 0.233 | **0.211** | 0.15–0.25 |
+| `wall_shade`, gate window, cv | 12.79 | 14.45 | **12.80** | must not move |
+| `wall_lit`, gate window, cv | 60.44 | 62.07 | **60.61** | must not move |
+| lit rock saturation | 0.658 | 0.675 | **0.659** | must not move |
+| lit rock hue, median | 14.1 | 13.6 | **14.1** | must not move |
+| slab side facet, red | 37.5 | 41.5 | **41.5** | the finding |
+| `ground` dark facets, mean red | 46.7 | 47.7 | **47.7** | the finding |
+| `ground` dark facets, share under 40 red | 24.7% | 20.3% | **20.3%** | the finding |
+
+**The restriction is free in both directions, and that is the whole result.** In the gate's
+own window the wall face moves by **+0.01 of a code value** where the unrestricted term
+moved it by +1.66 — 99.4% of the cost removed. On the complained-about facet the restricted
+and unrestricted arms are **bit-identical at 41.5 red** — none of the benefit removed. The
+lit-rock figures return to the ablated build to within one thousandth.
+
+Spatially, `tools/_banddelta.mjs` differences the two arms so that the frame cancels and
+what is left is the term alone. It lands on the shaded verticals and nowhere else: mean lift
+2.1 cv on base red under 30, falling to 0.12 cv on base red over 140 with a p99 of 1, so no
+sunlit pixel gains more than a code value. And there is no terrace: the term's own
+adjacent-pixel step has p99.9 of **7 cv on `ground` and 4 on `wash_low`**, against **65 and
+64** for the same statistic on the base frame's dark pixels. The term varies an order of
+magnitude more smoothly than the picture it sits on. The crop confirms it — the lift follows
+the slabs' silhouettes and carries the internal modelling of Terrain's new detail normal, so
+the light has something to describe rather than a flat lid to wash.
+
+### The facet was inside the photograph band before the term, and that reframes the finding
+
+Measuring the facet against its own slab top rather than against a wall in another view —
+two windows, shade over sun, the accepted estimator's form applied to the complained-about
+population:
+
+| | side, rel. lum. | top, rel. lum. | facet's own gate |
+| --- | --- | --- | --- |
+| `#noband` | 0.0817 | 0.4722 | **0.173** |
+| restricted | 0.0894 | 0.4725 | **0.189** |
+
+The facet was **already inside 0.15–0.25** before any of this work, in the band's bottom
+quarter, and the term moves it to the middle. And 90–110 in red on this facet, at its own
+hue, is a facet gate of **0.409 to 0.500** — 1.6x to 2.0x the top of the band. That
+independently reproduces the 1.6x bound derived above from irradiance, by a completely
+different route: the first from what a hemisphere of sunlit floor can deliver, the second
+from the contract's own photograph-referenced ratio. **Two routes, one factor.**
+
+So the honest close is that this facet is not a transport hole and never was. It sits at the
+ratio a photograph of shaded rock against sunlit rock is supposed to sit at, the missing
+term that was genuinely missing has now been added and restricted, and it is worth 4 code
+values of red — from 37.5 to 41.5. If it still reads as a hole at 41.5, the remaining
+distance is in the toe and the display, not in the light arriving, and the contract's own
+gate is the evidence for that. **The critic's two findings — compress the range, and 0.15
+to 0.25 — are mutually inconsistent on this population by a factor of two, and no term can
+satisfy both.**
 
 ## The law: a statistic taken in a space the viewer does not occupy measures an object nobody is looking at
 

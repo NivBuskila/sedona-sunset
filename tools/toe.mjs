@@ -39,10 +39,11 @@ const files = a.filter((s, i) => s.endsWith('.png') && (ri < 0 || i < ri || i > 
 /* The shadow-to-sunlit gate as CONTRACT.md pins it: a flat shaded face against a
    flat sunlit face, the same window in both views, mean relative luminance off
    the encoded PNG. Implemented here because nothing else implemented it —
-   `fillprobe --ratio` uses the darkest-40%-against-brightest-40% split, which is
+   `fillprobe --ratio` used the darkest-40%-against-brightest-40% split, which is
    the estimator the contract explicitly names as the *other* one and which reads
    3x low on the same frame. Two tools reporting one gate under one name is how a
-   system gets told it has moved when it has not. */
+   system gets told it has moved when it has not. That one is withdrawn now and
+   refuses; this and tools/_gate.mjs are the two that answer. */
 const GATE = [0.30, 0.24, 0.34, 0.34];
 if (a.includes('--gate')) {
   const shade = files.find(f => f.includes('wall_shade'));
