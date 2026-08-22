@@ -310,6 +310,44 @@ const DUST_TILE = 24;
 const MOTE_FWD = 0.55;
 const MOTE_AMB = 0.006;
 
+/* ---- the largest share of a pixel one grain may own ------------------------
+ *
+ * A delivery critic found isolated 1-2 px saturated orange dots sitting in open
+ * blue sky, hard-edged and with no falloff, and called them the single most
+ * unambiguous not-a-photograph signal in the set. Vegetation cleared itself by
+ * population ablation and every saturated one was this field's.
+ *
+ * They are not a colour bug and they are not the height law. One sampled
+ * (160,126,18) against a sky of (140,159,183): blue crushed from 183 to 18 needs
+ * a coverage of essentially 1.0, and a red radiance near 0.35 linear, which is
+ * far above the 0.006 ambient. It is the forward term at roughly thirty degrees
+ * off the beam, where g = 0.62 still returns 0.32 — a fully opaque grain.
+ *
+ * Coverage reaches 1.0 because vA is a probability that nothing bounded. The
+ * shaft term alone peaks at 2.02, and near the eye k = px/sz climbs above one so
+ * the alpha is multiplied by its square: at two metres vA is about 2, at one
+ * metre up to 18. That is not a mote, it is a pebble, and against sky there is
+ * nothing behind it to be suspended in.
+ *
+ * The bound is the same conservation law the 3 px floor already rests on, run in
+ * the other direction. Rather than let the alpha saturate, the sprite grows by
+ * the square root of the excess and the alpha is pinned at the cap, so the
+ * integrated radiance and the optical depth are untouched and only the peak
+ * moves. That matters because the mote visibility law is marked do-not-touch and
+ * it is a property of the aggregate: anything that clipped the alpha instead
+ * would have cut the brightest shaft cores by up to 9x and taken the beams with
+ * them.
+ *
+ * It costs almost nothing because it is a near-field population. At eight metres
+ * vA already lands at about 0.22 on its own, so the cap does not reach motes
+ * beyond that, and the field fades out by eleven; grains inside three metres are
+ * some two percent of what is drawn. The beams live in the bulk outside that and
+ * are not touched.
+ *
+ * Measured, not chosen: swept against tools/_skymote.mjs, the vegetation
+ * builder's detector, which reproduces the critic's counts exactly. */
+const MOTE_MAX_COV = hashNum('motecov', 0.20);
+
 function buildDust(count, sunDir, sunHue) {
   const g = new THREE.BufferGeometry();
   const pos = new Float32Array(count * 3);
@@ -347,6 +385,7 @@ function buildDust(count, sunDir, sunHue) {
       uSpeed: { value: 1 },
       uDrive: { value: 1 },
       uGroundY: { value: 0 },
+      uMaxCov: { value: MOTE_MAX_COV },
       uShadowMap: { value: null },
       uShadowMat: { value: new THREE.Matrix4() },
       uHasShadow: { value: 0 },
@@ -360,6 +399,7 @@ uniform vec2 uWind;
 uniform float uSpeed;
 uniform float uDrive;
 uniform float uGroundY;
+uniform float uMaxCov;
 uniform sampler2D uShadowMap;
 uniform mat4 uShadowMat;
 uniform float uHasShadow;
@@ -501,8 +541,17 @@ void main() {
      always moves by its square. */
   float sz = clamp(px, MOTE_MIN_PX, 4.0);
   float k = px / sz;
-  gl_PointSize = sz;
   vA *= k * k;
+
+  /* No single grain owns a pixel. Spread rather than saturate, so the flux and
+     the optical depth are conserved exactly and only the peak comes down — see
+     the long note on MOTE_MAX_COV. */
+  float over = vA / uMaxCov;
+  if (over > 1.0) {
+    sz *= sqrt(over);
+    vA = uMaxCov;
+  }
+  gl_PointSize = sz;
 }`,
     fragmentShader: /* glsl */`
 uniform vec3 uMote;
@@ -1738,6 +1787,25 @@ export function buildAtmosphere({ scene, camera, renderer, terrain, path, sun, a
   const blackPx = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
   blackPx.needsUpdate = true;
   shimmer.mat.uniforms.tShaft.value = blackPx;
+
+  /* The ambient term is the dome, so it has to be the dome's colour.
+   *
+   * Both mote terms were built from the sun's hue, which is right for the
+   * forward term — that light *is* the beam — and wrong for the other one, which
+   * is what a grain receives from the whole sky when the beam is not reaching it.
+   * A grain in shadow was being lit by a small warm sun. This is the same error a
+   * round-one critic named as "the dust is being lit by a white sun while the
+   * rock is lit by a red one", inverted: the sky term wearing the sun's colour.
+   *
+   * jSky is aerial.js's own skylight source, so the dust and the haze now agree
+   * about what the sky is. Normalised to unit luminance and multiplied by the
+   * same MOTE_AMB, so this moves the chroma and not the level — which is what
+   * keeps it clear of the visibility law, whose crossover is set by MOTE_FWD and
+   * the phase function. Small in isolation; it is not the dot defect. */
+  const sky = aerC.jSky;
+  const skl = 0.2126 * sky[0] + 0.7152 * sky[1] + 0.0722 * sky[2] || 1;
+  dust.material.uniforms.uMoteAmb.value.setRGB(
+    (sky[0] / skl) * MOTE_AMB, (sky[1] / skl) * MOTE_AMB, (sky[2] / skl) * MOTE_AMB);
 
   /* Scene info has to be snapshotted after the scene pass and before the
      composite, or `info()` reports the fullscreen triangle instead of the
