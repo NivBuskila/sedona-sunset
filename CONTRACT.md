@@ -3911,72 +3911,63 @@ and 0.600 were both historical readings that this footer printed as limits, and 
 anything to route. See the V band section below; the correct conclusion was neither exposure nor
 grading but the instrument.
 
-## System 7 delivery record: `sys7final` and `sys7rung4`
+## System 7 delivery record: `sys7ship` and `sys7px` — the set that ships
 
-Shot at **`4303379`** with `src/` clean, on the **frame-convergence settle** — every view
-converged in 1.7–2.5 s. Tags were deleted before shooting rather than overwritten.
+Shot at **`9c7d0c4`** with `src/` clean, on the **frame-convergence settle**; every view
+converged in 1.7–2.1 s. Tags deleted before shooting, one resolution per tag.
 
-- **`sys7final`** — 2560×1440, 13 views × 2 arms, 26 frames, manifests log **0** entries.
-- **`sys7rung4`** — 1997×1123, same 13 views × 2 arms, 26 frames, **0** logged entries.
+- **`sys7ship`** — 2560×1440, 13 views × 2 arms, 26 frames, manifests log **0** entries.
+- **`sys7px`** — 1997×1123, same 13 views × 2 arms, 26 frames, **0** logged entries.
 
-**On the buffer that ships:** the governor's default target moved from 120 to 60 fps, so the rung
-it settles on is no longer the 1997×1123 that 120 fps forced. That number belongs to the
-performance work and is not measured here. What is claimed instead is a **bracket**: every
-pixel-scale figure below is quoted at both 1997×1123 and 2560×1440, and holds at both, so it
-holds anywhere between them. The capture path is unaffected by the target change and this was
-checked rather than assumed — `perf.js` sets `pinned = 0` for a `navigator.webdriver` client at
-line 381, `targetFps` is not read until line 550, and `adapting` is `pinned < 0 && …`, so the
-adaptation update returns immediately and a pinned tier keeps full resolution.
+**The buffer question has closed.** On an idle machine the governor now holds **rung 0 —
+native 2560×1440, no upscaling** — so `sys7ship` *is* the shipped buffer, and this record is no
+longer a bracket around an unmeasured rung. `sys7px` is kept as the second point that proves the
+pixel-scale terms hold under a 1.28× resolution change; it is no longer load-bearing for delivery.
+The morning's 1997×1123 figure was measured on a contended machine by a quiet-gate that had itself
+been calibrated on a loaded card.
 
-**Provenance of the pair.** The two sets were shot either side of one commit, which touched only
-this document — `git diff --stat 4303379..9a94490 -- src/` is empty. Uncommitted edits to
-`rock.js`, `scatter.js` and `terrain.js` appeared in the tree during the second shoot, so the
-freeze was checked after the fact against a statistic already established as resolution-stable to
-0.008 and 0.8°: lit rock reads **0.612 / 20.6°** at 1440p and **0.612 / 20.6°** at rung 4, with
-the control arms at 0.612 / 20.7° and 0.613 / 20.7°. Agreement to 0.001 and 0.1° across a 1.28×
-resolution change is far tighter than any source change could produce, so both sets share one
-source and nothing in flight leaked into the second freeze.
+**Provenance.** One commit landed between the two shoots and it touched only this document —
+`git diff --stat 9c7d0c4..7de1126 -- src/` is empty. Lit rock reads 0.612 / 20.6° in both sets and
+0.612–0.613 / 20.7° in both controls, agreeing to 0.001 and 0.1° across the resolution change,
+which is far tighter than any source change could produce.
+
+### The three flagged figures: two held, one recovered
+
+| | previous shoot | **this set** | verdict |
+| --- | --- | --- | --- |
+| shadow gate, graded | 0.237 | **0.234** | eased back |
+| shadow gate, control | 0.258 — over by 0.008 | **0.255** — over by 0.005 | dependency holds, no worse |
+| graded headroom | 0.013 | **0.016** | recovered |
+| lit rock saturation | 0.612 | **0.612** | steady, third shoot running |
+| midwall `hf/lf` | 0.50 | **0.53** | recovered |
+
+The gate's dependency on the toe **still holds and has stopped tightening**: the ungraded arm reads
+0.255 against the 0.25 ceiling at *both* resolutions, and the toe brings the frame to 0.234. The
+0.003 rise that narrowed the headroom last shoot has reversed.
+
+**Midwall `hf/lf` recovering to 0.53 confirms the mechanism rather than contradicting it.** `grad`
+has been pinned at **0.0150** across all three shoots while `grad@4` went 0.0283 → 0.0299 → 0.0283.
+The high band never moved. The ratio fell and rose entirely on the *denominator*, which is the
+clearest possible demonstration of the limitation recorded below: this number tracks spectral
+balance, and it moved twice without the high-frequency detail changing at all.
 
 ### Colour, with the spread and the clipped fraction beside every figure
 
-| window | graded | control | band | layer |
-| --- | --- | --- | --- | --- |
-| lit rock saturation | 0.612 | 0.612 | 0.615–0.626 | drift guard — 0.003 under, **accepted** |
-| lit rock hue | 20.6° | 20.7° | 18.9–21.1° | drift guard |
-| lit rock V | 0.685 | 0.687 | 0.59–0.73 | reference photographs |
-| lit rock q25–q75 | 0.56–0.68 | 0.56–0.68 | spread intact | — |
-| clipped ≥254 / ≥250 | 0.07% / 0.60% | 0.00% / 0.09% | — | — |
-| far rock 270 saturation | 0.467 | 0.472 | — | — |
+| window | graded | control | band |
+| --- | --- | --- | --- |
+| lit rock saturation | 0.612 | 0.612 | 0.615–0.626 — 0.003 under, **accepted drift** |
+| lit rock hue | 20.6° | 20.7° | 18.9–21.1° |
+| lit rock V | 0.691 | 0.693 | 0.59–0.73 |
+| lit rock q25–q75 | 0.56–0.67 | 0.56–0.68 | spread intact |
+| clipped ≥254 / ≥250 | 0.04% / 0.45% | 0.00% / 0.05% | — |
+| far rock 270 saturation | 0.468 | 0.472 | — |
+| far rock 270 hue | 24.8° | 24.9° | — |
 
-**Lit rock saturation has not drifted further** — 0.612 last shoot, 0.612 now, on both arms and at
-both resolutions. Accepted as upstream drift from the multi-bounce fill, cause understood and
-desirable, and recorded here so the next reader does not chase three thousandths into a
-worse-looking wall.
+`FAR_COL` was retuned upstream this shoot (saturation 0.601 → 0.628, luminance −4.6%). Far rock at
+270 m reads 0.468 against 0.472 in the control — the far-field convergence colour moved, and the
+grade's treatment of it did not: a 0.004 separation, the same as the previous set.
 
-**System 2's 0.671 is not in contradiction with this 0.612.** It is their window; the contract
-band is the brightest 40% of `sat.mjs`'s `rock lit` rectangle. Two windows, two populations, one
-name — the error this document now has a whole section about. Quote the population or the numbers
-will disagree again.
-
-### The shadow gate's dependency on the toe still holds, and has tightened slightly
-
-| | graded | control |
-| --- | --- | --- |
-| 2560×1440 | **0.237** in band | **0.258** — over the 0.25 ceiling by 0.008 |
-| 1997×1123 | **0.234** in band | **0.255** — over by 0.005 |
-
-Last shoot this was 0.234 against 0.255; shaded surfaces moved again and both arms rose about
-0.003, so the excursion widened from 0.005 to 0.008 and the graded headroom narrowed from 0.016 to
-**0.013**. The dependency has **not** eased.
-
-**Recorded explicitly, because it is a documented dependency and not a surprise: on this build the
-ungraded arm is expected to read over the 0.25 ceiling, and System 7's toe is what brings the
-frame inside it.** Anyone measuring `#nopost` alone will see 0.258 and conclude the shadow end
-broke. It did not; the toe exists to shape that end and is doing so. The figure to watch is the
-graded headroom — 0.013 now, and if shaded surfaces rise another 0.013 the toe will no longer be
-able to cover it.
-
-### The paired window, cross-validated on three tools
+### The paired window — the strongest single piece of evidence in the record
 
 `shade_far`'s two windows are **the same dirt**, one in sun and one in fill, each uniform in
 illumination by construction — 99% and 100% kept — and both measured whole.
@@ -3990,90 +3981,92 @@ illumination by construction — 99% and 100% kept — and both measured whole.
 | floor **lit** B/G | 0.608 | 0.603 | +0.005 |
 | floor shade `grad/L` | 0.104 | 0.093 | +0.011 |
 
-The shaded row moves 2.4° cooler and its lower quartile crosses zero into magenta; the sunlit row
-of the same dirt moves 0.3°. That is the brief's "teal" requirement — shadows cooling, not a
-global cyan drift — and its "purple shadows in the crevices", as measurements rather than
-impressions. No unpaired window could separate those claims, because a hue difference between two
-different surfaces is always partly pigment. `grad/L` 0.093 → 0.104 says the deepening does not
-wax over the micro-relief.
+The shaded row moves **2.4° cooler** and its lower quartile crosses zero into magenta; the sunlit
+row of the same dirt moves **0.3°**. That is the brief's "teal" — shadows cooling, not a global
+cyan drift — and its "purple shadows in the crevices", as measurement rather than impression. No
+unpaired window can separate those two claims, because a hue difference between two *different*
+surfaces is always partly pigment. `grad/L` rising 0.093 → 0.104 says the deepening does not wax
+over the micro-relief.
 
 ### Banding, edges and structure, both buffers
 
-| | 1440p graded | control | rung 4 graded | control |
+| | 1440p graded | control | 1997×1123 graded | control |
 | --- | --- | --- | --- | --- |
 | sky worst run, `sun_gap` | **8** | 42 | **8** | 33 |
 | `wash_mid` worst run | **7** | 36 | **7** | 28 |
+| step cv | 0.651 | 0.125 | 0.711 | 0.185 |
 | flat% | 42% | 94% | 42% | 93% |
-| skyline jump median | **68.9** | 87.6 | **65.9** | 80.0 |
-| skyline jump p90 | **116.4** | 193.6 | **118.5** | 191.6 |
-| `wall_lit` midwall `hf/lf` | 0.50 | 0.50 | 0.52 | 0.52 |
-| `wall_lit` upper `hf/lf` | 0.61 | 0.60 | 0.66 | 0.65 |
+| skyline jump median | **68.2** | 86.7 | **65.9** | 80.0 |
+| skyline jump p90 | **116.0** | 193.6 | **118.5** | 191.6 |
+| intermediate rows per edge | 1.14 | 1.05 | 1.17 | 1.06 |
+| midwall `hf/lf` | 0.53 | 0.53 | 0.52 | 0.52 |
+| upper wall `hf/lf` | 0.62 | 0.62 | 0.66 | 0.65 |
 
-Black clipping 0.06% graded against 0.01%. Corner falloff 0.996–0.997 on bright pixels.
-
-**Midwall `hf/lf` has drifted further and the mechanism is instructive**: 0.54, then 0.53, now
-**0.50** at 1440p, identical on both arms. `grad` held at 0.0150 while `grad@4` rose 0.0283 →
-0.0299, so the *low* band gained energy — which is exactly what the far-field grit normal landing
-in the mid-distance should do. **The surface got more detailed and the detail statistic went
-down**, because a ratio falls when its denominator rises. Accepted, cause understood, and it is a
-second worked example of the limitation below.
+Black clipping 0.06% graded against 0.01%. Corner falloff 0.995–0.997 on bright pixels, 0.906–0.912
+over all pixels including the sky.
 
 ## `hf/lf` cannot see periodicity, and more detail can lower it
 
-Two independent failures of the project's canonical surface metric, both found on the last day, in
-opposite directions. **Neither is a bug in the tool; both are the same structural limitation of a
-two-band ratio,** and they are recorded here because the gap will otherwise be rediscovered by
-someone shipping a tiled surface with a clean number in hand.
+Two independent failures of the project's canonical surface metric, in opposite directions.
+**Neither is a bug in the tool; both are the same structural limitation of a two-band ratio,** and
+they are recorded because the gap will otherwise be rediscovered by someone shipping a tiled
+surface with a clean number in hand.
 
 1. **A regular mid-frequency pattern reads as healthy texture.** The `ground` floor measures 0.45
-   on both arms with a quilted cross-hatch plainly visible in the frame. A band ratio asks how
-   much energy is high against low; it does not ask whether that energy is *periodic*. Tiling puts
-   its energy in a narrow band at one spatial frequency with a fixed phase, which is
-   indistinguishable to a two-band sum from the broadband energy of real grit. **A tiling defect
-   can therefore be at its worst while every structure figure in this document looks correct.**
-2. **Adding detail can lower the number.** Midwall went 0.53 → 0.50 when far-field grit detail
-   landed, because the new energy fell in the low band and the ratio's denominator grew.
+   on both arms with a quilted cross-hatch plainly visible in the frame. A band ratio asks how much
+   energy is high against low; it does not ask whether that energy is *periodic*. Tiling puts its
+   energy in a narrow band at one spatial frequency with a fixed phase, which is indistinguishable
+   to a two-band sum from the broadband energy of real grit. **A tiling defect can therefore be at
+   its worst while every structure figure in this document looks correct.**
+2. **The ratio moves on the denominator.** Midwall went 0.53 → 0.50 → 0.53 across three shoots
+   while `grad` sat at 0.0150 every single time. The high-frequency content never changed; only the
+   low band did. A falling `hf/lf` therefore does not mean detail was lost, and a rising one does
+   not mean detail was gained.
 
-**So `hf/lf` is a measure of spectral balance, not of quality, and it is silent on regularity.**
-Periodicity needs an **autocorrelation** — a tiled texture shows sharp secondary peaks at the tile
-pitch, real grit does not — or a **spectral peak test** against the local noise floor. A band
-ratio cannot substitute for either, and no amount of care in choosing the crop will fix it.
+**So `hf/lf` measures spectral balance, not quality, and it is silent on regularity.** Periodicity
+needs an **autocorrelation** — a tiled texture shows sharp secondary peaks at the tile pitch, real
+grit does not — or a **spectral peak test** against the local noise floor. A band ratio cannot
+substitute for either, and no care in choosing the crop will fix it.
 
-Until such a test exists, the standing rule is the one that actually caught both defects:
-**look at the frame before measuring it, at full resolution, in the near field.** That rule was
-written into this document after a lavender-with-debug-stripes frame was measured and published.
-It has now paid for itself three times, and it is the reason two sets were stopped rather than
+Until such a test exists the standing rule is the one that actually caught every defect worth
+catching: **look at the frame before measuring it, at full resolution, in the near field.** That
+rule has now paid for itself four times and is the reason three sets were stopped rather than
 shipped.
 
-## Near-field and far-field defects outstanding in this set
+## Defects outstanding in the shipped set
 
-All three are present **identically in the ungraded control arm**, so none is the grade's, and all
-three are in regions no figure in the record covers.
+All are present **identically in the ungraded control arm**, so none is the grade's, and all sit in
+regions no figure in the record covers.
 
-1. **The quilted cross-hatch on near-field rock — still open**, as expected; ablation was running
-   during this shoot. The two large boulders in `ground` carry a regular cross-hatched relief that
-   reads as woven fabric rather than stone. Invisible to `hf/lf`, per above.
-2. **The pale slabs are substantially improved but not resolved, and not uniformly.** The dust
-   film fix (`6433011`) is confirmed present and confirmed to act on exactly the right population:
-   a per-pixel difference map against the previous build lights up every clast and leaves the bare
-   dirt between them black. In `ground` most clasts now read as red sandstone with visible relief.
-   **In `shade_far`'s bottom-left corner it did not reach**: the pale population there is
-   **9.1% of the crop at mean saturation 0.364 and V 0.859** graded, against 8.1% at 0.362 before
-   the fix — marginally *more* of it, not less. Those clasts are brighter than the sunlit floor
-   (V 0.638) at *half* its saturation (0.626), which is why they read as untextured placeholder
-   geometry. Whatever came off the saturated cap on the dominant class did not come off this one.
-3. **A combed-fibre artifact on steep far-field slopes, worst in `far_320`.** With the grit
-   normal now being read, the slopes render as long, fine, parallel striations running downslope —
-   silk or brushed hair rather than sandstone. It is strongly anisotropic and reads as a stretched
-   UV or tangent frame on steep faces, so lighting a normal that was previously ignored has
-   revealed it. `far_270` shows it mildly; `far_320` is dominated by it. **This is new with the
-   far-field detail landing** and is the largest remaining visual problem in the set.
+1. **A pale grass plant renders as flat unlit blades, with two detached and floating.** At the right
+   edge of `wall_shade`, close to camera and in deep shade, the straw-coloured grass class draws as
+   uniformly-coloured cream lozenges with hard edges, no internal shading variation, and no
+   response to blade orientation — differently-angled blades share one flat tone. Two blades are
+   clearly separated from the plant body and hover against the wall. The blade pixels reach V 0.612
+   against a shaded wall at V 0.099. Identical in both arms. At the distances of `juniper` and
+   `sun_gap` the same class reads correctly, so this is a **close-range, deep-shade** failure, and
+   it is the most likely thing in the set for a critic to name.
+2. **The quilted cross-hatch on near-field rock — a recorded decision, still present.** The two
+   large boulders in `ground` carry a regular cross-hatched relief that reads as woven fabric.
+   Invisible to `hf/lf` per above.
+3. **The combed fibre on steep far slopes — a recorded decision, staying.** `far_320`'s slopes read
+   as fine parallel striations. Three hypotheses were each falsified by render; the only available
+   fallback would strip grain from exactly the faces the far-field detail was added to serve.
+4. **The pale corner clasts are improved but still prominent.** Attribution was corrected upstream
+   from dust film to lithology — the morning's dust fix was a no-op on them by construction — and
+   the transported mix was thinned 0.320 → 0.215. Measured effect in `shade_far`'s corner: the pale
+   population went 9.1% → **8.8%** of the crop, saturation 0.364 → **0.371**, and V dropped
+   0.859 → **0.796**. The V fall is the real gain: those clasts no longer outshine the sunlit floor
+   (V 0.636). They remain large flat plates at roughly half the floor's saturation (0.626).
+5. **A single-file row of bright grains hugs the upslope silhouette of each corner slab.** Reads as
+   a stippled bead line. Sediment piling against an obstruction is geologically right, but the
+   regularity — one grain deep, exactly following the edge — reads as an artifact. Both arms. Minor.
 
-A measurement note that cost real time and generalises: the first check of the slab fix was three
-hand-picked patches, which came back **identical to three decimals** and suggested the fix had not
-landed at all. It had; the patches simply missed. **A patch chosen by eye is not a population** —
-the same error as everything in the population section, arrived at a sixth way. The difference map
-answered in one pass what three crops got wrong.
+A measurement note that cost real time and generalises: the first check of the dust fix used three
+patches chosen by eye, which came back **identical to three decimals** and suggested the fix had
+not landed. It had, and a per-pixel difference map showed it lighting up every clast and leaving
+the bare dirt between them black. **A patch chosen by eye is not a population** — the same error as
+the saturation disagreement, arrived at a sixth way.
 
 ## A reading is not a target, and a tool must say which it is printing
 
