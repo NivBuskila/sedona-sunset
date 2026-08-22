@@ -1725,10 +1725,29 @@ if (rakeW * grainF > 0.002) {
   float lodK = exp2(aniso);
   vec2 ddx = dFdx(d1) * lodK, ddy = dFdy(d1) * lodK;
   float dirtH = texture2DGradEXT(uDirtM, d1, ddx, ddy).b;
+  /* ---- and space the samples geometrically, not evenly ----
+     These were eight even steps of 11 mm. The reach that gives is right and was
+     checked rather than assumed: the map's height channel runs 24 mm peak to
+     peak, so at a 15 degree sun the tallest thing in it casts 90 mm, and a
+     reference march run out to 300 mm at one sample per texel finds *exactly*
+     what 88 mm finds. Nothing is being missed beyond the end.
+     What was being missed is the near end. The tile is 2.54 mm per texel, so a
+     first sample at 11 mm lands 4.3 texels out and steps clean over the base of
+     every grain shadow in the field — which is the part of a raking shadow that
+     is darkest, most contiguous and most legible. Measured on the real map, over
+     40000 paired points: even 11 mm steps put 11.6% of the floor in some shadow,
+     the same reach sampled at every texel puts 15.3%, and eight *geometric*
+     steps from 2.5 mm to 88 mm reach 14.4% — 92% of the dense result for eight
+     fetches instead of thirty-five. The ratio is constant so it costs one
+     multiply per step rather than a pow.
+     Note what this does not fix, because it is worth not mistaking one for the
+     other: the ceiling here is the bed's own depth. See tools/_rakeprobe.mjs and
+     the note in CONTRACT.md. */
+  float t = 0.0025;
   for (int k = 1; k <= 8; k++) {
-    float t = float(k) * 0.011;                      // metres along the sun azimuth
     float hs = texture2DGradEXT(uDirtM, d1 + uSunStep * t, ddx, ddy).b;
     rake = max(rake, hs - (dirtH + t * uSunRise));
+    t *= 1.663;                                      // 2.5 mm to 88 mm in eight
   }
 }
 /* ---- and the part that must survive the footprint ----

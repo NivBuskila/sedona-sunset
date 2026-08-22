@@ -470,6 +470,61 @@ Residual risk worth knowing: convergence stops checking once it is satisfied, so
 resource landing at frame 200 is still not caught. The 180-frame warmup is what covers
 that, and it is the knob to raise if a first-view capture is ever suspected.
 
+## Pebble cast shadows: the march is right, the bed is too shallow
+
+The critic: "at this sun angle every pebble on a wash floor throws a shadow one to three
+times its own length, and there is not one such shadow in this frame." Measured with
+`tools/_rakeprobe.mjs`, which runs the shader's march literally on the real dirt map in
+node, 40000 paired probe points, no GL and no render. Three separate questions, and they
+have three different answers.
+
+**Reach is correct, and was checked rather than assumed.** The height channel runs 24 mm
+peak to peak with an sd of 4.0 mm, so at a 15° sun the tallest thing in the map casts 90 mm
+and one sd casts 15 mm. The shipped march reaches 88 mm. A reference march run out to
+300 mm at one sample per texel finds **exactly** what 88 mm finds, to four decimals. Nobody
+should spend time lengthening it.
+
+**Sampling was wrong at the near end, and that fix is free.** The tile is 2.54 mm per texel
+and the march stepped 11 mm, so its first sample landed 4.3 texels out and stepped clean
+over the base of every grain shadow in the field — the darkest, most contiguous and most
+legible part of a raking shadow. Same eight fetches, spaced geometrically from 2.5 mm to
+88 mm instead of evenly:
+
+| march | shadowed area | mean occlusion |
+|---|---|---|
+| eight even steps of 11 mm (shipped until now) | 11.6% | 0.0521 |
+| eight geometric, 2.5 → 88 mm | **14.4%** | 0.0553 |
+| thirty-five even steps, same 88 mm reach | 15.3% | 0.0598 |
+| one hundred and twenty steps out to 300 mm | 15.3% | 0.0598 |
+
+So eight geometric steps buy 92% of what a dense march finds, for eight fetches instead of
+thirty-five. Landed.
+
+**And the thing that actually caps it, which is none of the above.** The bed is too shallow
+for its own feature size. Grains that read 30–60 mm across in `ground` sit on a height
+field with 4 mm of sd, so a typical grain stands 4–8 mm proud and casts 15–30 mm — a shadow
+shorter than the grain is wide, which is precisely "matte ellipsoids with no cast shadows".
+No march can fix that; it is not there to be found. What the depth is worth, holding the
+march at eight geometric fetches and scaling its reach with the relief:
+
+| relief | shadowed area | mean occlusion |
+|---|---|---|
+| as shipped | 14.4% | 0.055 |
+| ×1.5 | 23.4% | 0.093 |
+| ×2 | 31.2% | 0.125 |
+| ×3 | 42.3% | 0.171 |
+
+A real wash floor under a 15° sun is somewhere in the ×2 to ×3 rows, which is also what the
+critic's "one to three times its own length" implies. **This was deliberately not landed**,
+and the reason is blast radius rather than doubt: the height array in `makeDirt` feeds the
+normal map (strength `size * 0.0102`, which encodes exactly the 25 mm per unit that
+`uSunRise` assumes — the two are already consistent and must move together), and it feeds
+AO and roughness through `packARM`. Doubling it doubles the grain normals across the whole
+near field, where `ground` floor `grad/L` already sits at 0.151 against a 0.12–0.16 band,
+and steep grain normals under a low sun are the documented binary-field trap: the metric
+improves while the surface goes to salt and pepper. That is a tuning pass with its own
+paired captures, not a delivery-morning edit.
+
 ## For System 2 and System 4: the occlusion change, and what it does and does not reach
 
 Landed in `terrain.js` at `2548d04`. **System 2: this is the expression to match at
