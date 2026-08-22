@@ -5300,3 +5300,70 @@ different fix in a different file from anything tried tonight. If it does not
 fall, the bed really is too busy there and the character question stands.
 `far_270` is clean on this framing: the lattice fix is holding, no
 salt-and-pepper, and the bank reads as rock.
+
+## The wash floor, bounded from three directions — a map, not a mystery
+
+Three independent attempts to move the wash floor's detail were built, measured
+and reverted. Each is written up in full above; this collects them so the next
+person inherits the shape of the problem rather than three separate defeats.
+
+| bound | mechanism | where it stops | number |
+|---|---|---|---|
+| 1 | global relief scaling, `DIRT_RELIEF_K` | the gradient band | admits **K ≤ 1.21**; transfer is 0.042 of grad/L per unit K |
+| 2 | global grit / pebble band weighting | the two framings want opposite changes | no weighting satisfies both; `wash_mid` is 3x the more sensitive |
+| 3 | footprint-keyed amplitude, `clamp(0.0120/footG, ·)` | **the lever has no sign** | 0.85 → 0.196, 1.00 → 0.168, 1.50 → 0.205 |
+
+**The third is the strange one and the most valuable.** The shipped amplitude
+sits at a local *minimum* of `wash_mid`'s floor gradient: adding relief raises
+it and removing relief raises it. There is no direction to push. Bounds 1 and 2
+say a lever is too small or points two ways at once; bound 3 says the lever is
+not connected to the quantity at all. Anyone arriving with "just turn the bed
+detail up/down a bit" has already been answered, in both directions, with a
+no-op check confirming the plumbing (`gAmp` pinned to 1.0 reproduces the
+baseline to four decimals, so the gate and not the wiring produced the rise).
+
+Note also that the footprint mechanism itself *works* — `footG` cleanly
+separates the framings, 9.1 mm at `ground`'s near band against 17.9 mm at the
+wash floor, measured by painting it through the shader and reading it back. The
+mechanism is available and specified. It simply has nothing useful to drive.
+
+### Hypothesis, not a finding: the metrics are reading the clasts
+
+`ground` is short of *matrix* between the stones — the smooth unshaped ground
+around them is where the missing grad/L 0.088 lives — while `wash_mid`'s near
+floor is long on chip *population* over a matrix that is not obviously too busy.
+If the one-pixel gradient is dominated by clast silhouettes in both frames, a
+bed amplitude gate cannot move either, and a stationary response is exactly what
+that would look like. This is consistent with all three bounds and with the grit
+ablation, and it is **an eyeball. It has not been tested.**
+
+**The test, written out.** Mask the instanced clasts and re-run
+`tools/_band2.mjs` on the matrix alone.
+- If `wash_mid`'s near band falls into 0.12–0.16 once the clasts are excluded,
+  the surface is not over-detailed at all and the *population count* is the
+  defect — a different fix in a different file from anything tried here.
+- If it does not fall, the bed really is too busy and the remaining candidate is
+  character rather than amplitude: spatial frequency, or the albedo mottle
+  instead of the normal field. Nothing tried has tested that.
+
+### The measurement error, plainly, because it invalidates a chain of reasoning
+
+**`grad.mjs` and `hf.mjs` measure `ground`'s floor at different distances** —
+y 0.32–0.58 against y 0.80–0.98. Every "hold grad/L while hf9 climbs" statement
+made about `ground`, by me and downstream of me, was about two surfaces at once.
+On consistent bands `ground` is under-detailed at *every* distance rather than
+balanced against a ceiling, which is a different problem with a different fix
+from the one that was being pursued.
+
+Two aggravations worth carrying. `hf9` is an **unnormalised RMS**, so part of the
+`wash_mid`-versus-`ground` gap is exposure and not surface: that band is 19%
+brighter. `tools/_band2.mjs` prints `hf9/L` beside it for the same reason
+`grad/L` is printed beside `grad`, and it reports both metrics over one
+rectangle so a two-sided target can actually be stated.
+
+This is the eighth instance tonight of a figure being precise about the wrong
+thing, and the second where **two tools shared a name for different
+populations**. The recurring shape is not arithmetic error — every number was
+correct for what it measured. It is that a name travels between tools while the
+population underneath it does not. A metric quoted without its region, its
+banding and its normalisation is a different metric.
