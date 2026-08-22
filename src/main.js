@@ -337,6 +337,10 @@ const player = {
   bob: 0,
 };
 
+/* Degrees of pitch the arrival lift has spent; declared here because placeAt
+   refills it and placeAt runs during boot. See arrivalLift. */
+let lifted = 0;
+
 const _q = {};
 
 function groundAt(x, z) {
@@ -354,6 +358,9 @@ function placeAt(d) {
   player.z = p.z;
   player.vx = 0; player.vz = 0; player.bob = 0;
   player.y = groundAt(player.x, player.z);
+  /* A teleport is a fresh approach, so the arrival lift's budget refills. It
+     spends nothing here — only walking does — so this cannot move a capture. */
+  lifted = 0;
 }
 
 function syncCamera() {
@@ -517,9 +524,53 @@ addEventListener('mousemove', e => {
    blitted into a corner of the screen. */
 addEventListener('resize', () => perf.resize());
 
+/* ── the arrival lift ──────────────────────────────────────────────────── */
+
+/* The walk ends against a headwall that is worth seeing and, walked at eye
+   level, is not seen: the last few metres put the hummock underfoot across the
+   bottom of the frame and the necking channel above it. Pitched up twelve
+   degrees the same spot reads as an arrival. Nothing in a walk with no UI
+   prompts you to raise your view, so this eases it up for you.
+ *
+ * Three properties make it a nudge rather than a camera take-over, which this
+ * has to stay — there are no cutscenes here and there should not be one at the
+ * end.
+ *
+ * It is spent from a *budget*, not held by a controller. `lifted` accumulates
+ * everything ever applied and the ramp is a ceiling on it, so the total
+ * authority over the whole walk is LIFT_DEG and not one degree more. Look down
+ * afterwards and it stays down: the budget is gone and nothing pushes back. A
+ * controller would fight the mouse for as long as you held the view, which is
+ * the thing that would read as being taken over.
+ *
+ * It only moves while you are walking *forward*. Stand still and it is exactly
+ * inert, which is also why it cannot touch the record: the capture harness
+ * drives the camera with walkTo and lookAt and never presses a key, so the
+ * thirteen framings are unreachable from here by construction. It is the same
+ * reasoning that keeps `confine` a fixed point at rest.
+ *
+ * And it is keyed to distance remaining rather than to a place, so it follows
+ * the head of the wash if the path is ever re-cut. */
+const LIFT_DEG = 12;
+const LIFT_FROM = 45;   // metres out from the head where the ramp begins
+const LIFT_RATE = 5;    // deg/s ceiling, so a turbo run drifts rather than snaps
+
+function arrivalLift(dt, forward) {
+  if (forward <= 0) return;
+  const remaining = path.length - currentS();
+  const t = Math.max(0, Math.min(1, (LIFT_FROM - remaining) / LIFT_FROM));
+  const want = LIFT_DEG * DEG * t * t * (3 - 2 * t);
+  const owed = want - lifted;
+  if (owed <= 0) return;
+  const give = Math.min(owed, LIFT_RATE * DEG * dt);
+  lifted += give;
+  player.pitch = Math.min(1.45, player.pitch + give);
+}
+
 function step(dt) {
   const f = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
   const r = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
+  arrivalLift(dt, f);
   /* 1.55 m/s is a real walking pace and it is the default because the scene is
      meant to be walked. Shift is a jog; Shift with Ctrl is a frank cheat for
      covering the wash quickly when you are looking for something. */

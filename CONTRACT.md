@@ -6893,3 +6893,45 @@ be handed to the gate and this one cannot cheaply, so it was made vague instead.
 Corridor unchanged after terrain moved under it again: 4.2 minutes of wandering
 walk, 0 frames touched laterally, closest approach 4.05 m of clearance, and the
 head of the wash still the only place it is felt.
+
+## The arrival lift, and why it is a budget rather than a controller
+
+The walk ends against a headwall worth seeing which, walked at eye level, is not
+seen: the hummock underfoot fills the bottom of the frame. Pitched up twelve
+degrees the same spot reads as an arrival. Nothing in a walk with no UI prompts
+you to raise your view, so `arrivalLift` in `main.js` eases it up over the last
+forty-five metres.
+
+**Eye height was not the lever it looked like.** The audit suggested raising it
+on the grounds that 1.55 m is short for a standing adult. `EYE` is **1.65 m**;
+1.55 is the walking *speed* in m/s, two hundred lines further down. 1.65 m is an
+ordinary standing eye height and raising it would have been unjustified, so the
+fix is the pitch easing and not the height.
+
+Three properties keep it a nudge and not a camera take-over, which matters
+because there are no cutscenes here and there should not be one at the end:
+
+- **It is spent from a budget.** `lifted` accumulates everything ever applied and
+  the ramp is a ceiling on it, so total authority over the whole walk is twelve
+  degrees and not one more. Look down afterwards and it stays down — the budget
+  is gone and nothing pushes back. A controller holding a target would fight the
+  mouse for as long as you held the view, and *that* is what reads as being
+  taken over. The distinction is the whole design.
+- **It only moves while walking forward.** At rest it is exactly inert, the same
+  property that makes `confine` a fixed point and that every capture depends on.
+- **It is keyed to distance remaining**, not to a place, so it follows the head
+  if the path is re-cut.
+
+**The record is unreachable from it, and that was proved rather than argued.**
+The capture harness drives the camera with `walkTo` and `lookAt` and never
+presses a key, so the strong form of "are the framings unmoved" is not "do they
+match another build" but "can walking move them at all". `tools/_lift.mjs` reads
+all thirteen camera world matrices, walks from 280 m to the head with W held
+until the entire budget is spent, and reads them again: **all thirteen
+bit-identical**. Sixteen numbers per framing is the whole framing, and comparing
+matrices is stronger than comparing pixels because it cannot be satisfied by a
+coincidence of tone mapping.
+
+Measured ramp, jogging in: 0.00° at 280 m, 0.19° at 290, 2.86° at 302, 7.19° at
+313, 11.54° at 327, 11.92° at the head. The smoothstep is doing the work it was
+chosen for — no perceptible onset and no snap at the top.
