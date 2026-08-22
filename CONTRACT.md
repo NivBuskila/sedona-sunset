@@ -2832,9 +2832,42 @@ guards this episode and its predecessor each paid for. And the residual 0.02% at
 System 7's: a pivoted gain crosses one at 0.9854 encoded, so it used to flatten every input
 from 251 code values up to white. `POST_DEFAULTS.shoulderTop` replaces the line above 0.86
 with a Hermite landing on exactly (1, 1), which makes white reachable only from white and holds
-251, 252 and 253 apart where all three used to read 255. **`V` is out of band at 0.687 against
+251, 252 and 253 apart where all three used to read 255. ~~**`V` is out of band at 0.687 against
 0.589–0.600, in the ungraded control as well as the graded frame, so it is an exposure question
-and not a grading one.**
+and not a grading one.**~~ **Struck: the reading reproduced, but the band did not exist.** 0.589
+and 0.600 were both historical readings that this footer printed as limits, and 0.600 is the
+*floor* of the photograph-referenced 0.59–0.73 quoted back later as a ceiling. 0.687 is inside
+0.59–0.73 and six thousandths under the 0.693 the exposure fit aimed at, so there was never
+anything to route. See the V band section below; the correct conclusion was neither exposure nor
+grading but the instrument.
+
+## A reading is not a target, and a tool must say which it is printing
+
+Five population errors landed in one night and they share one shape: **a number was recorded as
+evidence and read later as a requirement.** The two failures arrived from opposite directions,
+which is why neither was caught by sanity alone — one said the renderer had drifted when it had
+not, the other would have had exposure cut hard when it was correct.
+
+| what was quoted | what it actually was | direction of the error |
+| --- | --- | --- |
+| lit rock 0.687 at 14.6° against 0.615–0.626 | the whole window, not the brightest 40% | false regression |
+| `V` 0.687 against "0.589–0.600" | two old readings, the second one a band's *floor* | false regression |
+| wash floor 0.737 against 0.55 | `--lit` sunlit population against a whole-window target | false over-exposure |
+| shaded figures from the darkest 40% | grazing-lit dirt with pebble shadows | shade read warm for weeks |
+| `hf/lf` 0.49 against 0.54–0.75 | 1600×900 against a band derived at photographic resolution | false shortfall |
+
+So, as a standing requirement on every measurement tool in `tools/`:
+
+- **Print bands in labelled layers.** `tools/_p7col.mjs` now separates *acceptance bands, from
+  Sedona reference photographs* from *drift guards, tighter than the photographs, earned rather
+  than referenced*, and says outright that `V` has no drift guard and must be read against
+  0.59–0.73. A figure outside layer one is a fault; a figure outside layer two is a change to
+  explain, and those are not the same conversation.
+- **Never print a historical reading in the position where a limit goes.** That single formatting
+  decision cost two false regressions on the project's two most-quoted numbers.
+- **Quote the population with the number** — window, threshold, resolution, arm. A tool that
+  cannot say which population it measured should refuse, which is what the guards added tonight
+  do.
 
 ## The lit-rock colour population, written down so two tools cannot disagree again
 
