@@ -3259,12 +3259,108 @@ is **120+ fps at an upscaled 1997×1123**, and `#high` pins 2560×1440 at 59. Qu
 scale-1.0 tier row as the fallback is the error the row above documents.
 
 **What is left, and it is not a shader.** The terrain shader is now 9.1 ms, of which 4.0 is
-its centre shadow tap — sixteen comparisons across two lights, carrying the penumbra, and not
-reducible without changing the picture or the light rig. The fixed floor of vertex work,
-resolve and post chain is **4.5 ms, now 28% of the frame** where it was 15% when the geometry
-ceiling was declared the wrong axis. That does not make the ceiling right — shaving triangles
-to reach 3 M still buys nothing measurable — but the next axis after resolution is vertex
-cost, and 2.25 M of the 3.97 M triangles are clast instances. Measure it before touching it.
+its centre shadow tap — carrying the penumbra, and not reducible without changing the picture
+or the light rig. The fixed floor of vertex work, resolve and post chain is **4.5 ms, now 28%
+of the frame** where it was 15% when the geometry ceiling was declared the wrong axis. That
+does not make the ceiling right — shaving triangles to reach 3 M still buys nothing measurable
+— but the next axis after resolution is vertex cost, and 2.25 M of the 3.97 M triangles are
+clast instances. Measure it before touching it.
+
+*(One sentence above said "sixteen comparisons across two lights" and no longer does. The
+centre tap is System 4's blocker-search penumbra now, not three's fixed kernel; the count is
+a 12-tap search plus either three's 16 or up to 28 spiral taps, per cascade. See the next
+section.)*
+
+## Re-benched on the shipping build: the penumbra and the tap reduction need each other
+
+The table above was measured while five systems were committing, and one of the things that
+landed lands on the exact term it optimised. **It reproduces, and the two changes turn out to
+be complementary rather than in tension.** `PERF.md` §10 has the full account; what belongs
+here is the shape of the result and one more instrument failure.
+
+**The penumbra was already in the tree when the reduction was measured.** `639309d` landed
+04:29, `543ea94` 04:46, the reduction `4d72ec6` 04:56, and its bench ran 05:08. Re-run on
+`fa8b9ec` an hour later, every figure is within 0.1 ms — `wash_mid` 16.78 → **16.80**, rung 0
+16.95 → **16.91**, rung 4 8.12 → **8.21**, rung 7 5.48 → **5.44** — with `sun_gap` coming
+*down* 0.9. Nothing landed in that hour costs anything measurable, System 1's grazing bound
+included, and **the ladder needs no retune** because it was tuned against a penumbra-live
+table in the first place.
+
+**Restoring the old footprint estimator would now cost +18.2 ms, not +14.6.** Priced directly
+rather than extrapolated — `terrcost.mjs` gained a `footFull` row that puts the four full
+`getShadow` calls back — `wash_mid` goes 17.1 → **35.3 ms**, worse than the 30.5 the project
+started at. Each restored offset would now be a blocker search plus a spiral rather than
+sixteen comparisons, so **the penumbra is only affordable because the offsets were reduced
+first.** The reduction is worth more on the penumbra path than it was on the fixed-kernel one.
+
+**The justification for the reduction is retired even though the reduction stands**, and that
+distinction is the point. The original argument was overlap: five kernels covering nine texels
+square. That is no longer true — the centre integrates up to 2 m of the coarse cascade where
+the offsets still sit at 2.6 texels. What holds instead is that the two answer different
+questions and both are still answered: the centre resolves the **penumbra**, a property of the
+blocker; the four resolve the mean over the **screen footprint**, a property of range. A
+conclusion that survives while its stated reason expires is worth re-deriving rather than
+inheriting, and `src/terrain.js` now carries the corrected version beside the code.
+
+**Banding was the specific risk and it is measurably absent.** The instrument is `hf/lf`: a
+filter gone blotchy carries its gradient at four pixels rather than one, so the ratio falls.
+Across all twelve standard windows plus three placed by hand on `shade_far`'s soft terminator
+— the widest penumbra in the capture set — `grad`, `grad@4` and `hf/lf` are identical to four
+digits, 0.0323 → 0.0322 and 0.59 both sides on the terminator itself. Lit rock reads **0.619
+saturation at hue 14.6° on both halves**. The first eight rows of the pair table reproduce the
+earlier run to the digit, and `shade_far` joins the same family.
+
+**The run's own negative control.** The floating-slab region on `wallL` is a **byte-identical**
+crop between the two halves. That surface is `rock.js`'s, whose wrapper only catches the value,
+so a terrain-side filter cannot reach the defect the penumbra was built to fix. The two changes
+do not touch the same pixels — which is the cleanest possible answer to "is there a conflict".
+
+**What the penumbra costs, since a compile-time feature cannot be ablated at runtime.**
+`bench.mjs` gained `--hash`, so `#hardshadow` can be priced in a second page load:
+
+| | PCSS (ships) | `#hardshadow` | penumbra |
+|---|---|---|---|
+| `wash_mid` | 16.80 | 12.64 | **4.16 ms** |
+| `wall_lit` | 12.23 | 9.93 | 2.30 |
+| `sun_gap` | 16.82 | 12.15 | 4.67 |
+
+25% of the top-tier frame, the largest single identified item in it. Stated as a ladder cost
+instead: **the penumbra moves the 120 fps rung by one step** — 8.33 ms is reached at rung 4
+(low / 0.78) with it and rung 3 (medium / 0.78) without, at the same 1997×1123. So a
+terminator that rises over 27 px instead of 3 costs one quality tier at the target framerate
+and no resolution. Recorded as a trade, not a recommendation: it is a picture decision.
+
+### Instrument failure the twelfth: a working ablation that printed its own failure warning
+
+The mirror of the `-shadow` column. There a broken ablation reported a plausible number; here
+a correct ablation reported `NO — CHECK` beside every row, including a real 4.44 ms saving.
+
+`customProgramCacheKey` carries the ablation's name, which is what stops fourteen variants
+sharing one compiled program. It also means each program sits in three's cache from block 0
+onward, so `onBeforeCompile` never runs again — and the applied-flag was read once per timing
+block, so the *last* block's reading was kept: not compiled, therefore not substituted,
+therefore a warning printed over a correct measurement. It now records site counts for the
+life of the run and prints the count rather than a boolean, because *matched nothing* and *was
+never asked* are different failures that `false` conflates.
+
+> **A cache key that makes an ablation measurable also makes the evidence that it applied
+> unobservable on every run after the first.** Verify once and carry it forward; do not
+> re-read a compile-time flag per timing block. And when a warning and a plausible number
+> disagree, find out which is lying before quoting either.
+
+### Two things noted and deliberately not done
+
+- **`src/sky.js:959` trips `glslcheck` with `unclosed=1`, and it predates this pass.** It is a
+  false positive on today's source — a GLSL block comment that opens in one template-literal
+  chunk and closes inside the `#noastern` ternary's arms, so each arm closes it and the checker,
+  which reads literals independently, cannot see that. The assembled string is valid. It is
+  still fragile: both arms have to keep closing the comment, and an edit to either breaks the
+  shader in a way node cannot see. System 4's to judge.
+- **The four `fwidth` calls in the bedform comb are measuring the wrong quantity** and System 1
+  has written the correct footprint form beside them. Left alone: the block prices at 0.05–0.08
+  ms so there is no cost case, and it is measured-good protected work whose replacement they
+  reverted on purpose. It should land as a correctness change with its own verification rather
+  than inside a perf commit.
 
 ## Accepted and declined, for System 2, so they are decisions rather than oversights
 
