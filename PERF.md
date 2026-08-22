@@ -647,11 +647,12 @@ whole frame, so a small movement in any window may be theirs rather than mine.
 
 ## 9. The frame was 160 shadow comparisons per ground pixel
 
-> **Frame-rate figures in §9 and §10 are superseded.** They are held-camera readings, and the
-> 16.80/15.7 ms family of numbers is not reproduced by a second instrument on the same commit
-> — see §11.1, which records that gap as **unexplained** after both the code-regression and the
-> machine-contention explanations were tested and failed. The delivery figures are **37 fps
-> walking at native 2560×1440**, 60 at the governor's 1997×1123, and the ladder floor at 89;
+> **Frame-rate figures in §9 and §10 are superseded, but the 16.80 in them is vindicated.**
+> They are held-camera readings; the 16.80/15.7 ms family was taken on a genuinely idle
+> machine and is reproduced as **17.15 ms** the moment the card is idle again — see §16.1,
+> which closes that gap as foreign GPU load hidden by a mis-calibrated idle gate. The
+> delivery figures are **about 60 fps walking at native 2560×1440**, where the governor
+> settles, with 107 at 1997×1123 and a ladder floor of 176;
 > the one table to quote is "The delivery table" in `CONTRACT.md`. The *attributions* in §9 and
 > §10 — what fraction of the frame each term is — are within-session comparisons and are
 > unaffected.
@@ -1815,3 +1816,187 @@ the specific failure the ratchet caused and the specific thing the rewrite had t
 What it will *not* do is hide contention. The governor can trade image quality for
 frame time and nothing else; if another process is taking two thirds of the card, the
 picture gets softer and stays smooth, and that is the whole of what it can offer.
+
+## 16. The delivery session: four measurements, and the last open number closes
+
+Taken as one session on a released machine, from a detached worktree at `d4dac2b` with
+`src/` verified byte-identical to the main tree by tree hash. Four things were outstanding.
+All four are answered, and one of them answers a question that had been recorded as
+unanswerable.
+
+### 16.1 The six unexplained milliseconds were contention, and my own idle gate hid it
+
+**This is the third and final version of this finding, and the first one that is tested
+rather than inferred.** §11.1 said the frame had regressed 39%; a bisect disproved it.
+§11.1 then said the difference was machine contention; a "quiet-gated" run disproved that,
+reading 23.06 ms quiet against 23.30 contended. The gap was then recorded as *unexplained*,
+which was the honest thing to do with what was known. It is now explained, and the reason
+the second version looked wrong is the interesting part.
+
+**The gate that declared the machine quiet was fitted to a contended machine.** It
+thresholded `utilization.memory ≤ 13%` and `utilization.gpu ≤ 78%`, and the justification
+written beside it was that "this box rests at gpu 63–66% / mem 12%". That sentence was
+composed from samples taken while fourteen agent browsers and an animated wallpaper were
+on the card. **It codified a contended state as the definition of rest.** So when the
+quiet/contended A/B came back identical, it was comparing contended against contended —
+both sides passed a gate that could not tell them apart.
+
+Measured this afternoon, same station, same method, same `wash_mid` rung-0 cell:
+
+| foreign load at boot | held ms | |
+|---|---|---|
+| sm clock 285–405 MHz, gpu 18%, mem 31% | **17.15** | actually idle |
+| sm clock 2835 MHz, gpu 34%, mem 10% | 22.05 | |
+| sm clock 2835 MHz, gpu 56%, mem 10% | 22.22 | |
+| gpu 63%, mem 12% (this morning's "quiet" delivery run) | 23.06 | the gate said QUIET |
+
+**And the code is not the variable, which was checked rather than assumed.** `2038823` —
+the exact commit of this morning's delivery run — and `d4dac2b` were measured minutes
+apart under the same load: **22.22 and 22.05 ms held**. Two trees a full afternoon of
+scene work apart, differing by 0.17 ms. So the bisect's conclusion stands and now extends
+across the whole day: **the frame never moved, and every apparent movement in it has been
+the machine.** 16.80 was a genuinely idle reading, 22–23 is what the same frame costs with
+a boosted card beside it, and 17.15 is 16.80 measured again on a genuinely idle machine.
+
+**The discriminator is the SM clock, and nothing else here works.** At rest this card sits
+at **285–405 MHz**; with any real render work on it, foreign or mine, it boosts to
+**2820–2840** and stays. `utilization.gpu` is unusable alone — it swung **2–77% inside
+twelve seconds** in one unchanging state. And `utilization.memory`, the field added this
+morning specifically to *improve* the gate, runs **inversely**: 30–38% at true idle,
+2–14% under a shader load, because an idle desktop's memory traffic is display scanout
+while a busy one's is arithmetic. Both fields the gate trusted are inverted or noise. The
+gate now keys on the clock, prints it, and names idle and boosted values beside it.
+
+**The reusable lesson, and it is worth more than the six milliseconds.** A threshold
+calibrated against an unverified "normal" inherits whatever was wrong with that normal and
+then launders it into every measurement it gates. This one was not too loose by accident —
+it was loose *because* it had been fitted to the thing it existed to exclude, which is why
+it survived a fourteen-commit bisect, an explicit quiet/contended A/B, and two written
+corrections. **Nothing downstream of a bad gate can detect a bad gate.** The only thing
+that caught it was going back to first principles on what "idle" looks like, with the
+machine actually idle for the first time all day.
+
+The named hypothesis in the record — that `bench.mjs`'s fixed-count warm-up could read low
+by catching a cheaper configuration mid-transition — is **disproven, or at least
+unnecessary**: 16.80 is reproduced by a completely different tool with an adaptive warm-up
+the moment the card is idle. Nothing is wrong with `bench.mjs` that this explains.
+
+### 16.2 The delivery ladder, on a machine idle by the corrected test
+
+Frame confirmed real before any timing was trusted: mean luminance **80.82**, clipped
+**0.32%**, "looks like the scene" — matching the morning's 80.8/0.32 despite an afternoon
+of far-field and dust-film work landing, which is itself a check. Pre-launch: **sm clock
+285–405 MHz, gpu 18% (6–37), mem 31%**, 37 samples. Two passes, lower kept per rung —
+contention is strictly additive, so of two readings the smaller is the better estimate of
+the scene. Monotone in both columns.
+
+| rung | tier | scale | buffer | held ms | held fps | **moving ms** | **moving fps** | spread |
+|---|---|---|---|---|---|---|---|---|
+| 0 | high | 1.00 | 2560×1440 | 17.15 | 58 | **18.07** | **55** | 0.91 |
+| 1 | high | 0.88 | 2253×1267 | 14.63 | 68 | **15.89** | **63** | 0.45 |
+| 2 | medium | 0.88 | 2253×1267 | 12.33 | 81 | **13.44** | **74** | 0.70 |
+| 3 | medium | 0.78 | 1997×1123 | 10.54 | 95 | **11.69** | **86** | 0.95 |
+| 4 | low | 0.78 | 1997×1123 | 8.36 | 120 | **9.34** | **107** | 0.93 |
+| 5 | low | 0.68 | 1741×979 | 7.10 | 141 | **8.14** | **123** | 0.23 |
+| 6 | potato | 0.68 | 1741×979 | 6.59 | 152 | **7.43** | **135** | 0.42 |
+| 7 | potato | 0.58 | 1485×835 | 5.55 | 180 | **6.47** | **155** | 1.99 |
+| 8 | potato | 0.50 | 1280×720 | 4.92 | 203 | **5.67** | **176** | 0.91 |
+
+**This supersedes the morning table in `CONTRACT.md` entirely**, and every rung is roughly
+26% faster for no reason other than that the card was free. The moving penalty also
+shrinks — 0.92 ms here against 3.75 in the morning — because a contended card amplifies
+extra work more than baseline work, so the cascade redraw looked worse than it is.
+
+Note what this does to the brief. **120 fps at 1440p is reachable moving**, at rung 4 and
+below — 1997×1123 upscaled, 107 fps. It is not reachable at *native* 2560×1440, where the
+honest figure is 55 fps fenced. The brief was never quite as far out of reach as the
+morning's numbers said.
+
+### 16.3 Where the governor settles: rung 0, and my prediction was wrong by four rungs
+
+§15 predicted rung 3 or 4 and flagged itself as likely pessimistic. It was pessimistic —
+by four rungs. **Measured twice, capped and uncapped: it settles at rung 0, high, scale
+1.00, native 2560×1440**, and stays there.
+
+The capped trace, 180 s of walking from a cold load: down to rung 4 by t=24 s during the
+cold-start descent, then climbing 4→3→2→1→0, reaching rung 0 at t=60 s and holding it for
+the remaining 120 s. **Time at each rung: rung 0 for 122.8 s of 180.** Rung-0 GPU readings
+across the walk ran 11.7–17.6 ms against a 16.67 ms target, median about 13.2.
+
+Uncapped it is slightly less settled and the difference is instructive: 43.8 s at rung 0,
+40.5 s at rung 1, 10.5 s at rung 2, ending at rung 0. Running flat out the GPU cost at the
+most expensive framings crosses the 19.17 ms descend gate, so it briefly takes a step
+down and climbs back — which is the governor doing exactly its job, and with no
+oscillation inside a rung.
+
+**So the target change was right, and for a better reason than the one it was made for.**
+It was made on contended numbers, where 120 drove the ladder to the floor. On true numbers
+120 would settle at rung 4 — 1997×1123 at 107 fps, which is a perfectly respectable
+outcome and not the pathology the change was justified by. But 60 settles at **native
+2560×1440 with no upscaling at all**, which for a walk whose entire point is the landscape
+is the better trade, and it is the one the brief's own priority order asks for. The
+pathology was an artifact; the choice survives it.
+
+### 16.4 The fenced ladder is systematically pessimistic, and the README moves up
+
+The check was to read a real loop rather than a fence. The `fps` column of an uncapped
+trace turned out to be useless — it swings **138 to 1053 fps**, because with vsync off the
+CPU loop spins ahead of a GPU that is the actual bottleneck, so frame-delta fps measures
+the spin and not the frame. The GPU timer is the trustworthy quantity and the comparison
+that matters is same rung, same station, same page:
+
+| | rung 0, at the walk's station |
+|---|---|
+| `renderOnce`, camera held — what `bench.mjs` measures | 10.65 ms |
+| `renderOnce`, rig moving — plus the cascade redraw | 17.90 ms |
+| **the governor's own GPU timer, a whole live frame** | **10.66 ms** |
+
+A complete live frame costs **7.2 ms less on the GPU than the fenced measurement of a
+smaller amount of work**. That is the fence: `readPixels` serialises CPU submit behind GPU
+execution, where a real loop overlaps them and pays about the larger. **So every fenced
+number in this project, including the delivery table above, is a conservative floor and
+not an estimate.**
+
+For the figure a player is quoted, the right measurement is the uncapped loop at the rung
+the governor actually chooses, across a real walk: **rung-0 GPU median 16.09 ms over 20
+samples, range 10.57–17.57 — about 62 fps at native 2560×1440.** Capped, the same station
+median was 13.2 ms, so 62 is the conservative of the two live figures. **The README is
+corrected upward from 37 to about 60, at native resolution rather than at 1280×720.**
+
+Revising a number up deserves the same scepticism as revising it down, so plainly: this
+is not the fenced table re-scaled by a ratio. It is a different instrument reading a
+different quantity — the GPU cost of a real frame in a real loop — at the rung the
+governor was measured selecting, and it is the quantity that limits what the player sees.
+The fenced table stays in the record beside it, unchanged, as the floor.
+
+### 16.5 The ladder reproduces, and the corrected gate immediately caught its own successor
+
+A second ladder was run behind the new clock gate to check the delivery table repeats. It does,
+and the way it does is a better result than a clean repeat would have been.
+
+| rung | delivery, clock ~350 | confirm, clock 970 | Δ held | confirm spread |
+|---|---|---|---|---|
+| 0 | 17.15 | 18.37 | +1.22 | 0.22 |
+| 2 | 12.33 | 13.17 | +0.84 | 4.84 |
+| 4 | 8.36 | 9.08 | +0.72 | 4.82 |
+| 6 | 6.59 | 7.11 | +0.52 | 4.10 |
+| 8 | 4.92 | 4.98 | +0.06 | 0.18 |
+
+Monotone, same shape, every rung **0.06–1.22 ms above** the delivery run — and the confirming run's
+pre-launch clock was **970 MHz against ~350**. The residual has the right sign, the right size, and
+scales with the rung's cost, which is what foreign load does and what a code difference would not.
+The per-rung spread tells the same story: 0.2–0.9 ms on the quiet run against **3.9–5.9** here, with
+pass 1 systematically cheaper than pass 0 as the load came and went underneath it.
+
+**So the gate I had just written to fix the old gate was also too loose, and it announced this
+itself.** 1200 MHz passed a card whose mean clock was 970 — which on a bimodal distribution is not
+"slightly busy" but *a quarter of the sampling window at full boost*. The mean of a bimodal quantity
+is a duty cycle wearing a megahertz costume, and thresholding it by eye reproduced the original
+mistake one order of magnitude smaller. It now reports the boosted **fraction** alongside the mean,
+because that is the number a reader can actually reason about, and the threshold is 600 MHz — about
+a 12% duty cycle.
+
+Recorded rather than quietly retuned, because the pattern is the finding: **both bad gates were
+produced by picking a threshold against a machine state nobody had characterised first**, and both
+were only caught by a measurement designed to be comparable across runs. The delivery table stands
+as the quiet one; this run is its reproduction and its error bar.

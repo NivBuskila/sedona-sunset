@@ -97,7 +97,19 @@ const EXTRA = getf('hash', '');
 const url = `http://localhost:${srv.address().port}/#adapt` +
   (TARGET ? `&target=${TARGET}` : '') + (EXTRA ? '&' + EXTRA : '');
 
-const browser = await chromium.launch({ headless: true, args: LAUNCH_ARGS });
+/* `--uncapped` removes the compositor's frame-rate limit, which is the only way to
+   read a real *loop* frame rate rather than the vsync period. Without it the `fps`
+   column of this trace is pinned to exactly 60 on every rung — true, and useless,
+   because it is a property of the display and not of the scene. It is off by default
+   because the governor's subject is frame *cost*, and a capped loop measures that
+   perfectly well while being kinder to a shared machine. */
+const UNCAPPED = has('uncapped');
+const browser = await chromium.launch({
+  headless: true,
+  args: UNCAPPED
+    ? [...LAUNCH_ARGS, '--disable-gpu-vsync', '--disable-frame-rate-limit']
+    : LAUNCH_ARGS,
+});
 const out = { w: W, h: H, secs: SECS, samples: [] };
 
 try {

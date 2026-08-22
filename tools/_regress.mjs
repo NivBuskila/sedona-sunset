@@ -76,14 +76,16 @@ function sampleGpu(ms) {
       mean: Math.round(u.reduce((a, b) => a + b, 0) / u.length),
       min: Math.min(...u), max: Math.max(...u),
       clock: Math.round(out.reduce((a, b) => a + b[1], 0) / out.length),
-      /* Memory-controller utilisation, which is the metric that actually
-         separates the two things that look identical in utilization.gpu. That
-         field is the fraction of sampled time during which *any* kernel was
-         resident, so an animated desktop wallpaper drawing at 60 fps reads 65%
-         while consuming very little of the card. This machine's resting floor is
-         gpu 63-66% at mem 12%; another agent's capture is gpu 88-100% at mem
-         16-19%. Only the second one is contention worth refusing to measure
-         through, and only the second one is distinguishable here. */
+      /* The clock is bimodal — ~300 idle, ~2800 boosted — so its *mean* is really a
+         duty cycle wearing a megahertz costume, and a mean of 970 is not "slightly
+         busy", it is a quarter of the samples at full boost. Report the fraction
+         directly; it is what the gate should be read against. Learned by shipping a
+         mean-only threshold and watching it admit exactly that. */
+      boosted: Math.round(100 * out.filter(a => a[1] >= 1500).length / out.length),
+      /* Memory-controller utilisation. **This field is not a contention signal and
+         was believed to be one for most of a day — see the correction below.** It
+         is kept because it is diagnostic once you know which way round it runs, and
+         removing it would erase the evidence. */
       mem: m.length ? Math.round(m.reduce((a, b) => a + b, 0) / m.length) : null,
       memMax: m.length ? Math.max(...m) : null,
     };
@@ -177,18 +179,62 @@ const ABLATIONS = [
  * the 39% "regression" that cost this project three hours. A run that does not
  * report this figure cannot be compared with a run taken at another time. */
 const IDLE_SECS = Number(getf('idlesecs', 10));
-/* Thresholds on the memory controller, not on utilization.gpu — see the note in
-   sampleGpu. This box cannot be made truly idle by a tool: the animated wallpaper,
-   the vendor overlay and the editor are permanent residents and hold gpu-util near
-   65% while barely touching the card. QUIET therefore means "at the resting floor,
-   with no other render work on the GPU", which is both the strongest claim
-   available and, since the user has a desktop too, the more representative one. */
-const QUIET_MEM = Number(getf('quietmem', 13));
-const QUIET_GPU = Number(getf('quietgpu', 78));
+/* ── the gate, corrected, and the correction is the point ───────────────────────
+ *
+ * **The first version of this gate declared a badly contended machine quiet, and
+ * that single mistake is the whole of the "unexplained six milliseconds" that sat
+ * in PERF.md and CONTRACT.md as the project's last open number.** It thresholded
+ * the memory controller at <= 13% and utilization.gpu at <= 78%, on the reasoning
+ * that this box "rests at gpu 63-66% / mem 12%". That sentence was written from
+ * samples taken while fourteen agent browsers and an animated wallpaper were on
+ * the card. It codified a contended state as the definition of rest — and worse,
+ * because the memory criterion runs the *opposite* way to load here, the gate was
+ * actively selecting for contention. It passed at 63% and again at 34%.
+ *
+ * Measured, same tree, same station, same method, one afternoon:
+ *
+ *   foreign load at boot            wash_mid rung 0, held
+ *   gpu 18%  mem 31%  clock 285-405   17.15 ms      <- actually idle
+ *   gpu 34%  mem 10%  clock 2835      22.05 ms
+ *   gpu 56%  mem 10%  clock 2835      22.22 ms
+ *   gpu 63%  mem 12%  (this morning)  23.06 ms      <- gate said QUIET
+ *
+ * So the discriminator is the **SM clock**, and it is unambiguous where both
+ * utilisation figures are not. At rest this card sits at 285-405 MHz; with any
+ * real render work on it, foreign or not, it boosts to 2820-2840 and stays there.
+ * utilization.gpu is hopeless on its own — it swung 2-77% within twelve seconds in
+ * one unchanging state — and the memory controller reads *high* (30-38%) at true
+ * idle and *low* (2-14%) under a shader load, because an idle desktop's traffic is
+ * display scanout while a busy one's is arithmetic. Both of the fields I trusted
+ * are inverted or noise; the clock is neither.
+ *
+ * The general lesson, which is the reusable part: **a threshold calibrated against
+ * an unverified "normal" inherits whatever was wrong with that normal, and then
+ * launders it into every measurement it gates.** The gate was not too loose by
+ * accident, it was loose *because* it had been fitted to the thing it was meant to
+ * exclude. Nothing downstream can detect that, which is why it survived a bisect,
+ * a quiet/contended A/B, and two written corrections.
+ */
+/* 600 rather than the 1200 this shipped with for one run. 1200 admitted a card whose
+   mean clock was 970 — a quarter of the sampling window at full boost — and that run
+   read 0.7-1.2 ms high at every rung against one taken at a mean of ~350, with the
+   per-rung spread jumping from 0.2-0.9 to 3.9-5.9 as the load came and went underneath
+   it. Same mistake as the first gate, one order of magnitude smaller: a threshold set
+   by eye against a state nobody had characterised. 600 is ~12% duty cycle. */
+const QUIET_CLOCK = Number(getf('quietclock', 600));
+const QUIET_GPU = Number(getf('quietgpu', 45));
+/* Retained so a run can still be forced through, and so the old behaviour is
+   reproducible, but no longer part of the default decision. */
+const QUIET_MEM = Number(getf('quietmem', 0));
 const WAIT_MIN = Number(getf('waitquiet', 0));
-const isQuiet = (s) => !!s && (s.mem == null
-  ? s.mean <= QUIET_GPU
-  : s.memMax <= QUIET_MEM + 1 && s.mean <= QUIET_GPU);
+const isQuiet = (s) => {
+  if (!s) return false;
+  if (QUIET_MEM && !(s.memMax <= QUIET_MEM + 1)) return false;
+  /* No clock reading (older driver, or nvidia-smi absent) falls back to the old
+     utilisation test, flagged as weaker by the caller rather than silently. */
+  if (!Number.isFinite(s.clock) || s.clock <= 0) return s.mean <= QUIET_GPU;
+  return s.clock <= QUIET_CLOCK && s.mean <= QUIET_GPU;
+};
 
 /* `--waitquiet N` refuses to boot until the card is actually free, re-checking
    for up to N minutes. The gate has to sit here, immediately before the launch,
@@ -208,7 +254,8 @@ for (;;) {
   idle = await sampleIdle();
   if (!idle) break;                      /* no nvidia-smi: nothing to gate on */
   const quiet = isQuiet(idle);
-  process.stderr.write(`  [${TAG}] foreign load: gpu ${idle.mean}% (${idle.min}-${idle.max}), ` +
+  process.stderr.write(`  [${TAG}] foreign load: sm clock ${idle.clock} MHz (boosted ${idle.boosted}% of samples), ` +
+    `gpu ${idle.mean}% (${idle.min}-${idle.max}), ` +
     `mem ${idle.mem}% (max ${idle.memMax}) over ${idle.n} samples — ` +
     `${quiet ? 'MACHINE IS QUIET' : 'NOT QUIET, this run would be contended'}\n`);
   if (quiet || Date.now() >= deadline) break;
@@ -507,7 +554,9 @@ else {
     `   frame L ${out.frame ? out.frame.L : '?'} clipped ${out.frame ? out.frame.hot : '?'}%` +
     `   ${out.real ? 'looks like the scene' : '✗ DOES NOT LOOK LIKE THE SCENE'}`);
   if (out.error) console.log(`  ✗ ${out.error}`);
-  if (out.idle) console.log(`  foreign load before boot: gpu ${out.idle.mean}% (${out.idle.min}-${out.idle.max}), ` +
+  if (out.idle) console.log(`  foreign load before boot: sm clock ${out.idle.clock} MHz ` +
+    `(boosted ${out.idle.boosted}% of samples; idle is ~300, boosted ~2800 — this is the field that decides), ` +
+    `gpu ${out.idle.mean}% (${out.idle.min}-${out.idle.max}), ` +
     `mem ${out.idle.mem}% (max ${out.idle.memMax}) over ${out.idle.n} samples — ` +
     `${out.quiet ? 'MACHINE WAS QUIET, these numbers are the honest ones'
       : 'NOT QUIET — every figure below is a floor, not an estimate'}`);

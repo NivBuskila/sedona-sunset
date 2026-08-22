@@ -57,27 +57,26 @@ There is no crosshair, no HUD and no menu, on purpose.
 
 ## How it will run
 
-On a computer that isn't doing anything else, the walk runs at about **37 frames a second
-at the full 2560×1440 setting** on an RTX 4060 — so the game quietly renders into a
-slightly smaller picture and lets your screen scale it back up, choosing how much smaller
-by watching how long frames are actually taking.
+On a computer that isn't doing anything else, the walk runs at **about 60 frames a second
+at the full 2560×1440 setting** on an RTX 4060 — measured while actually walking, which is
+the expensive case, and at full resolution with nothing scaled down.
 
-**It aims for a sharp picture at a comfortable fifty-something rather than the smoothest
-possible motion at a soft one.** That is a deliberate choice and it is the one this piece
-is for: it is a walk through a landscape, the landscape is the point, and a frame rate
-above about fifty is already smooth at walking pace. Expect it to settle somewhere in the
-middle of the range below, well short of the softest setting it owns.
+**It will normally just stay there.** The game watches how long frames are taking and can
+render into a smaller picture and let your screen scale it back up if it needs to, but on
+this card it does not need to: over a three-minute walk it chose full 2560×1440 for two
+thirds of the time and never went below a mild reduction. It is aiming for a sharp picture
+at a comfortable sixty rather than the smoothest possible motion at a soft one, which is
+the right way round for a walk whose whole point is the landscape.
 
-If you would rather have it the other way round — the smoothest motion this card can
-manage, at a visibly softer image — load `http://localhost:8099/#target=120`. That asks
-for 120 frames a second, which this scene cannot reach at any setting, so it will go all
-the way down to 1280×720 and give you about 89 instead. Sharper or smoother is a matter of
-taste and neither is wrong; sharper is the default because of what this particular thing
-is.
+**Give it a couple of seconds to find its level.** It steps down while the first frames are
+still compiling and climbs back to full resolution within about a minute of walking. You
+will probably not notice either.
 
-**Give it a couple of seconds to find its level.** It starts at full 2560×1440 and steps
-down to the setting it settles on within about two and a half seconds of the first frame.
-You will probably not notice it happen.
+If you would rather have the smoothest motion this card can manage and do not mind a
+visibly softer image, load `http://localhost:8099/#target=120`. That asks for 120 frames a
+second, which it can very nearly reach — but only by rendering at 1997×1123 and letting
+your screen scale it up. Sharper or smoother is a matter of taste; sharper is the default
+because of what this particular thing is.
 
 The whole range it can choose from, measured on an RTX 4060 at 2560×1440 with nothing else
 running on the machine. *Walking* is the column that matters, because walking is what you
@@ -86,31 +85,27 @@ you move:
 
 | what it renders | standing still | **walking** |
 |---|---|---|
-| 2560×1440 — full, no scaling | 43 fps | **37 fps** |
-| 2253×1267 | 49 fps | **42 fps** |
-| 2253×1267, fewer atmosphere samples | 56 fps | **48 fps** |
-| 1997×1123 | 62 fps | **52 fps** |
-| 1997×1123, lighter effects | 76 fps | **63 fps** |
-| 1741×979 | 85 fps | **72 fps** |
-| 1741×979, no bloom or depth of field | 99 fps | **74 fps** |
-| 1485×835 | 112 fps | **84 fps** |
-| 1280×720 | 126 fps | **89 fps** |
+| 2560×1440 — full, no scaling | 58 fps | **55 fps** |
+| 2253×1267 | 68 fps | **63 fps** |
+| 2253×1267, fewer atmosphere samples | 81 fps | **74 fps** |
+| 1997×1123 | 95 fps | **86 fps** |
+| 1997×1123, lighter effects | 120 fps | **107 fps** |
+| 1741×979 | 141 fps | **123 fps** |
+| 1741×979, no bloom or depth of field | 152 fps | **135 fps** |
+| 1485×835 | 180 fps | **155 fps** |
+| 1280×720 | 203 fps | **176 fps** |
 
-So it will not give you 120 frames a second while you are walking, at any setting, on this
-card — the bottom of that list is 89, and reaching even that means accepting 1280×720. If
-your monitor runs at 200 Hz you will not saturate it. What you do get is a frame rate that
-holds its number rather than collapsing when you turn to face the wall.
+**Those are deliberately cautious numbers, which is why the headline above is higher than
+the top row.** The way that table was timed makes the computer do its own work and the
+graphics card's work one after the other, where in normal play the two happen at the same
+time. Timing a real running frame instead gives about 60 at full resolution rather than the
+55 in the table. Every row is a floor, so real play is a little better than this
+throughout — never worse.
 
-These are also a floor rather than a best guess: the way they were timed makes the
-computer do its own work and the graphics card's work one after the other, where in
-normal play the two overlap. Real play should be a little better than the table, never
-worse.
-
-If you would rather have the sharpest possible image and do not mind the high thirties,
-load `http://localhost:8099/#high`, which pins it at full 1440p and turns the automatic
-adjustment off. Any of these addresses has to be loaded fresh — typing `#high` onto the
-end of a page that is already open does nothing, because the setting is only read once at
-startup.
+If you want to switch the automatic adjustment off entirely and pin full 1440p whatever
+happens, load `http://localhost:8099/#high`. Any of these addresses has to be loaded fresh
+— typing `#high` onto the end of a page that is already open does nothing, because the
+setting is only read once at startup.
 
 One last thing. It will use as much of your graphics card as you let it, so if something
 else demanding is running at the same time it will notice and quietly drop its own quality

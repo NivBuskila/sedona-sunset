@@ -35,17 +35,17 @@ sections now carries a banner saying it is closed.
 **What is honestly still weak.** More than one would like on delivery morning, and none of it
 is hidden:
 
-- **Performance does not meet the brief and this is the largest open item.** The contract
-  asked for 120+ fps at 1440p. **That is not reachable on this scene on this GPU at any rung
-  with the camera moving.** The honest figure is **37 fps walking at native 2560×1440** on the
-  top tier. **The governor's target is now 60 fps, not 120, and that was a picture decision.**
-  8.33 ms is unreachable at every rung moving, so aiming at it made the governor descend to the
-  floor and stay — 1280×720 upscaled, the softest picture the project can draw, on a machine that
-  renders 1997×1123 comfortably. An unreachable target in a system that can only trade picture for
-  frame time is an instruction to spend all of the picture. At 60 it has somewhere to stand;
-  `#target=120` restores the old behaviour. **Where it settles at 60 is measured-pending — see
-  `PERF.md` §15, which states the prediction as a prediction.** The frame is fill-bound, not
-  geometry-bound. One measurement in that
+- **Performance is much better than this file said for most of the day, and the difference was
+  never the code.** The contract asked for 120+ fps at 1440p. Measured on a machine verified idle
+  by SM clock: **about 60 fps walking at native 2560×1440**, and the governor holds native
+  resolution rather than scaling down. **120 fps walking is reachable, but only into a reduced
+  buffer** — 107 fps at 1997×1123, 123 at 1741×979 — so the brief is met at an upscaled buffer and
+  not at a native one, which is said plainly rather than implied. **Every earlier and worse figure
+  in this file — 30.5 ms, 37 fps, the descent to 1280×720 — was a contended machine, and the
+  bisect plus a paired two-commit control says the frame itself never moved all day.** See
+  `PERF.md` §16, and §16.1 in particular: the "unexplained six milliseconds" is closed, and the
+  cause was an idle-detection gate that had been calibrated against an already-loaded card. The
+  frame is fill-bound, not geometry-bound. One measurement in that
   account is **unexplained and is recorded as unexplained**: the same cell read 16.80 ms in one
   tool and 23.06 in another on the same commit, and neither code growth (a fourteen-commit
   bisect says the frame is flat to 0.83 ms) nor machine contention (23.06 quiet against 23.30
@@ -157,10 +157,11 @@ a real sunset photograph of Sedona. Not stylized, not low-poly, not "good for a 
   it" clause stand. The three figures do not. The frame ships at **3.97 M triangles** and
   the triangle ceiling was measured to be the wrong axis entirely — removing the far
   ridgelines is worth 0.02 ms of a 30 ms frame, and the frame is fill-bound. **120 fps at
-  native 1440p is not reachable on this scene on this GPU**, at any rung, with the camera
-  moving. The shipped figure is **37 fps walking at native 2560×1440**, and the governor now
-  targets 60 rather than 120 precisely because an unreachable target drove it to the floor of the
-  ladder and cost the picture — `PERF.md` §15. See "Triangles are not what this frame costs" and,
+  native 1440p is not reachable on this scene on this GPU** with the camera moving; it *is*
+  reachable into a reduced buffer, at 1741×979 upscaled. The shipped figure is **about 60 fps
+  walking at native 2560×1440**, with the governor holding native resolution — measured on a
+  verified-idle machine, `PERF.md` §16. Figures below 60 elsewhere in this file were taken on a
+  contended card. See "Triangles are not what this frame costs" and,
   for the one table to quote, **"The delivery table — 2560×1440, RTX 4060, machine gated
   quiet"** — every earlier fps table on this project was taken with the camera held and is not
   what a walking player gets, and every "120 fps", "123", "59 fps" and "55 fps" figure in this
@@ -4304,8 +4305,10 @@ rescue it either: `high` 31.04 ms, `medium` 24.62, `low` 20.38, `potato` 18.03 �
 bottom rung of the governor is 55 fps~~, and there is no tier in the ladder that reaches the
 brief. *(The 55 was potato at native resolution, which is a setting the governor never selects —
 see "A tier is not a rung" below. The conclusion in this sentence survived every correction since
-and is the one that stuck: the delivery run reads **37 fps moving at rung 0** and 89 at the floor
-of the ladder. The figures to quote are in "The delivery table" below.)* The lever is fragment cost and resolution, not vertices. From
+and is the one that stuck, though the numbers under it have all moved up: on a verified-idle machine
+the delivery run reads **55 fps moving at rung 0** fenced — about 60 in a live loop — and 176 at the
+floor. **120 fps moving is reached at rung 5, 1741×979**, so the brief is met at a reduced buffer
+and not at a native one. The figures to quote are in "The delivery table" below.)* The lever is fragment cost and resolution, not vertices. From
 `tools/shadercost.mjs`: `terrain.js` is 41 fetches with 14 unconditional and 8 inside a
 loop, `rock.js` is 16 with 15 unconditional, `post.js` is 52 across five literals. Note that
 `wall_lit`, which is mostly wall, costs 18.9 ms against 30.5 for the two floor-and-sky
@@ -4332,12 +4335,13 @@ ladder reaches 120 fps at rung 4 and 182 fps at its floor~~. Full account in `PE
 what belongs here is the method and the two instrument failures, because both recur.
 
 *(Both figures in that sentence were measured with the camera held, and neither is what a walking
-player gets. On a machine gated quiet the same cell is **23.06 ms held and 26.81 moving**, and no
-rung reaches 120 fps moving. The frame did not grow — a fourteen-commit bisect puts it flat to
-within 0.83 ms, endpoints interleaved and 0.18 apart — so the difference between 16.8 and 23.06 is
-not the scene. **It is also not the machine**, which was the next theory and was tested: the quiet
-figures above are the same as the contended ones. It is unexplained, and item 1 of "The ladder as a
-player walks it" records which confounds have already been eliminated. That section adds two more
+player gets. On a machine **verified idle by SM clock** the same cell is **17.15 ms held and 18.07
+moving**, and 120 fps moving is reached at rung 5. The frame did not grow — a fourteen-commit bisect
+puts it flat to within 0.83 ms, endpoints interleaved and 0.18 apart, and a two-commit control an
+afternoon apart reads 22.22 against 22.05 under one load — so the difference between 16.8 and 23.06
+was never the scene. **It was the machine after all**: the run that "gated quiet" at 23.06 was gated
+by a threshold fitted to a contended card, so quiet and contended were compared against each other.
+Item 1 of "The ladder as a player walks it" has the table. That section adds two more
 instrument failures to the two this section names, both of the same kind: an instrument that could
 not be pointed at the thing being measured, and a measurement recorded without the conditions it
 was taken under.)*
@@ -4424,16 +4428,17 @@ exposes `rungs` and `setRung` and `bench.mjs` prints both tables.
 > - ~~the frame had "grown 6.5 ms at rung 0"~~ — a fourteen-commit bisect says it did not grow at
 >   all, flat to within 0.83 ms with the endpoints interleaved.
 > - ~~"it was taken before the GPU acquired a 65–100% utilisation floor from other work on this
->   box, which costs another 6 ms and is nothing to do with the scene"~~ — **withdrawn.** A run on
->   a machine gated quiet reads **23.06 ms held against 23.30 contended**. The foreign load was
->   costing 0.24 ms, not 6. See item 1 of "The ladder as a player walks it", which lists the
->   confounds already eliminated so nobody redoes them.
+>   box, which costs another 6 ms and is nothing to do with the scene"~~ — struck as withdrawn on
+>   the evidence that a "quiet-gated" run read 23.06 against 23.30 contended. **Reinstated: this
+>   was right all along.** Both of those readings were contended, because the gate that passed
+>   them had been calibrated against a loaded card. Verified idle by SM clock, the same cell reads
+>   **17.15 ms**.
 >
-> **The gap is unexplained and is recorded as unexplained.** Stated on the one cell where both
-> tools measured the same thing: `bench.mjs` read `wash_mid` at **16.80 ms** and `_regress.mjs`
-> read **23.06** — same station to the degree, same timing method, same commit `fa8b9ec`, same
-> machine state. Do not quote either the growth story or the contention story; both were
-> confident and both were wrong, in that order, within one morning. Note also that this table is
+> **The gap is closed and it was foreign GPU load.** On the one cell where both tools measured the
+> same thing, `bench.mjs` read `wash_mid` at **16.80 ms** and `_regress.mjs` read **23.06** — and
+> `_regress.mjs` now reads **17.15** on a machine idle by a gate that can tell. Do not quote the
+> growth story, which a bisect killed; the contention story is the surviving one, and it took three
+> attempts and a corrected instrument to establish. Note also that this table is
 > `sun_gap` per rung while the delivery table's `held` column is `wash_mid`; the spread *between*
 > stations is wider than four rungs of the ladder, so do not read the two tables row against row.
 
@@ -4452,13 +4457,11 @@ Per rung at `sun_gap`, 2560×1440, RTX 4060, median of seven blocks of thirty:
 
 ~~The governor targets 8.33 ms and settles at rung 4, so the shipped experience on this machine
 is **120+ fps at an upscaled 1997×1123**, and `#high` pins 2560×1440 at 59.~~ **Struck: those are
-held-camera figures and neither survives.** The delivery run puts rung 4 at **63 fps moving** and
-rung 0 at **37 fps moving**. And the governor no longer targets 120 at all: 8.33 ms is unreachable
-at every rung moving, so targeting it drove the ladder to the *floor* — rung 8, 1280×720 — and kept
-it there, which is a soft picture bought for no frame rate. **The default target is now 60**;
-`#target=120` restores the old behaviour. See `PERF.md` §15, which states the new settling point as
-a prediction because it has not yet been measured. **No rung on this ladder
-reaches 120 fps with the camera moving.** Quoting a
+held-camera figures and neither survives** — but the *shape* of the struck claim was closer than
+its replacements. On a verified-idle machine the delivery run puts rung 4 at **107 fps moving** and
+rung 0 at **55 fps moving** (about 60 live). The governor's target is now 60 rather than 120, and it
+**settles at rung 0, native 2560×1440** — measured, `PERF.md` §16.3. **120 fps moving is reached at
+rung 5, 1741×979**, so the brief is met into a reduced buffer and not at native. Quoting a
 scale-1.0 tier row as the fallback is the error the row above documents — and quoting a
 held-camera row as the shipped experience is the error this sentence was.
 
@@ -4590,28 +4593,40 @@ bench's own top-left cell from a detached worktree, and **every source commit in
 22.4–23.2 ms, a spread of 0.83 across fourteen commits**, with the endpoints alternated three times
 each and differing by 0.18. **The bisect is the answer to the question and it stands.**
 
-This entry then said the difference was contention, and that has been tested and is also wrong. The
-same cell on a machine gated quiet — pre-launch sample required to show the card at its resting
-floor before the run was allowed to start — reads **23.06 held and 26.81 moving**, against 23.30 and
-25.21 under 90–100% foreign load. Identical. **So the gap between 16.80 and 23.06 on the same commit
-is unexplained, and it is recorded as unexplained rather than re-attributed.** Confounds already
-eliminated, so nobody redoes them: same station (`bench.mjs`'s `wash_mid` is `d: 46, yaw: 0,
-pitch: 0`, to the degree), same timing method (`performance.now()` around n `renderOnce`, one-pixel
-`readPixels` fence, neither using the GPU timer), same commit, same machine state. One untested
-hypothesis, labelled as such: a fixed-count warm-up can read *low* as well as high if a rung's timed
-blocks catch the tail of a cheaper configuration mid-transition, and `bench.mjs` walks the ladder
-through `setTier()` with exactly that shape of warm-up — the defect that produced it was found and
-fixed in `_regress.mjs` (see `PERF.md` §13). The test is to give `bench.mjs` the adaptive warm-up and
-re-run.
+This entry then said the difference was contention; then that it was unexplained. **It was
+contention, and the reason the test appeared to exonerate contention is that the gate deciding
+"quiet" had been calibrated against an already-loaded card.** The full account is `PERF.md` §16.1;
+the short version, measured on a released machine:
 
-**The lesson for this file, which survived both wrong versions: a millisecond recorded without the
-machine's state beside it cannot be compared with one taken two hours later** — and an unexplained
-six milliseconds recorded as unexplained is worth more than a plausible attribution, because the next
-person will actually look. Two confident causal stories died here in one morning. `_regress.mjs` now
-prints load beside every number, and `bench.mjs` should. Note `utilization.gpu` alone is the wrong
-field: it is the fraction of sampled time in which *any* kernel was resident, so an animated wallpaper
-at 60 fps reads 65% while consuming almost nothing. Gate on the memory controller — this box rests at
-gpu 63–66%/mem 12%, an agent capture is gpu 88–100%/mem 16–19%, and a game is gpu 100%/mem 34%.
+| foreign load at boot | same cell, held |
+|---|---|
+| **sm clock 285–405 MHz**, gpu 18%, mem 31% | **17.15 ms** — actually idle |
+| sm clock 2835 MHz, gpu 34%, mem 10% | 22.05 ms |
+| sm clock 2835 MHz, gpu 56%, mem 10% | 22.22 ms |
+| gpu 63%, mem 12% — the morning's "gated quiet" run | 23.06 ms |
+
+And the code is not the variable, checked rather than assumed: **`2038823` and `d4dac2b` measured
+minutes apart under one load read 22.22 and 22.05 ms** — two trees an afternoon of scene work apart,
+differing by 0.17. So the bisect stands and extends across the whole day. 16.80 was an idle reading;
+17.15 is 16.80 measured again on a machine that is idle for the first time since.
+
+**Gate on the SM clock. Both of the fields this file previously recommended are wrong.** At rest this
+card sits at **285–405 MHz** and under any real render work it boosts to **2820–2840** and stays —
+unambiguous. `utilization.gpu` alone swung **2–77% inside twelve seconds** in one unchanging state.
+And `utilization.memory`, which the paragraph here used to recommend, runs **inversely**: 30–38% at
+true idle against 2–14% under a shader load, because an idle desktop's memory traffic is display
+scanout and a busy one's is arithmetic. The old advice — "this box rests at gpu 63–66%/mem 12%" —
+was written from samples taken while fourteen agent browsers were on the card, and it defined a
+contended state as rest.
+
+**The lesson, which is the one durable thing here: a millisecond recorded without the machine's
+state beside it cannot be compared with one taken two hours later** — and a *threshold* calibrated
+against an unverified normal inherits whatever was wrong with that normal and launders it into every
+measurement it gates. This gate was not loose by accident; it was loose because it had been fitted
+to the thing it existed to exclude, which is why it survived a fourteen-commit bisect, an explicit
+quiet-versus-contended A/B, and two written corrections in this file. Nothing downstream of a bad
+gate can detect a bad gate. Three confident causal stories died on this one number; the one that
+lived was found by re-deriving what idle looks like with the machine actually idle.
 
 **1b. The indirect-light fix costs 0.6 ms of a 23 ms frame** — priced by paired ablation in one
 page load, three runs, with the site count checked so a stale pattern cannot read as a free
@@ -4653,16 +4668,19 @@ not needed — nothing remains to attribute.
 ladder: at rung 0, `ground` is 13.9 ms and `wash_mid` is 23.3. Anything tuned on those three
 framings cannot say what the walk costs.
 
-### The delivery table — 2560×1440, RTX 4060, machine gated quiet
+### The delivery table — 2560×1440, RTX 4060, machine verified idle by SM clock
 
-> **This is the one to quote.** Frozen tree at `2038823`, served from a committed detached worktree
-> so nothing could land inside the run, `src/` verified clean. The run refused to start until a
-> pre-launch sample showed the card at its resting floor: **GPU 63% (58–67), memory controller 12%
-> (max 13), 46 samples** — no other captures, no agent browsers, no game. Frame confirmed real at
-> mean luminance 80.8 and 0.32% clipped, so it is not the white desert. Two passes over the ladder
-> keeping the lower reading per rung, which is not cherry-picking: contention is strictly additive,
-> so of two readings of one rung the smaller is the better estimate of *the scene* and the larger
-> contains something that is not. Monotone in both columns, per-rung spread printed.
+> **This is the one to quote, and it replaces the version of this table that stood until the
+> machine was released.** That earlier table was taken behind a gate that passed a card at 63%
+> foreign load, so every row of it was 26% slow; it is preserved in `PERF.md` §16.1 only as
+> evidence. Frozen tree at `d4dac2b`, served from a committed detached worktree so nothing could
+> land inside the run, `src/` verified byte-identical to the main tree by tree hash. Pre-launch:
+> **sm clock 285–405 MHz — the field that actually decides — gpu 18% (6–37), mem 31%, 37 samples.**
+> No game, no other captures, no agent browsers. Frame confirmed real at mean luminance **80.82**
+> and **0.32%** clipped, which also matches the morning's figure despite an afternoon of far-field
+> and dust-film work landing. Two passes keeping the lower reading per rung: contention is strictly
+> additive, so of two readings the smaller is the better estimate of *the scene*. Monotone in both
+> columns, per-rung spread printed.
 
 `held` is `bench.mjs`'s own method at `wash_mid` — `d: 46, yaw: 0, pitch: 0` — and is directly
 comparable with the table above. `moving` is what a walk pays, and it is the column that matters,
@@ -4670,40 +4688,49 @@ because walking is what the player does. Both include the cascade-scheduling fix
 
 | rung | tier | scale | buffer | held ms | held fps | **moving ms** | **moving fps** | spread |
 |---|---|---|---|---|---|---|---|---|
-| 0 | high | 1.00 | 2560×1440 | 23.06 | 43 | **26.81** | **37** | 11.92 |
-| 1 | high | 0.88 | 2253×1267 | 20.25 | 49 | **24.02** | **42** | 0.41 |
-| 2 | medium | 0.88 | 2253×1267 | 17.93 | 56 | **20.81** | **48** | 0.15 |
-| 3 | medium | 0.78 | 1997×1123 | 16.23 | 62 | **19.13** | **52** | 0.03 |
-| 4 | low | 0.78 | 1997×1123 | 13.09 | 76 | **15.85** | **63** | 0.08 |
-| 5 | low | 0.68 | 1741×979 | 11.74 | 85 | **13.88** | **72** | 0.62 |
-| 6 | potato | 0.68 | 1741×979 | 10.10 | 99 | **13.58** | **74** | 0.57 |
-| 7 | potato | 0.58 | 1485×835 | 8.90 | 112 | **11.96** | **84** | 6.59 |
-| 8 | potato | 0.50 | 1280×720 | 7.95 | 126 | **11.27** | **89** | 0.07 |
+| 0 | high | 1.00 | 2560×1440 | 17.15 | 58 | **18.07** | **55** | 0.91 |
+| 1 | high | 0.88 | 2253×1267 | 14.63 | 68 | **15.89** | **63** | 0.45 |
+| 2 | medium | 0.88 | 2253×1267 | 12.33 | 81 | **13.44** | **74** | 0.70 |
+| 3 | medium | 0.78 | 1997×1123 | 10.54 | 95 | **11.69** | **86** | 0.95 |
+| 4 | low | 0.78 | 1997×1123 | 8.36 | 120 | **9.34** | **107** | 0.93 |
+| 5 | low | 0.68 | 1741×979 | 7.10 | 141 | **8.14** | **123** | 0.23 |
+| 6 | potato | 0.68 | 1741×979 | 6.59 | 152 | **7.43** | **135** | 0.42 |
+| 7 | potato | 0.58 | 1485×835 | 5.55 | 180 | **6.47** | **155** | 1.99 |
+| 8 | potato | 0.50 | 1280×720 | 4.92 | 203 | **5.67** | **176** | 0.91 |
 
-**What the user gets, and it is what the README now says.** **37 fps walking at native 2560×1440 on
-the top tier**, and **120 fps is not reachable at any rung with the camera moving** — the brief's
-target is not met at any buffer on this scene, said plainly rather than implied.
+**What the user gets, and it is what the README now says.** **About 60 fps walking at native
+2560×1440** — 55 by the fenced method above, ~60 by the live-loop measurement below, which is the
+better instrument for this question. **120 fps walking is reachable, but only into a reduced
+buffer**: 107 fps at 1997×1123 and 123 at 1741×979. So the brief is met at an upscaled buffer and
+not at a native one, which is worth saying precisely rather than as a flat failure.
 
-That measurement changed the governor's default. Aiming at 8.33 ms, which no rung reaches moving,
-made it descend to the floor and stay: 1280×720 upscaled to 1440p, 89 fps, the softest picture the
-project can draw. **The target is now 60 fps**, so it has a mid-ladder rung to stand on, and the
-trade is stated in the README in one sentence — a sharp picture at a comfortable fifty-something
-rather than the smoothest motion at a soft one. `#target=120` restores the old behaviour for anyone
-who wants it. **Where it settles at 60 is not yet measured and is written as a prediction** in
-`PERF.md` §15, which also carries the whole policy; the one existing trace at that target settled
-two rungs above the arithmetic, so the prediction is probably pessimistic.
+**And the governor settles at rung 0 — native 2560×1440, no upscaling — measured, twice.** A
+180 s walk from a cold load descended to rung 4 while the first frames compiled, climbed
+4→3→2→1→0 by t=60 s, and held rung 0 for the remaining 120 s. Uncapped it spends 44 s at rung 0
+and 40 s at rung 1, stepping down only at the most expensive framings. `PERF.md` §16.3 has the
+trace; §15 has the policy, and the prediction it carried — rung 3 or 4 — was pessimistic by four
+rungs and is marked as such.
 
-**These figures are a floor, not a best estimate, and the direction matters.** They are wall time
-across `renderOnce` behind a one-pixel `readPixels` fence, which serialises CPU submit behind GPU
-execution where a real loop overlaps them. The governor's own signal is the GPU median alone, and
-the two differ by several milliseconds — §15 has the evidence. Real play should read better than
-this table, never worse. A quiet real-loop `fps` trace is the one measurement the project never
-took.
+The target change to 60 therefore stands, though the reason it was made turned out to be an
+artifact: on contended numbers 120 drove the ladder to the floor, and on true ones it would settle
+at rung 4 for 107 fps, which is no pathology at all. 60 is still the better default because it
+holds **native** resolution on this card, and a walk whose point is the landscape should not
+upscale to buy frames it does not need. `#target=120` restores the old behaviour.
+
+**These figures are a floor, not a best estimate, and that has now been quantified.** They are wall
+time across `renderOnce` behind a one-pixel `readPixels` fence, which serialises CPU submit behind
+GPU execution where a real loop overlaps them and pays about the larger. Measured at one rung, one
+station, one page: `renderOnce` held reads **10.65 ms**, `renderOnce` moving **17.90**, and the
+governor's GPU timer around a whole live frame — *more* work — reads **10.66**. A real frame costs
+**7.2 ms less** than the fenced measurement of a smaller amount of work. The live figure across a
+walk at rung 0 is a GPU median of **16.09 ms, about 62 fps**, which is where the README's "about
+60" comes from. `PERF.md` §16.4 has the method, including why an uncapped `fps` counter is useless
+here — it swings 138 to 1053 because the CPU loop spins ahead of the GPU.
 
 None of that is a regression. §10's table was accurate when it was taken and the frame has not
-grown — see item 1 above, and note that the 16.80 that table rests on is not reproduced by a second
-tool and is not currently explained. 3.2 ms of the walk was always invisible to every bench in the
-project, and 1.0 ms of that has now been recovered at no cost to the picture.
+grown — see item 1 above, where the 16.80 is now reproduced as 17.15 on an idle machine and the
+gap is closed. 3.2 ms of the walk was always invisible to every bench in the project, and 1.0 ms of
+that has now been recovered at no cost to the picture.
 
 Rung 8 is new: `RSCALE` gains a 0.50 step. It is worth 0.6–0.8 ms and that is said plainly rather
 than implied, because resolution has stopped being the strong lever it was — `@0.7res` takes
@@ -4712,12 +4739,18 @@ because a governor whose bottom step is over budget has nowhere to put a struggl
 
 ### What the governor does now
 
-**What it targets: 16.67 ms, 60 fps, fixed — and it was 120 until the ladder was measured with the
-camera moving.** No rung reaches 8.33 ms moving, so the old target fired the descend rule at every
-rung and walked the governor to the floor: aiming at 120 produced not 120 but 1280×720 upscaled to a
-1440p panel. A system whose only lever is picture-for-frame-time, given a frame time it cannot
-reach, will correctly give away all of the picture, and every individual decision on the way down
-looks right — which is why it went unnoticed. `#target=120` restores it exactly.
+**What it targets: 16.67 ms, 60 fps, fixed — and it was 120.** It **settles at rung 0, native
+2560×1440**, measured over a 180 s walk twice (`PERF.md` §16.3), holding native resolution for two
+thirds of the trace and stepping down only at the most expensive framings when run uncapped.
+
+The change from 120 was made on contended numbers, where no rung reached 8.33 ms and the target
+therefore fired the descend rule everywhere and walked the ladder to the floor — 1280×720 upscaled
+to a 1440p panel, a soft picture bought for no frame rate. **On idle numbers that pathology does not
+exist**: 120 would settle at rung 4 for 107 fps. The general point still stands and is worth keeping,
+because it is not obvious — a system whose only lever is picture-for-frame-time, given a frame time
+it cannot reach, will correctly give away all of the picture, and every individual decision on the
+way down looks right. 60 remains the better default on this card for the simpler reason that it
+holds **native** resolution. `#target=120` restores the old target exactly.
 **Captures are unaffected**: the harness clause pins `pinned = 0`, `adapting` is false, and
 `adapt()` returns before the target is read, so no gate in this file needs re-shooting, and
 `bench.mjs` walks the ladder through explicit `setRung()` which never consults it.
