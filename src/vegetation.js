@@ -200,18 +200,9 @@ function shrubGeo(seed, s = SHRUB_SHAPES[0]) {
        geometry is instanced once and drawn a few hundred times. */
     /* 0.5 is makeScrub's cell: 512 square, two columns, full height, so 256x512.
        See cardTuft for why passing it matters — the widest of these three shapes
-       is a 2.5:1 card and was stretching that portrait cell fivefold.
-       The 0.16 skirt is the fix for `bend`'s reported black rectangle. Aspect
-       correction windows each card onto the middle of the cell, where the plant is
-       drawn, rather than onto the whole cell including its near-empty margin — so
-       a card's bottom edge went from mostly transparent to mostly opaque, and
-       tools/_uvsolid.mjs measures the union along a tier's shared base line
-       rising from 31% to 84% for this shape. Every card bottoming at one local y
-       turned that into a dead-straight horizontal cut through open air. Staggering
-       the feet costs nothing and keeps the aspect fix, which closed a different
-       critic's finding. */
-    cardTuft(0, 0, 0, s.lo[0], s.lo[1], s.lo[2], rand, arr, 2, 1, 0.5, 0.16);
-    cardTuft(0, s.lift, 0, s.hi[0], s.hi[1], s.hi[2], rand, arr, 2, 1, 0.5, 0.16);
+       is a 2.5:1 card and was stretching that portrait cell fivefold. */
+    cardTuft(0, 0, 0, s.lo[0], s.lo[1], s.lo[2], rand, arr, 2, 1, 0.5);
+    cardTuft(0, s.lift, 0, s.hi[0], s.hi[1], s.hi[2], rand, arr, 2, 1, 0.5);
   })), true);
 }
 
