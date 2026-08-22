@@ -52,9 +52,17 @@ export const JUNIPER_XZ = { x: 6.74, z: -65.65 };
 
 /* Prevailing wind, as a direction the wind blows *toward*. Chosen across the
    wash rather than along it so the tree's lean reads as a lean in the hero
-   framing instead of foreshortening to nothing. System 5's saltation ribbons and
-   System 6's wind bed should agree with this; it is exported for that. */
-export const WIND = new THREE.Vector2(0.94, 0.34).normalize();
+   framing instead of foreshortening to nothing.
+   Named `PREVAILING` rather than `WIND` because the bare name invited exactly
+   the confusion it was meant to prevent: `terrain.js`'s `uWind` uniform is
+   commented "the shared WIND" and is not this at all — it starts from
+   `TONIGHT_FALLBACK` and is then driven live off the audio wind, which runs on
+   `WIND_HEADING = 0.12` in `atmosphere.js` and `audio.js`. That heading points
+   about seventy-six degrees away from this vector, and nothing imports this one,
+   so the "should agree with this; it is exported for that" this comment used to
+   claim was never true. It is the juniper's own lean direction and no more than
+   that until somebody reconciles the two. */
+export const PREVAILING = new THREE.Vector2(0.94, 0.34).normalize();
 
 const BARK_TILE = 0.55;   // metres per bark texture tile
 
@@ -393,7 +401,7 @@ export function buildTree(seed) {
   const trunkProf = makeProfile(seed + 11, 7, 2);
   const twist = 0.34;     // radians of spiral per metre — about 20 degrees
 
-  const wind = new THREE.Vector3(WIND.x, 0, WIND.y);
+  const wind = new THREE.Vector3(PREVAILING.x, 0, PREVAILING.y);
 
   /* The ground, in the tree's own coordinates, so a limb can be stopped from
      burrowing into it. The mesh origin sits 0.10 m above the terrain (see
@@ -1682,7 +1690,7 @@ export function buildJuniper(terrain, tex) {
     const th = rand() * TAU;
     const dripLine = rand() < 0.58;
     const rr = dripLine ? 1.60 + rand() * 1.60 : 0.40 + rand() * 1.35;
-    const bias = 0.5 - 0.5 * (Math.cos(th) * WIND.x + Math.sin(th) * WIND.y);
+    const bias = 0.5 - 0.5 * (Math.cos(th) * PREVAILING.x + Math.sin(th) * PREVAILING.y);
     /* Duff under the drip line does not care about the wind; wind-piled litter
        cares about nothing else. */
     if (rand() > (dripLine ? 0.80 : 0.26 + 0.74 * bias)) continue;

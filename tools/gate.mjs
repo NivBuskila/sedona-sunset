@@ -104,14 +104,45 @@ const VIEWS = [
 
 /* ── FLOOR: what this scene physically is ──────────────────────────────────
  *
- * Every bound here is a statement about a photograph of a dry wash at golden
- * hour, not about this build. The two measured failures are written beside the
- * bound that catches them. */
+ * **These are empirical bounds, not bounds computed from solar geometry, and the
+ * distinction is load-bearing.** An earlier version of this comment justified
+ * them as "what a dry wash at an eleven-degree sun can physically be", which
+ * was wrong in a specific and dangerous way: the sun has shipped at 15° since
+ * `b775e33` and every number in this file was measured after that, so the bounds
+ * were right and the reason given for them was not. A bound whose stated
+ * derivation is a formula invites a future reader to re-run the formula and move
+ * the bound. Nobody can re-derive these from an angle, because they never came
+ * from one.
+ *
+ * Each bound has one of two provenances, and it is named:
+ *
+ *   MEASURED  read off the shipped scene across the six framings below. The
+ *             blessed reference in `tools/gate.ref.json` is that measurement.
+ *   FAILURE   set from a state this project actually shipped past itself, so
+ *             the bound is on the wrong side of a known defect rather than on
+ *             the comfortable side of a healthy build.
+ *
+ * FAILURE bounds are the only ones the sun elevation could touch, because the
+ * two white-desert readings of 124.5 and 155.8 may predate the move to 15°.
+ * They survive it, and in the safe direction: a higher sun puts more irradiance
+ * on a horizontal floor, `sin 15° / sin 11°` being about 1.36, so the same
+ * failure at 15° reads *brighter* than it did and sits further outside the
+ * ceiling, not nearer it. The healthy side of the same bound is measured at 15°
+ * directly. Both sides check out, which is why nothing here moved.
+ *
+ * `MEASURED_AT_SUN_DEG` below turns this from a comment into a check. If the sun
+ * moves again the gate refuses and says to re-derive, so the next person to read
+ * this cannot be misled by it the way the audit caught me misleading them. */
+
+/* The sun the bounds and the reference were measured under. Not an input to any
+   of them — a record of the scene they describe, checked so it cannot go stale
+   silently. */
+const MEASURED_AT_SUN_DEG = 15.0;
 const FLOOR = {
-  /* Ground brightness. Measured across the six framings on a good build this
-     runs 23.5 to 89.7, the top of it being `floor` — a steep down-pitch filling
-     the frame with sunlit wash floor, which is the brightest ground this scene
-     can produce. The two white-desert states read 124.5 and 155.8.
+  /* MEASURED below, FAILURE above. Across the six framings on a good build the
+     ground runs 23.5 to 90.0, the top of it being `floor` — a steep down-pitch
+     filling the frame with sunlit wash floor, which is the brightest ground this
+     scene can produce. The two white-desert states read 124.5 and 155.8.
      The margin here is thinner than the others and it is deliberately not the
      primary detector: an indirect-light lift is landing while this is written
      and it moves ground values up, so a ceiling tight enough to be a good
@@ -119,37 +150,44 @@ const FLOOR = {
      `skyOverGround` below are the checks doing that work, and they are
      exposure-invariant, so they do not have this problem. */
   groundAvg: [6, 118],
-  /* The bottom third of the frame is wash floor in every framing above. */
+  /* MEASURED. The bottom third of the frame is wash floor in every framing
+     above. Measured 26.4 to 99.6. */
   floorL: [6, 122],
-  /* Red rock and red dirt in warm light, and **the most valuable single number
-     in this file**. It does not care what the exposure is doing: white is
-     achromatic, so R/G collapses toward 1.0 whether the frame got brighter or
-     not, and a debug line painting the ground white is caught by this on its
-     own with no reference build and no console error. Measured 1.56-1.87. */
+  /* MEASURED, and **the most valuable single number in this file**. It does not
+     care what the exposure is doing: white is achromatic, so R/G collapses
+     toward 1.0 whether the frame got brighter or not, and a debug line painting
+     the ground white is caught by this on its own with no reference build and no
+     console error. Measured 1.557 to 1.831.
+     This is also the bound the sun elevation has least purchase on of anything
+     here, which is worth saying while re-deriving: raising the sun changes how
+     much light lands on the floor and barely touches the ratio between the
+     channels reflected off it. */
   floorRG: [1.20, 2.40],
-  /* Something has to be darker than something else. A frame with no spread is
-     a frame of one flat thing, which is every version of this failure.
-     Measured 94 to 192. */
+  /* MEASURED. Something has to be darker than something else; a frame with no
+     spread is a frame of one flat thing, which is every version of this
+     failure. Measured 88 to 207. */
   contrast: [40, 250],           // p99 - median
-  /* Blown highlights are the sun's aureole and a few specular grains, not a
-     surface. Measured 0.00-0.36%. Crushed blacks were a real defect here and
-     are being fixed upward, so that ceiling is generous rather than tight. */
+  /* MEASURED. Blown highlights are the sun's aureole and a few specular grains,
+     not a surface. Measured 0.00-0.36%. Crushed blacks were a real defect here
+     and are being fixed upward, so that ceiling is generous rather than tight;
+     measured 0.00-1.08%. */
   whiteFrac: [0, 0.10],
   blackFrac: [0, 0.32],
-  /* The sky is much brighter than the ground at an eleven-degree sun, and the
-     ratio is the other exposure-invariant check. Measured 2.74 to 7.59 in the
-     framings that contain sky. The floor of 2.0 is what refuses a white desert
-     on this route: a ground at 124.5 under a sky at 190 reads 1.53. A bound of
-     1.15 would have let both known failures through, which is why this number
-     is derived from the failures rather than from the headroom. */
+  /* FAILURE, and the second exposure-invariant check. Sky over ground measures
+     2.74 to 7.59 across the framings that contain sky, whose skies run 139.9 to
+     189.0. The floor of 2.0 is what refuses a white desert on this route: a
+     ground at 124.5 under a sky at 190 reads 1.53. My first instinct was 1.15 —
+     safely below anything observed — and it would have let *both* known failures
+     through, which is the whole reason this bound is set from the failures and
+     labelled as such. */
   skyOverGround: [2.0, 14.0],
-  /* Geometry being drawn at all. Note what this does *not* catch: hiding all
+  /* MEASURED. Geometry being drawn at all. Note what this does *not* catch: hiding all
      eighteen rock meshes at the `floor` framing changed nothing here, because
      at a steep down-pitch the rock is mostly outside the frustum anyway. That
      is what `rockTris` is for — see below. Measured 1647k to 4008k. */
   triangles: [1_400_000, 6_500_000],
   calls: [20, 150],
-  /* Rock in the scene, asked of the scene graph rather than of the frame, so it
+  /* MEASURED. Rock in the scene, asked of the scene graph rather than of the frame, so it
      is the same answer from every framing. The undeclared-uniform failure took
      the walls, both aprons and all ten buttes out of every view; nothing that
      looks at one framing's triangle count can see that reliably, and a colour
@@ -206,8 +244,29 @@ const fmt = (v) => (Math.abs(v) >= 1000 ? (v / 1000).toFixed(0) + 'k'
  * existing instruments, driven from one place rather than from four terminals —
  * which is the actual reason a delivery ships broken: not that the tool did not
  * exist, but that nobody ran it. */
-function preflight() {
+async function preflight() {
   console.log('preflight\n');
+
+  /* The sun the FLOOR bounds and the reference were measured under. An audit
+     caught this file justifying its bounds by a sun elevation four degrees off
+     the shipped one; the bounds were fine and the reason given for them was not,
+     and the reason is what gets quoted later to justify moving them. A comment
+     cannot notice going stale, so this does. */
+  try {
+    const { SUN_EL_DEG } = await import('../src/atmos.js');
+    if (Math.abs(SUN_EL_DEG - MEASURED_AT_SUN_DEG) > 0.01) {
+      fail('sun elevation', `the scene ships at ${SUN_EL_DEG}° and the FLOOR bounds and the ` +
+        `reference were measured at ${MEASURED_AT_SUN_DEG}°.\n` +
+        `           The bounds are empirical, so this is not automatically a defect — but it means ` +
+        `nobody has\n           looked. Re-measure, confirm or adjust the bounds, update ` +
+        `MEASURED_AT_SUN_DEG, and re-bless.`);
+      console.log(`  FAIL  sun elevation        ships ${SUN_EL_DEG}°, bounds measured at ${MEASURED_AT_SUN_DEG}°`);
+    } else {
+      console.log(`  ok    sun elevation        ${SUN_EL_DEG}°, matching the bounds and the reference`);
+    }
+  } catch (e) {
+    blank(`could not read SUN_EL_DEG from src/atmos.js: ${e.message}`);
+  }
 
   /* The tree first, because everything below measures the working copy and a
      working copy is not what ships. This is the check that answers "is the tree
@@ -490,7 +549,7 @@ const INJURIES = [
 
 /* ── run ───────────────────────────────────────────────────────────────────*/
 
-preflight();
+await preflight();
 
 /* If the preflight already refused, stop here. Everything below measures a page,
    and there is no sense spending ninety seconds photographing a build that has
@@ -731,7 +790,8 @@ if (BLESS) {
   if (fails.length || blanks.length) {
     console.error('\ngate: refusing to bless — this build does not pass its own floor checks.\n');
   } else {
-    const out = { blessed: new Date().toISOString(), hash: HASH, w: W, h: H, views: {} };
+    const out = { blessed: new Date().toISOString(), hash: HASH, w: W, h: H,
+                  sunElDeg: MEASURED_AT_SUN_DEG, views: {} };
     for (const n of got) {
       const m = measured[n];
       out.views[n] = {

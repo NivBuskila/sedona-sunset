@@ -5394,10 +5394,12 @@ wrong, which is why the core of the gate is a measured picture.
 
 Two layers, and the split is the design:
 
-- **FLOOR** — absolute bounds on what a dry wash at an eleven-degree sun can
-  physically be. Hard-coded, never derived from a build, and `--bless` cannot
-  move them. `--bless` refuses outright if a FLOOR check fails, so you cannot
-  bless a white desert into the reference.
+- **FLOOR** — absolute bounds on what this scene can be, measured on it, not
+  computed from solar geometry. Hard-coded, and `--bless` cannot move them;
+  `--bless` refuses outright if a FLOOR check fails, so you cannot bless a white
+  desert into the reference. Each bound is labelled `MEASURED` or `FAILURE` in
+  `tools/gate.mjs` — see "The FLOOR bounds were right and their stated reason was
+  not" below, which is the audit finding and the re-derivation at 15°.
 - **DRIFT** — bands around `tools/gate.ref.json`, taken from a known-good build.
   Deliberately wide, 15-35%, because a gate that cries wolf every time a tuning
   lands is a gate that gets bypassed, and that is worse than not having one.
@@ -6355,3 +6357,95 @@ the one measuring the property that broke, not a property correlated with it.**
 Tonight's three known failures were all found by luminance because all three
 happened to be bright; the fourth was not, and it is the one that shows why
 `floorRG` is the number to keep if only one could be kept.
+
+## The FLOOR bounds were right and their stated reason was not
+
+An audit caught `tools/gate.mjs` justifying its FLOOR bounds as *"what a dry wash
+at an eleven-degree sun can physically be"* when **the scene ships at 15°**. The
+audit's conclusion — bounds probably fine, derivation stale — is correct, and the
+history says something worth having straight.
+
+`SUN_EL_DEG` went 8° → 11° → 15°, reaching 15 at `b775e33` on 21 August at 23:14.
+Every number in the gate was measured on 22 August. **So the bounds were never
+derived from 11° at all; they were measured at 15° and described as 11°**, the
+phrase carried over from an earlier session's language. That distinction decides
+what the fix is. If they had been computed from 11° they would need recomputing.
+Being measured, they need their provenance stated correctly and nothing else.
+
+Re-derived at 15°, nothing moved, and here is why each side holds:
+
+- The `MEASURED` bounds — `floorL`, `floorRG`, `contrast`, `whiteFrac`,
+  `blackFrac`, `triangles`, `rockTris`, `calls`, and the healthy side of
+  `groundAvg` — are readings off the shipped 15° scene. There is nothing to
+  re-derive; the blessed reference *is* the measurement.
+- The `FAILURE` bounds are the only ones the sun could touch, because the two
+  white-desert readings of 124.5 and 155.8 may predate the move. They survive it
+  **in the safe direction**: a higher sun puts more irradiance on a horizontal
+  floor, `sin 15° / sin 11°` being about 1.36, so the same failure measured at 15°
+  reads *brighter* and sits further outside the ceiling of 118, not nearer it.
+  `skyOverGround`'s floor of 2.0 is a ratio and was measured at 15° directly
+  (2.74 to 7.59), and a white ground still reads about 1.5 there.
+- `floorRG` is the bound the sun has least purchase on of anything in the file,
+  which is worth noticing while re-deriving. Raising the sun changes how much
+  light lands on the floor; it barely touches the ratio between the channels
+  coming back off it. The check that measures the property rather than something
+  correlated with it is also the check that is robust to the scene changing
+  underneath it.
+
+Two corrections beyond the sun: the comment claimed skies of "170-205" where the
+gate's own six framings measure 139.9 to 189.0, and the ground maximum was written
+as 89.7 where it is now 90.0. Both are now the measured figures.
+
+### The fix is a check, not a corrected sentence
+
+A comment cannot notice itself going stale, and correcting this one leaves the
+next reader exactly as exposed as I left this one. So `gate.mjs` records
+`MEASURED_AT_SUN_DEG = 15.0`, imports `SUN_EL_DEG` from `src/atmos.js` in
+preflight, and refuses if they differ:
+
+```
+FAIL  sun elevation        ships 15°, bounds measured at 11°
+  · the scene ships at 15° and the FLOOR bounds and the reference were measured at 11°.
+    The bounds are empirical, so this is not automatically a defect — but it means nobody has
+    looked. Re-measure, confirm or adjust the bounds, update MEASURED_AT_SUN_DEG, and re-bless.
+```
+
+Proven by temporarily setting the constant to 11 and watching it refuse. The sun
+is also recorded in `gate.ref.json` on bless. **This is the generalisable lesson
+from a night that lost hours to measurements read later as targets: where a record
+states a premise the code can check, make the code check it.** No bound moved, so
+`--injure` was not re-run for a threshold change; the six injuries were last
+watched to fire at `31e7a4b` and the bounds they exercise are unchanged.
+
+## Two documentation inconsistencies, settled
+
+**Boot.** The loading screen said "About a minute" and the README said forty
+seconds. Forty is the measured one and the screen was the outlier — six page loads
+on 22 August, all after the texture phase was split into seven, ran 39 to 44
+seconds from navigation to `__game`, and `main.js`'s own comments already said
+"forty-odd". Both now say forty seconds, and the comment beside the string says to
+revise it from a measurement if it is ever revised.
+
+**`juniper.js` exports `PREVAILING`, not `WIND`.** The record had it as a should
+and it had not landed. It was safe: nothing outside `juniper.js` imported it, and
+the two internal uses are the tree's lean and its wind-piled litter. Verified with
+`node --check` and `_p7pre.mjs`, which reports `ok juniper.js`.
+
+The rename turned out to be worth more than tidiness, because the bare name had
+already caused the confusion it was meant to prevent. `terrain.js:1252` documents
+its `uWind` uniform as *"the shared WIND"* — and it is not this vector. It starts
+from `TONIGHT_FALLBACK` and is then driven live off the audio wind through
+`syncWind()`, which runs on `WIND_HEADING = 0.12` in `atmosphere.js` and
+`audio.js`. That heading points about **seventy-six degrees** away from juniper's
+(0.94, 0.34). So the old comment's claim that "System 5's saltation ribbons and
+System 6's wind bed should agree with this; it is exported for that" was never
+true of the shipped build — nothing imported it and the other systems run on a
+different direction.
+
+Two things follow, neither of which I have acted on. `terrain.js:1252`'s comment
+is wrong and should say it is the audio wind; I left it alone because terrain was
+live in that file. And **the juniper leans across a wind that the dust, the
+saltation ribbons and the bed drift do not blow along.** That is a real
+inconsistency rather than a naming one, it is nobody's mistake in particular, and
+it is too large to start at half past ten on delivery day. It is recorded here so
+it is not rediscovered from scratch.

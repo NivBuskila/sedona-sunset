@@ -130,7 +130,13 @@ const loading = (() => {
   };
 })();
 
-await loading.note('Sedona Sunset — drawing the desert. About a minute.');
+/* "About forty seconds" and not "about a minute", because the README says forty
+   and the two disagreeing is the sort of thing that gets noticed and then
+   arbitrated by guesswork. Forty is the measured one: six page loads today, all
+   of them after the texture phase was split into seven, ran 39 to 44 seconds
+   from navigation to `__game`. If this figure is ever revised, revise it from a
+   measurement and change both places. */
+await loading.note('Sedona Sunset — drawing the desert. About forty seconds.');
 
 /* ── renderer ──────────────────────────────────────────────────────────── */
 
