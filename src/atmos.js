@@ -929,6 +929,23 @@ export function computeAtmosphere(over = {}) {
      x stays inside 9 m over 332 m of walk, so arc length is 8 minus z to within
      1.4 percent. */
   const shAstern = new THREE.SphericalHarmonics3();
+  /* The same environment taken apart into the three illuminants it is a sum of,
+     built only when a tool asks. `env` is `mix(sky, wall, cov)` above the horizon
+     and the local ground below it, so the split is exact rather than a model:
+     sky contributes `sky * (1 - cov)`, the escarpment `wall * cov`, and the three
+     probes add back to `sh` coefficient for coefficient.
+
+     It exists because a single occlusion scalar is applied to the whole of this
+     sum downstream, and those three illuminants do not have the same visibility
+     from inside a crevice — a slot sees a narrow strip of sky and a great deal of
+     nearby wall. Whether that matters is a question about the *ratio* of their
+     contributions, which cannot be asked of the summed probe at all. Off by
+     default because it is three more SH accumulations across the whole LUT for a
+     number nothing in the frame needs. */
+  const decompose = !!over.decompose;
+  const shSky = new THREE.SphericalHarmonics3();
+  const shWall = new THREE.SphericalHarmonics3();
+  const shGround = new THREE.SphericalHarmonics3();
   const basis = [0, 0, 0, 0, 0, 0, 0, 0, 0];
   const dir = new THREE.Vector3();
   const d3 = [0, 0, 0], env = [0, 0, 0], envA = [0, 0, 0], wall = [0, 0, 0];
@@ -992,6 +1009,32 @@ export function computeAtmosphere(over = {}) {
           shOpen.coefficients[k].z += basis[k] * op2 * dw;
         }
 
+        if (decompose) {
+          let sk0 = 0, sk1 = 0, sk2 = 0, wl0 = 0, wl1 = 0, wl2 = 0;
+          let gr0 = 0, gr1 = 0, gr2 = 0;
+          if (d3[1] < 0) {
+            gr0 = localGround[0]; gr1 = localGround[1]; gr2 = localGround[2];
+          } else {
+            const cov = coverAt(d3, SKYLINE);
+            if (cov > 0) {
+              wallRadiance(d3, wall, SKYLINE);
+              sk0 = sky0 * (1 - cov); sk1 = sky1 * (1 - cov); sk2 = sky2 * (1 - cov);
+              wl0 = wall[0] * cov;   wl1 = wall[1] * cov;   wl2 = wall[2] * cov;
+            } else { sk0 = sky0; sk1 = sky1; sk2 = sky2; }
+          }
+          for (let k = 0; k < 9; k++) {
+            shSky.coefficients[k].x += basis[k] * sk0 * dw;
+            shSky.coefficients[k].y += basis[k] * sk1 * dw;
+            shSky.coefficients[k].z += basis[k] * sk2 * dw;
+            shWall.coefficients[k].x += basis[k] * wl0 * dw;
+            shWall.coefficients[k].y += basis[k] * wl1 * dw;
+            shWall.coefficients[k].z += basis[k] * wl2 * dw;
+            shGround.coefficients[k].x += basis[k] * gr0 * dw;
+            shGround.coefficients[k].y += basis[k] * gr1 * dw;
+            shGround.coefficients[k].z += basis[k] * gr2 * dw;
+          }
+        }
+
         const cS = Math.max(0, (d3[0] * sunH[0] + d3[2] * sunH[2]));
         for (let k = 0; k < 3; k++) {
           eH[k] += env[k] * cH * dw;
@@ -1009,6 +1052,7 @@ export function computeAtmosphere(over = {}) {
     sunRGB, sunLum, sunSpec: SUN_SPEC,
     mieTintRGB, groundRGB, groundSpec,
     sh, shOpen, shAstern,
+    ...(decompose ? { shSky, shWall, shGround } : {}),
     irradiance: { horizontal: eH, vertSun: eVsun, vertAnti: eVanti, skyHorizontal: eSkyH },
     directHorizontal: [sunRGB[0] * sy, sunRGB[1] * sy, sunRGB[2] * sy],
     ms,
