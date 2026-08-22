@@ -1853,7 +1853,7 @@ export function hummock(terrain, cx, cz, seed) {
  * their own framings can be re-checked.
  */
 export function cardTuft(cx, cy, cz, w, h, nCards, rand, arr, cols = 2, rows = 1,
-                         uvFit = 0) {
+                         uvFit = 0, skirt = 0) {
   const { pos, nrm, uvs, idx } = arr;
   let v = pos.length / 3;
   for (let k = 0; k < nCards; k++) {
@@ -1861,6 +1861,21 @@ export function cardTuft(cx, cy, cz, w, h, nCards, rand, arr, cols = 2, rows = 1
     const lean = (rand() - 0.5) * 0.34;
     const ax = Math.cos(az) * w * 0.5, az2 = Math.sin(az) * w * 0.5;
     const hh = h * (0.7 + rand() * 0.6);
+    /* Every card in a tuft has its bottom vertices at the same local y, so they
+       all land on one screen row and their cutouts *union* along it. Ten cards
+       each covering a fifth of that row make it 70-84% opaque, which is a
+       dead-straight horizontal edge with no plant on it — reported in `bend` as
+       a black rectangle with a screen-aligned bottom, and the union is why it
+       terminates so cleanly. Dropping each card by its own amount spreads that
+       one line over a couple of dozen pixels instead.
+       The top is held: hFull grows with the drop, so the card reaches the same
+       height and only its foot moves down, into the ground. The UV window is
+       matched to hFull for the same reason, or the aspect correction below would
+       be undone by the very change meant to be invisible to it.
+       Costs one rand() and therefore reorders the sequence, so it is off by
+       default — the hero's crown is built through here and must not move. */
+    const drop = skirt > 0 ? rand() * skirt * hh : 0;
+    const hFull = hh + drop;
     const ci = (rand() * cols) | 0, ri = (rand() * rows) | 0;
     /* Same boundary-bleed margin as the foliage atlas, scaled to the cell. */
     const iu = 0.04 / cols, iv = 0.04 / rows;
@@ -1869,7 +1884,7 @@ export function cardTuft(cx, cy, cz, w, h, nCards, rand, arr, cols = 2, rows = 1
     if (uvFit > 0) {
       /* The sub-rect's aspect has to equal the card's, so shrink whichever axis
          is over-represented and leave the other at the full cell. */
-      const want = (hh / w) * uvFit;
+      const want = (hFull / w) * uvFit;
       const fu = Math.min(1, want > 1 ? 1 / want : 1);
       const fv = Math.min(1, want > 1 ? 1 : want);
       const uw = (u1 - u0) * fu, vh = (v1 - v0) * fv;
@@ -1887,11 +1902,11 @@ export function cardTuft(cx, cy, cz, w, h, nCards, rand, arr, cols = 2, rows = 1
     for (let q = 0; q < 4; q++) {
       const sx = (q === 0 || q === 3) ? -1 : 1;
       const sy = (q < 2) ? 0 : 1;
-      const px = cx + ox + ax * sx + lean * hh * sy * Math.cos(az + 1.57);
-      const py = cy + hh * sy;
-      const pz = cz + oz + az2 * sx + lean * hh * sy * Math.sin(az + 1.57);
+      const px = cx + ox + ax * sx + lean * hFull * sy * Math.cos(az + 1.57);
+      const py = cy - drop + hFull * sy;
+      const pz = cz + oz + az2 * sx + lean * hFull * sy * Math.sin(az + 1.57);
       pos.push(px, py, pz);
-      const dx = px - cx, dz = pz - cz, dy = hh * 0.55;
+      const dx = px - cx, dz = pz - cz, dy = hFull * 0.55;
       const l = Math.hypot(dx, dy, dz) || 1;
       nrm.push(dx / l, dy / l, dz / l);
       uvs.push(sx < 0 ? u0 : u1, sy ? v0 : v1);

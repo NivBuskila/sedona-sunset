@@ -553,11 +553,52 @@ function canvas2d(w, h) {
 
 const rgb = (c) => `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})`;
 
-/* Clamped, for the places that scale a palette colour and can push a channel past
-   255. CSS clamps out-of-range rgb() itself, but silently, and a clipped channel
-   is a hue shift rather than a brightening — so do it here where it is visible. */
-const rgbLit = (c, m) => rgb([Math.min(255, c[0] * m), Math.min(255, c[1] * m),
-                              Math.min(255, c[2] * m)]);
+/* Where a blade's cross-section sits between shade and lit edge, as a colour
+   rather than as a multiplier.
+ *
+ * This replaces a clamped scalar gain, and the note that stood here — "a clipped
+ * channel is a hue shift rather than a brightening" — turned out to be describing
+ * the bug rather than guarding against it. The lit pass multiplied every channel
+ * by 1.30, and on the bleached palette that is [216,206,178] * 1.30 =
+ * (255,255,231): two channels clip, so past that point the gain stops adding
+ * brightness and only removes saturation. The rendered blade measured
+ * rgb(250,236,209) at saturation 0.164 and a delivery critic called it "chalky
+ * cream, desaturated toward neutral, and brighter than anything else in frame
+ * including sunlit rock".
+ *
+ * Interpolating toward an explicit highlight cannot clip, and it moves hue as
+ * well as value — which is what a lit edge actually does here. The thin edge of a
+ * dry blade backlit by a 15-degree sun is transmitting, and light transmitted
+ * through straw is amber, so the lit end should *gain* saturation exactly where
+ * the multiplier was losing it. The shaded end mixes toward a near-neutral dark
+ * and lands within a few code values of the old 0.74x, so the atlas mean barely
+ * moves. */
+const SECTION_SHADE = [46, 40, 34];
+const SECTION_HI = [204, 128, 30];
+const rampCol = (c, t) => {
+  const k = t * 2 - 1;
+  const to = k < 0 ? SECTION_SHADE : SECTION_HI;
+  const f = Math.abs(k) * (k < 0 ? 0.30 : 0.68);
+  return rgb([c[0] + (to[0] - c[0]) * f,
+              c[1] + (to[1] - c[1]) * f,
+              c[2] + (to[2] - c[2]) * f]);
+};
+
+/* The cross-section itself: width, offset along the blade's normal, thickness in
+   alpha, and where the pass sits on the ramp.
+ *
+ * Three passes were enough to prove a blade had an interior and not enough to
+ * make it read as curvature. Magnified 3x, a critic found "the three tones
+ * visibly quantised into flat bands" with "stair-step boundaries along each
+ * blade" — cel shading, which is what three fills look like once the blade is
+ * wide enough on screen to resolve them individually. Nine is free: the atlas is
+ * drawn once, and every extra pass gives bilinear filtering something to
+ * interpolate between away from the two boundaries it used to have. */
+const SECTION_N = 9;
+const section = (wEnd, off) => Array.from({ length: SECTION_N }, (_, i) => {
+  const t = i / (SECTION_N - 1);
+  return { w: 1 - (1 - wEnd) * t, o: off * t, a: 0.62 + 0.38 * t, t };
+});
 
 /* ── juniper foliage ───────────────────────────────────────────────────────
  *
@@ -793,30 +834,27 @@ export function makeFoliage(size = 512) {
  *
  * The atlas is four cells across, so callers address it with `cols = 4`.
  */
-/* The blade's cross-section, as three strokes: width and offset in units of the
- * blade's own width, brightness as a multiple of its colour.
+/* The blade's cross-section, as a stack of strokes: width and offset in units of
+ * the blade's own width, and a position on the shade-to-lit-edge ramp.
  *
  * Widest and darkest first, then narrower and lighter offset toward the lit edge,
- * so what is left is a three-step ramp across the width. The visible widths come
- * out 0.37 / 0.31 / 0.32 once each pass is overdrawn by the next, so the
- * area-weighted mean multiplier is 1.000 and the atlas's measured value does not
- * move. Hue and saturation cannot move at all: both are invariant under a uniform
- * scale of R, G and B, which is the only operation here.
+ * so what is left is a ramp across the width. This was three strokes with a
+ * uniform brightness multiplier, and the argument for it was that hue and
+ * saturation are invariant under a uniform scale of R, G and B — true, but only
+ * while no channel clips, and the lit pass clipped two of them. `rampCol` above
+ * has the measurements. Colour now moves deliberately along the ramp rather than
+ * accidentally at the top of it, so this stack no longer holds the atlas mean by
+ * construction; `tools/folmeas.mjs` is the check.
  */
 /* Same construction for a scrub leaf, in units of its half-width. Lopsided, so
- * the ramp crosses the leaf rather than ringing it. Visible widths 0.76 / 0.68 /
- * 0.56 of 2.00, giving a mean multiplier of 0.999. */
-const LEAF_SECTION = [
-  { w: 1.00, o: 0.00, m: 0.79, a: 0.62 },
-  { w: 0.62, o: -0.30, m: 1.00, a: 0.80 },
-  { w: 0.28, o: -0.52, m: 1.28, a: 1.00 },
-];
+ * the ramp crosses the leaf rather than ringing it. */
+const LEAF_SECTION = section(0.28, -0.52);
 
-const GRASS_SECTION = [
-  { w: 1.00, o: 0.00, m: 0.74, a: 0.62 },
-  { w: 0.66, o: 0.20, m: 1.00, a: 0.80 },
-  { w: 0.32, o: 0.34, m: 1.30, a: 1.00 },
-];
+const GRASS_SECTION = section(0.32, 0.34);
+
+/* A scrub stem is concentric rather than lopsided: it is a cylinder seen from an
+   arbitrary side, so its bright line runs up the middle. */
+const STEM_SECTION = section(0.30, 0);
 
 /* The `a` above is the blade's thickness, written into the cutout's alpha.
  *
@@ -918,7 +956,7 @@ export function makeGrass(size = 512) {
       for (const p of GRASS_SECTION) {
         const jx = nx * bw * p.o, jy = ny * bw * p.o;
         for (const c of [ctx, actx]) {
-          c.strokeStyle = c === ctx ? rgbLit(col, p.m)
+          c.strokeStyle = c === ctx ? rampCol(col, p.t)
             : rgb([p.a * 255, p.a * 255, p.a * 255]);
           c.lineWidth = bw * p.w;
           c.lineCap = 'round';
@@ -1076,7 +1114,7 @@ export function makeScrub(size = 512) {
       const ox = nx * wid * p.o, oy = ny * wid * p.o;
       const wq = wid * p.w;
       for (const c of [ctx, actx]) {
-      c.fillStyle = c === ctx ? rgbLit(col, p.m) : rgb([p.a * 255, p.a * 255, p.a * 255]);
+      c.fillStyle = c === ctx ? rampCol(col, p.t) : rgb([p.a * 255, p.a * 255, p.a * 255]);
       /* Base and tip stay pinned and only the bulge is biased, so every pass is a
          sliver strictly inside the outline the first one drew. Offsetting the
          whole shape instead grew the leaf's footprint by 13% and, because that
@@ -1128,14 +1166,9 @@ export function makeScrub(size = 512) {
          gives a symmetric section — bright core, darker rim — which reads as round,
          and more importantly it lays down the alpha profile the shader needs to
          apply the asymmetric, sun-dependent part itself. */
-      const stemPass = [
-        { w: 1.00, m: 0.82, a: 0.62 },
-        { w: 0.62, m: 1.00, a: 0.80 },
-        { w: 0.30, m: 1.24, a: 1.00 },
-      ];
-      for (const q of stemPass) {
+      for (const q of STEM_SECTION) {
         for (const c of [ctx, actx]) {
-          c.strokeStyle = c === ctx ? rgbLit([104, 88, 66], q.m)
+          c.strokeStyle = c === ctx ? rampCol([104, 88, 66], q.t)
             : rgb([q.a * 255, q.a * 255, q.a * 255]);
           c.lineWidth = size * 0.007 * q.w;
           c.lineCap = 'round';
