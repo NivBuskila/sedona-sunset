@@ -5570,3 +5570,73 @@ That injury runs last, and it is the only one whose position is fixed. Restoring
 `renderer.info.programs`, so `programs` kept firing against whichever injury ran
 after it. An injury table that blames the wrong breakage is worse than a short
 one.
+
+## The second walkthrough, on a clean tree
+
+`node tools/_walk2.mjs` walks the route at twenty-metre stations, closes to six
+over the last forty, and captures thirty-two framings in one page load. It also
+rephotographs the four framings I captured before tonight's light work landed, at
+the same size, so there is a real before and after rather than a memory of one.
+
+**The corridor is unaffected by the terrain that moved under it.** Re-derived
+from the current height field: 346 samples, mean half-width 15.7 m, narrowest
+7.4 m at the head. Driven, it is still not felt — 4.2 minutes of walking, |u|
+peaking at 5.82 m off the line, **zero frames touched**, and the closest the
+wander ever came to the soft band was 4.05 m of clearance. The eighteen strafe
+and end-stop cases all hold to within 0.01 m of their limit.
+
+The four rephotographs are worth recording precisely because they are boring:
+every band, luminance and detail, is within 1-3% of the pre-change capture, and
+`bend`'s far-ground luminance is 22.5 against 22.5. The near-ground detail is
+down slightly and consistently — 0.345 to 0.317, 0.410 to 0.389, 0.439 to 0.412 —
+which is the `gAmp` bed-amplitude re-tune arriving as expected, at the near end,
+in the direction it was aimed. The changes that did land are elsewhere: the far
+end of the route is markedly brighter (the gate's `far` framing went 23.4 to 45.1
+on ground average across the morning) and `wall_shade` opened up enough to
+contain sky at all, where it previously contained none.
+
+### The last forty metres: much better, and now the softest thing on the route
+
+It is rock. Red gravel bed, a proper channel narrowing into the box canyon, a
+stratified far butte through the gap, and — this is the indirect-light work
+showing — a shaded left bank at 322 m where the clasts are still legible instead
+of being crushed to black. Nothing about it now reads as unfinished.
+
+What is left is that the slopes flanking the head are the smoothest geometry
+anywhere on the walk: big rounded forms with a streaky vertical grain that reads
+closer to a dune than to sandstone, and no bedding at all. It measures, too. The
+`wall` band's relative contrast is 0.38-0.40 all along the strip and **0.16 at
+`head_up`, the lowest of all thirty-two stations** — less than half the route
+average, and the only station that is an outlier rather than noise.
+
+### The mid distance is still waxy, and the frames name the mechanism
+
+This one is not fixed, and the useful part of this walkthrough is that it is now
+specific rather than an adjective. **It is the channel floor and the low
+colluvial slopes, not the walls.** The wall at 200 m is good — strata, rim
+vegetation, uncrushed warm shade, relative contrast 0.83, the highest reading on
+the route. The floor beyond the near field is not: at 240 m the bottom third of
+the frame is pebbles, gravel and flakes, and from about the middle of the frame
+onward the bed becomes a smooth waxy surface with no clast detail at all, with
+the dome-like colluvial forms either side of the channel completely untextured.
+
+The mechanism is named in `terrain.js`'s own comment — "the plastic that the fade
+at 30 m already threatens". Beyond that fade the bed grain is gone, and beyond
+the clast scatter radius the stones stop; where both have run out, which is
+everything past the near field in a long straight, there is nothing left but
+smooth shading. Near field sharp, mid distance waxy, and the boundary is a
+distance rather than a place.
+
+**A caution about measuring it, which cost a wrong answer here first.** The
+horizontal-band metric says the mid distance at 200 m is as detailed as the near
+field, 0.37 against 0.36, of a frame that plainly is not. The bands are innocent:
+at pitch 0 the band containing the mid-distance floor also contains the cut
+banks, the stratified walls and the rim vegetation, and they outvote the floor.
+`tools/_detail.mjs --floor` uses narrow centred windows that see channel floor
+only, and those do show it — far-floor contrast relative to near-floor runs
+1.14, 1.14, 1.56 over the first hundred metres and 0.81, 0.77, 1.03 from 200 m.
+Weaker than the frames look, and the window is small enough that its content
+depends on where the channel happens to bend, so treat it as corroboration and
+not as the measurement. **A band wide enough to be robust is wide enough to
+average away the thing you are asking about**, which is the same failure as the
+rectangle with no sandstone in it, arrived at from a third direction.

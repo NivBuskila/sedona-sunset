@@ -35,6 +35,54 @@ const BANDS = {
   nearGnd: [0.78, 1.00],
 };
 
+/* Windows on the wash floor alone, for a pitch-0 forward framing.
+ *
+ * The horizontal bands above turned out to be the wrong shape for the actual
+ * complaint, and the way they were wrong is worth keeping. At 200 m the banded
+ * numbers say the mid distance is as detailed as the near field — 0.37 against
+ * 0.36 — and the frame plainly shows a near field full of pebbles and flakes
+ * giving way to smooth featureless mounds from about sixty metres out. The bands
+ * are innocent: at pitch 0 the band that contains the mid-distance floor also
+ * contains the cut banks, the stratified walls and the rim vegetation, all of
+ * which are full of contrast, and they outvote the floor.
+ *
+ * **A band wide enough to be robust is wide enough to average away the thing you
+ * are asking about.** These windows are narrow and centred so they see only
+ * channel floor, at three depths, and the near-to-mid drop between them is the
+ * complaint expressed as a ratio rather than as an adjective. Fractions are of
+ * width and height from the top-left. */
+const FLOOR_WIN = {
+  nearFloor: [0.32, 0.86, 0.68, 0.99],
+  midFloor:  [0.40, 0.62, 0.60, 0.72],
+  farFloor:  [0.44, 0.54, 0.56, 0.60],
+};
+
+export function window_(file, win) {
+  const { w, h, ch, px } = decode(fs.readFileSync(file));
+  const L = new Float32Array(w * h);
+  for (let j = 0; j < w * h; j++) {
+    const i = j * ch;
+    L[j] = px[i] * 0.2126 + px[i + 1] * 0.7152 + px[i + 2] * 0.0722;
+  }
+  const out = {};
+  for (const k in win) {
+    const [fx0, fy0, fx1, fy1] = win[k];
+    const x0 = Math.max(1, Math.round(fx0 * w)), x1 = Math.min(w - 1, Math.round(fx1 * w));
+    const y0 = Math.max(1, Math.round(fy0 * h)), y1 = Math.min(h - 1, Math.round(fy1 * h));
+    let lap = 0, sum = 0, n = 0;
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const i = y * w + x;
+        lap += Math.abs(4 * L[i] - L[i - 1] - L[i + 1] - L[i - w] - L[i + w]);
+        sum += L[i]; n++;
+      }
+    }
+    if (n < 500) { console.error(`_detail: window ${k} of ${file} holds ${n} pixels.`); process.exit(2); }
+    out[k] = { lum: sum / n, rel: (lap / n) / Math.max(1e-6, sum / n), n };
+  }
+  return out;
+}
+
 export function detail(file) {
   const { w, h, ch, px } = decode(fs.readFileSync(file));
   const L = new Float32Array(w * h);
@@ -62,10 +110,27 @@ export function detail(file) {
 
 if (import.meta.url === `file:///${process.argv[1].replace(/\\/g, '/')}` ||
     process.argv[1].endsWith('_detail.mjs')) {
-  const files = process.argv.slice(2);
-  if (!files.length) { console.error('usage: node tools/_detail.mjs a.png [b.png ...]'); process.exit(2); }
+  const argv = process.argv.slice(2);
+  const FLOOR = argv.includes('--floor');
+  const files = argv.filter((a) => a !== '--floor');
+  if (!files.length) { console.error('usage: node tools/_detail.mjs [--floor] a.png [b.png ...]'); process.exit(2); }
   const missing = files.filter((f) => !fs.existsSync(f));
   if (missing.length) { console.error(`_detail: no such file: ${missing.join(', ')}`); process.exit(2); }
+
+  if (FLOOR) {
+    const keys = Object.keys(FLOOR_WIN);
+    console.log('\n  channel floor only — relative local contrast, and the near-to-mid drop\n');
+    console.log(`  ${'file'.padEnd(30)}${keys.map((k) => k.padStart(11)).join('')}   mid/near   far/near`);
+    for (const f of files) {
+      const d = window_(f, FLOOR_WIN);
+      console.log(`  ${f.replace(/^.*[\\/]/, '').padEnd(30)}` +
+        keys.map((k) => d[k].rel.toFixed(4).padStart(11)).join('') +
+        `   ${(d.midFloor.rel / d.nearFloor.rel).toFixed(3).padStart(8)}` +
+        `   ${(d.farFloor.rel / d.nearFloor.rel).toFixed(3).padStart(8)}`);
+    }
+    console.log('');
+    process.exit(0);
+  }
 
   const keys = Object.keys(BANDS);
   console.log(`\n  relative local contrast — mean |laplacian| / mean luminance\n`);
