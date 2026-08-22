@@ -314,11 +314,10 @@ no amplitude fade in front of it helps and why the artefact is a lens-shaped pat
 patch is where the bank is most grazing. The regularity comes from `hdx`/`hdy` of the
 periodic bed function on top of that.
 
-So the fix wants to bound the perturbation against `abs(det)` inside `bumpFrom` rather
-than scale it from outside — cap `length(scale * grad)` at some fraction of `abs(det)`.
-**Not landed**, for two reasons: no render budget remained to verify it, and `bumpFrom`
-is shared with the desiccation cracks and others, so it has a blast radius well beyond
-this artefact and must be measured against the near field before it goes in.
+**LANDED — `af365e8`.** The fix bounds the perturbation against `abs(det)` inside
+`bumpFrom` rather than scaling it from outside: cap `length(scale * grad)` at
+`MAXTILT * abs(det)`, i.e. cap the tilt the function is allowed to return. Written up
+in full at the function; the section below records what it turned out to be worth.
 
 **Where it is not, second pass.** Three renders, each checked for liveness by
 diffing against the unablated frame — because one of them was not live and would
@@ -353,8 +352,70 @@ lamination one. `dirtN` is exonerated. The narrowing that got there:
    below: once the scalar it is differentiating is itself aliasing, the derivative is
    not small, it is *wrong*, and wrong in a spatially regular way.
 
-Not chased further; the budget for a far-field artefact at 270 m was three renders and
-they are spent.
+Note for anyone reading the trail rather than the conclusion: `bumpFrom` was reached by
+the *aliasing* argument in point 2, and that argument is only half right. Aliasing
+explains why the perturbation is spatially regular; it does not explain why it is large.
+The magnitude comes from `det`, and the two together are what make a lattice rather than
+a mess. A mechanism that predicts regularity specifically, rather than merely predicting
+noise, was the thing worth chasing.
+
+## Bounding `bumpFrom` at grazing incidence — and what else it was quietly doing
+
+`af365e8`. Landed to kill the far_270 lattice; the lattice turned out to be the *smallest*
+thing it fixed. Recorded at length because the defect class is general — an unbounded
+perturbation at grazing incidence, and grazing is the geometry of every distant bank and
+every wash floor seen down its length — so the next surface that reads as digital hash on
+a shallow slope should suspect this before suspecting its own texture.
+
+**Choosing the cap by measurement rather than by argument.** The multiplier was painted
+into the albedo (`diffuseColor.rgb = mix(red, grey, k)`) and rendered, which answers both
+guardrail questions in one capture — where does the bound engage, and does it engage
+anywhere it must not. Two renders settled it:
+
+- **At 0.45** the multiplier fires on the lattice dots and on **nothing else in any
+  framing**. That is a very strong confirmation of the mechanism — the engagement map is
+  the artefact, dot for dot — but 0.45 is far too loose to cure it, because a 0.45 tilt
+  near the terminator still swings a pixel from lit to shadowed. The visible lattice was
+  only slightly softened.
+- **At 0.10** it fires across the whole lattice patch, across a striped patch on the bend
+  right bank, on a few bank crests at the top of `wash_mid` — and still nowhere at all in
+  `ground`.
+
+That is the useful shape of the result: **the cap is not an amplitude control.** Below it
+the term is untouched bit-for-bit; above it the derivative estimate was never valid. So
+the right value is the lowest one that is still an exact identity in the near field, and
+the engagement map tells you that directly instead of by bisecting on renders.
+
+**Verification, paired against the same function with `MAXTILT = 1e9`** — an exact no-op,
+so the pair differs in nothing but the bound, and captured back to back in one session
+because `bl1` from four hours earlier was worthless as a baseline once three other systems
+had committed into the window:
+
+| framing | pixels differing | mean Δ | hf | grad/L |
+|---|---|---|---|---|
+| `ground` | 0.002% | 0.0001 | 0.0612 → 0.0612 | 0.166 → 0.166 |
+| `wash_mid` | 0.130% | 0.0144 | 0.0618 → 0.0618 | 0.140 → 0.140 |
+| `bend` | 0.951% | 0.1948 | 0.0139 → 0.0139 | 0.218 → 0.218 |
+| `far_270` | 1.619% | 0.2886 | 0.0327 → 0.0324 | 0.096 → 0.095 |
+
+The near field is unchanged by measurement and by inspection. Everything it *does* change
+is a defect nobody had named:
+
+- **`bend`, the right-hand bank** — 0.95% of the frame, and every changed pixel inside one
+  small region. Before, that bank is a field of hard horizontal dashes, regular enough to
+  read as a display artefact rather than as rock. After, it is a shadowed slope with
+  clasts on it. This is a **standard framing**, and it is a bigger visible improvement
+  than the far-field lattice the work was aimed at.
+- **`far_220`, the near floor** — a reticulated network of vertical hash on the most
+  grazing part of the foreground, gone.
+- **`far_170` 0.97%, `wash_low` 0.87%, `sun_gap` 0.57%**, all the same signature and all
+  confined to grazing banks. **`far_320` is byte-identical** — nothing in it is close
+  enough to see.
+
+**The first colour reading was right about *what* all along.** The artefact was originally
+described as "facets turned away from the sun", which is exactly what an unbounded normal
+perturbation produces, and the description survived every subsequent theory about grids,
+anisotropy and ripple wavelengths.
 
 ## RULE: a negative result is only evidence if the thing you removed was doing something
 
