@@ -98,7 +98,7 @@ function grassTuftGeo(seed) {
  * whatever it stands on. That is not decoration — cards that start at positive y
  * is exactly the bug that shipped as junipers with severed trunks.
  */
-const MID_SHAPES = [
+export const MID_SHAPES = [
   { skirt: 4, n: 9, rad: [0.21, 0.32], up: [0.03, 0.43], w: 0.70, h: 0.60 },
   { skirt: 3, n: 7, rad: [0.09, 0.17], up: [0.06, 0.88], w: 0.54, h: 0.78 },
   { skirt: 6, n: 11, rad: [0.32, 0.56], up: [0.00, 0.14], w: 0.86, h: 0.40 },
@@ -106,7 +106,7 @@ const MID_SHAPES = [
     lobe: 0.26 },
 ];
 
-function midTuftGeo(seed, s) {
+export function midTuftGeo(seed, s) {
   const r = rng(seed);
   return addSun(addWhite(cardGeometry((arr) => {
     for (let i = 0; i < s.n; i++) {
@@ -639,6 +639,224 @@ export function planVegetation(path, terrain, rocks) {
     }
   }
 
+  /* ── the rim ─────────────────────────────────────────────────────────────
+     Plants on the wall crest, for one reason: `shade_far`'s left skyline is
+     geometrically straight, a critic measured it straight to within a pixel and
+     a half over hundreds of pixels and called it the most conspicuous single
+     object in the set, and no change to the rock can break it.
+     Why the rock cannot. That skyline is not a mesa, it is wallL seen end-on.
+     Square-on, a screen column is one station and the crest profile *is* the
+     skyline; end-on, a column spans tens of metres and the skyline is the upper
+     *envelope* of the crest over every station in it. An envelope is set by the
+     un-notched stations, so a notch narrower than a bearing bin is invisible at
+     any depth and one wider than the frame is constant across it. System 2
+     landed a crest generator that steps ten times in 200 m and the frame barely
+     moved. `tools/_skyenv.mjs` measures why: over the run from one degree left of
+     the axis to five and a half right, the crest sits at y 66.5 to 67.1 — eleven
+     bins, six and a half degrees — while the range closes from 118 m to 106 m.
+     Every bit of that line's apparent rise is perspective on a constant height.
+     Something standing *above* the envelope is the only thing that breaks it,
+     which is what the critic asked for by name: "no vegetation breaking it".
+     And there has never been any, for a reason that took one grep: the harvest
+     above rejects `p3.y > 58`, and the crest along that run is at 67. Not sparse
+     up there — excluded. So this is a separate pass rather than a relaxed gate,
+     because the gate is doing a real job everywhere else and the rim wants
+     different plants anyway: taller, sparser, and chosen for a silhouette rather
+     than for ground cover, which is what a wind-flagged rim juniper is.
+     General rather than aimed at the one frame. `bend`, `far_170` and `far_220`
+     all look along a wall and all have the same straight skylines for the same
+     reason, and a crest pass fixes the class. */
+  {
+    /* Walls *and* buttes. The first version of this pass took only `/^wall/`,
+       on System 2's attribution that the offending skyline is wallL end-on, and
+       it put seventy plants along the wall crests without touching the ruler at
+       all: `tools/_skyline.mjs` measured the edge at columns 120-319 of
+       `shade_far` at 0.50 px worst residual over 200 columns, unchanged. The
+       attribution was for the *frame*, not for that edge. Cropping it shows a
+       pale flat-topped sandstone cap at long range, which is a butte, and buttes
+       were being skipped here for the same reason they are skipped by the main
+       harvest above — that one caps at y 58 and a butte top is well over it.
+       Hence the generalisation: any rock mesh, and the top rather than the
+       along-z crest.
+       Why the *cap* rather than the lip. A butte's skyline is its cap edge, so
+       anything standing on the cap is above the silhouette wherever on the cap it
+       stands — there is no need to find the lip, and looking for one on a mesh
+       that is not a corridor needs a normal query this pass does not have. Taking
+       the vertices within `CAP` of each mesh's own maximum picks out exactly the
+       flat top that draws the ruler, and nothing lower down the flanks. */
+    /* A height field over the whole rock mass, then the lips in it.
+       Two earlier versions of this pass aimed at named meshes and missed. The
+       first took wall crests, on System 2's attribution that the skyline is wallL
+       end-on: seventy plants, and `tools/_skyline.mjs` measured the offending edge
+       at 0.50 px worst residual over 200 columns, byte-identical. The second added
+       butte caps, on the reasoning that a flat pale top at long range is a butte:
+       ninety more plants, same 0.50 px, byte-identical again.
+       What both missed is that the edge is a *shoulder*. Taking one maximum per
+       mesh per z-slice puts the plant wherever that mesh is tallest at that
+       station, and the tall part is behind and to the right of the pale bed that
+       actually draws the skyline — so every candidate was consumed by a summit
+       that is not on the horizon, and the shoulder never got one. A cap test has
+       the same blind spot from the other side: a shoulder is nowhere near its
+       mesh's summit and gets excluded by definition.
+       So stop looking for summits and look for what a rim actually is: ground with
+       a drop beside it. Bin every vertex of every wall and butte into one shared
+       8 m grid — shared, so a rim that two meshes contribute to is not split in
+       half and then failed by both — and keep a cell when its neighbourhood falls
+       away by more than `DROP`. That finds summits, cap edges, bench lips and
+       shoulders under one criterion, needs no mesh names and no surface normal,
+       and cannot be defeated by something taller standing behind it. */
+    const CELL = 8;      // metres
+    const DROP = 6;      // metres a neighbour must fall for this cell to be a lip
+    const grid = new Map();
+    const gk = (ix, iz) => ix + ':' + iz;
+    for (const m of rocks) {
+      if (!/^wall|^butte/.test(m.name)) continue;
+      const g = m.geometry;
+      if (!g || !g.attributes.position) continue;
+      m.updateMatrixWorld(true);
+      const pa = g.attributes.position;
+      for (let i = 0; i < pa.count; i++) {
+        p3.fromBufferAttribute(pa, i).applyMatrix4(m.matrixWorld);
+        if (p3.z > 30 || p3.z < -700) continue;
+        const ix = Math.round(p3.x / CELL), iz = Math.round(p3.z / CELL);
+        const k = gk(ix, iz);
+        const cur = grid.get(k);
+        if (!cur || p3.y > cur.y) grid.set(k, { x: p3.x, y: p3.y, z: p3.z, ix, iz });
+      }
+    }
+    /* Candidate positions from inside triangles, not from vertices — and this is
+       the fourth and last thing that was wrong with this pass.
+       Vertices are not where the rock is. `tools/_rimwhere.mjs` raycast the ruler
+       edge in `shade_far` and got wallL at world (-6, 46.8, 8.2); the highest wall
+       vertex within twelve metres of that point is at y -0.8. Both figures come
+       off the same buffers, so they can only both be true if the surface there is
+       the interior of one very large triangle whose corners are tens of metres
+       away — which is exactly what a wall looks like where it is coarse, and
+       exactly why it draws a ruler in the first place. Its corners sit around x
+       -32 to -48, where this pass had already been happily planting: at 164 m,
+       thirty-four metres of lateral offset is about twelve degrees, so those
+       plants land two hundred pixels to the left of the edge they were meant to
+       break. Three rounds of raising the acceptance rate moved plants around on
+       the parts of the mesh that have vertices and never put one on the part that
+       does not.
+       So sample the surface rather than its corners: walk the triangles, keep the
+       upward-facing ones, and scatter candidates across them by area. On finely
+       tessellated rock this returns roughly what the vertex scan did; on a coarse
+       face it returns the middle of it, which is the only place a plant can stand
+       to break that skyline. */
+    const CAND_AREA = 90;      // m^2 of upward-facing rock per candidate
+    const cands = [];
+    const va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3();
+    const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), fn = new THREE.Vector3();
+    const rrt = rng(818283);
+    for (const m of rocks) {
+      if (!/^wall|^butte/.test(m.name)) continue;
+      const g = m.geometry;
+      if (!g || !g.attributes.position) continue;
+      m.updateMatrixWorld(true);
+      const pa = g.attributes.position, idx = g.index;
+      const tris = idx ? idx.count / 3 : pa.count / 3;
+      for (let t = 0; t < tris; t++) {
+        const i0 = idx ? idx.getX(t * 3) : t * 3;
+        const i1 = idx ? idx.getX(t * 3 + 1) : t * 3 + 1;
+        const i2 = idx ? idx.getX(t * 3 + 2) : t * 3 + 2;
+        va.fromBufferAttribute(pa, i0).applyMatrix4(m.matrixWorld);
+        vb.fromBufferAttribute(pa, i1).applyMatrix4(m.matrixWorld);
+        vc.fromBufferAttribute(pa, i2).applyMatrix4(m.matrixWorld);
+        const cy = (va.y + vb.y + vc.y) / 3;
+        if (cy < 20) continue;
+        const cz = (va.z + vb.z + vc.z) / 3;
+        if (cz > 30 || cz < -700) continue;
+        e1.subVectors(vb, va); e2.subVectors(vc, va);
+        fn.crossVectors(e1, e2);
+        const area2 = fn.length();
+        if (area2 < 1e-6) continue;
+        /* Upward-facing, by the triangle's own geometric normal rather than by an
+           interpolated vertex normal — a vertex on an arris carries an average of
+           two faces and would let a plant onto a wall. Winding is not consistent
+           between the two walls here, so take the absolute value. */
+        if (Math.abs(fn.y) / area2 < 0.55) continue;
+        const area = area2 * 0.5;
+        /* Fractional counts, or every triangle under 90 m^2 is silently barren. */
+        let n = area / CAND_AREA;
+        n = Math.floor(n) + (rrt() < n - Math.floor(n) ? 1 : 0);
+        for (let s = 0; s < n; s++) {
+          let u = rrt(), w = rrt();
+          if (u + w > 1) { u = 1 - u; w = 1 - w; }
+          cands.push({
+            x: va.x + e1.x * u + e2.x * w,
+            y: va.y + e1.y * u + e2.y * w,
+            z: va.z + e1.z * u + e2.z * w,
+          });
+        }
+      }
+    }
+
+    const crest = [];
+    for (const c of cands) {
+      c.ix = Math.round(c.x / CELL);
+      c.iz = Math.round(c.z / CELL);
+      /* Measured two and three cells out, not one, and this is the whole reason
+         the pass took three attempts to bite.
+         A rim is a near-vertical face, and the cell immediately outboard of a
+         vertical face contains that face — whose highest vertex is the lip
+         itself. So the drop to the adjacent cell is about zero exactly where the
+         cliff is sheerest, and an adjacent-neighbour test rejects every true rim
+         while accepting rubbly slopes. `tools/_pixowner.mjs` settled it by
+         ablation: the ruler edge in `shade_far` is owned by `wallL`, a mesh this
+         pass was already reading, so the miss was never about which object.
+         Sixteen to twenty-four metres out, a wall of any real height has fallen
+         away and the test reads what a human would call a rim. */
+      let drop = 0;
+      for (let dx = -3; dx <= 3; dx++) {
+        for (let dz = -3; dz <= 3; dz++) {
+          const cheb = Math.max(Math.abs(dx), Math.abs(dz));
+          if (cheb < 2) continue;
+          const n = grid.get(gk(c.ix + dx, c.iz + dz));
+          /* A missing cell out there is open air off the edge of the rock mass,
+             which is the strongest evidence of a lip there is. */
+          drop = Math.max(drop, n ? c.y - n.y : DROP);
+        }
+      }
+      if (drop < DROP) continue;
+      crest.push(c);
+    }
+    /* Sparse and clumped, not a hedge. A continuous line of plants along a rim
+       would replace one straight silhouette with another, slightly furrier one:
+       what breaks a straight line is a few things standing well clear of it with
+       gaps between, so the acceptance is low and the cluster field is allowed to
+       decide where they group. */
+    const rr3 = rng(515253);
+    for (const c of crest) {
+      const cl = clusterField(c.x, c.z);
+      /* Squared, and with a low floor. Taking half of everything the lip test
+         accepts is a hedge, and a hedge replaces one straight silhouette with a
+         furrier straight silhouette. Squaring the cluster term concentrates what
+         is left into groups with real gaps between them, which is both what breaks
+         a line and what a rim actually looks like: junipers take the pockets where
+         water sits and leave the rest bare. */
+      if (rr3() > 0.09 + 0.34 * cl * cl) continue;
+      const sz = 1.5 + rr3() * 1.5;
+      mid.push({
+        /* No lateral jitter here, and that is deliberate. `c.y` is a height
+           measured at `c.x, c.z`, and a lip is by definition where that height
+           falls away within a few metres, so any displacement that keeps the
+           harvested height is a coin flip on whether the plant ends up hanging
+           over the drop — the exact defect this tier was last fixed for. The cell
+           maximum already lands at an arbitrary point inside its 8 m square, which
+           is all the irregularity the spacing needs. */
+        x: c.x, y: c.y - 0.10 * sz, z: c.z, rot: rr3() * TAU,
+        sx: sz * (0.62 + rr3() * 0.30),
+        /* Taller than wide by construction. A rim juniper is wind-flagged and
+           leggy, and in silhouette against bright sky the height is the whole
+           signal. */
+        sy: sz * (1.15 + rr3() * 0.75),
+        sz: sz * (0.62 + rr3() * 0.30),
+        r: 0.66 + rr3() * 0.34, g: 0.66 + rr3() * 0.34, b: 0.66 + rr3() * 0.34,
+      });
+    }
+  }
+
   /* And on the far height field, which the buttes do not cover. */
   for (let i = 0; i < 30000; i++) {
     const a = rr() * TAU;
@@ -862,18 +1080,21 @@ export function buildVegetation(path, terrain, rocks) {
      white-speckled clumps that read as patches of snow on the cliff. */
   midMat.color = new THREE.Color(0.40, 0.42, 0.30);
   midMat.alphaToCoverage = true;
-  /* Cut hard, from 0.30. The transmission term is a rim effect on a spray a
-     couple of millimetres thick; at forty metres and beyond there is no rim to
-     resolve, and all it was doing was adding a warm yellow pedestal to a
-     yellow-green albedo. Backlit on a distant bench that lands as the
-     chartreuse shards a reviewer picked out in `sun_gap`. */
-  midMat.userData.uniforms.uTransAmt.value = 0.12;
-  /* And the isotropic share cut with it, for the same reason. That term exists to
-     stop the *hero's* crown interior going black at three metres across; on a
-     card standing in for a whole tree at forty metres there is no interior to
-     light, and left at the hero's value it is simply a warm pedestal on a
-     yellow-green albedo. */
-  midMat.userData.uniforms.uTransIso.value = 0.04;
+  /* Transmission off, and now genuinely off rather than nominally.
+     This tier carried 0.12 and 0.04 — cut hard from 0.30 on the reasoning that
+     the term is a rim effect on a spray two millimetres thick, and at forty
+     metres and beyond there is no rim to resolve, so all it added was a warm
+     pedestal on a yellow-green albedo: the chartreuse shards a reviewer picked
+     out in `sun_gap`. That reasoning holds and is why these are zero now.
+     But the values were never doing anything either way — the term was injected
+     at a hook that runs after the shading is summed, see `makeFoliageMaterial` —
+     so "cut hard" described a change that could not have had an effect, and the
+     shards must have gone for another reason. With the hook fixed, leaving 0.12
+     here would switch a warm pedestal *on* in the tier a critic has just called
+     out for reading as pale repeated stamps along a bench. Explicitly zero, so
+     the frames this tier appears in are unchanged by the hook fix. */
+  midMat.userData.uniforms.uTransAmt.value = 0.0;
+  midMat.userData.uniforms.uTransIso.value = 0.0;
 
   /* Dark, desaturated, slightly blue-shifted green. A distant juniper is nearly
      black against sunlit rock; the haze does the rest of the work. */
