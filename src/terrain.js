@@ -2515,8 +2515,8 @@ export function makeTerrainMaterial(tex) {
       #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
         /* ---- one bilinear coverage sample, for the footprint taps only ----
          * The four taps below exist to estimate the *mean* shadow coverage over
-         * a pixel's footprint. They were each a full getShadow, and a full
-         * getShadow is sixteen texture2DCompare calls under PCF_SOFT and
+         * a pixel's footprint. They were each a full getShadow, and at the time
+         * a full getShadow was sixteen texture2DCompare calls under PCF_SOFT and
          * seventeen under PCF — so the wrapper was eighty comparisons per light
          * and, with two directional lights in this scene, a hundred and sixty
          * per ground fragment. tools/fillcost.mjs prices the whole terrain
@@ -2525,7 +2525,7 @@ export function makeTerrainMaterial(tex) {
          * forty-one texture fetches this file's own comments worry about are
          * about two milliseconds between them.
          *
-         * The redundancy is geometric. PCF_SOFT already integrates a 4x4 texel
+         * The redundancy was geometric. PCF_SOFT already integrates a 4x4 texel
          * neighbourhood, and these offsets are 2.6 texels — so five kernels
          * covering roughly nine texels square were being sampled eighty times.
          * A bilinear 4-tap at each offset samples the same neighbourhood at a
@@ -2536,9 +2536,35 @@ export function makeTerrainMaterial(tex) {
          * texture2DCompare per offset would be cheaper again and is exactly the
          * bimodal sample the wrapper exists to avoid.
          *
+         * That paragraph is past tense now, and the reduction is worth more
+         * rather than less. getShadow is no longer three's fixed kernel: it is
+         * a blocker-search penumbra, so the centre tap integrates up to two
+         * metres of the coarse cascade where these offsets still sit at 2.6
+         * texels. The five samples therefore no longer cover one shared
+         * neighbourhood, and the overlap argument above does not carry over —
+         * worth saying plainly, because a justification that has quietly
+         * stopped applying is how most of the wrong turns in this file
+         * happened. What replaces it is that the two are answering different
+         * questions and both are still answered: the centre resolves the
+         * penumbra, which is a property of the blocker, and these four
+         * estimate the mean over the screen footprint, which is a property of
+         * the range. Re-measured on the penumbra path at 1440p,
+         * tools/terrcost.mjs: this block 0.50 ms, the centre tap 3.80, and
+         * putting the four full getShadow calls back — which is what the taps
+         * were before, priced as the footFull row — costs +18.2 ms, taking
+         * wash_mid from 17.1 to 35.3. The penumbra tripled what the reduction
+         * saves, because each restored offset would now be a blocker search and
+         * a spiral rather than sixteen comparisons.
+         *
+         * Verified rather than argued, tools/shadowpair.mjs across all nine
+         * views: mean absolute difference 0.05 to 0.35 of a code value, every
+         * grad and hf/lf window identical to four digits, lit rock 0.619 at hue
+         * 14.6 on both sides. The floating-slab crop on wallL is byte-identical,
+         * which is the run's own negative control — that surface is rock.js's
+         * and this wrapper cannot reach it.
+         *
          * The centre tap is left as the stock getShadow, untouched, so the
-         * penumbra it carries — sized from the sun's angular diameter one
-         * commit ago — is bit-identical. */
+         * penumbra it carries is bit-identical. */
         float footTap(sampler2D sm, vec2 sz, float si, float sb, vec4 sc) {
           vec3 c = sc.xyz / sc.w;
           c.z += sb;
