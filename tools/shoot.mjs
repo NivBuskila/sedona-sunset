@@ -51,7 +51,12 @@ const num = (k, d) => {
   return n;
 };
 const W = num('w', 1600), H = num('h', 900);
-const only = getf('only', '');
+/* null, not '', and the distinction is the whole bug. The guard below refuses an
+   --only that names nothing, which is right for an explicitly empty value; but the
+   default has to be distinguishable from one, or omitting the flag altogether reads
+   as "asked for no viewpoints" and dies. That broke the full-pool path for every
+   caller going through tools/postpair.mjs, which does not pass --only at all. */
+const only = getf('only', null);
 /* Settle knobs. The defaults are in tools/settle.mjs; these exist so a framing
    that reports `ceiling` can be given more room without editing the tool. */
 const MINF = num('minframes', 90), SMAX = num('settlemax', 15000);
@@ -106,8 +111,12 @@ if (only !== null) {
   const missed = want.filter(n => !pool.some(v => v.name === n));
   if (!want.length || missed.length) {
     const far = missed.filter(n => FAR_VIEWS.some(v => v.name === n));
-    die(`--only "${only}" named ${missed.length || 'no'} viewpoint${missed.length === 1 ? ' that does' : 's that do'} not exist` +
-        (missed.length ? `: ${missed.join(', ')}.` : '.') +
+    die((missed.length
+          /* The empty case used to share this sentence and came out as "named no
+             viewpoints that do not exist", a double negative describing the one
+             situation where nothing was named at all. Say what happened instead. */
+          ? `--only "${only}" named ${missed.length} viewpoint${missed.length === 1 ? ' that does' : 's that do'} not exist: ${missed.join(', ')}.`
+          : `--only "${only}" named no viewpoints. Omit --only entirely to shoot the whole pool.`) +
         (far.length ? ` ${far.join(', ')} ${far.length > 1 ? 'are' : 'is'} a far framing — add --far.` : '') +
         `\n  available: ${pool.map(v => v.name).join(', ')}` +
         (args.includes('--far') ? '' : `\n  with --far, also: ${FAR_VIEWS.map(v => v.name).join(', ')}`));
