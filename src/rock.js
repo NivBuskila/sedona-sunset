@@ -1678,6 +1678,7 @@ uniform vec3 uSunDir;
    fixes, so the term has to be switchable from a probe rather than argued
    about. Left at 1.0 by everything except the probe. */
 uniform float uJointK;
+uniform float uVarnK;
 /* Scales the registration warp, for the same reason and by the same rule: the
    warp is a local rescaling of the sampling domain, and a local rescaling of a
    high-frequency octave is exactly the thing that can cost high-frequency energy
@@ -1709,6 +1710,39 @@ float hardstep(float e, float x, float w) { return smoothstep(e - w, e + w, x); 
    fails to compile still renders — as three's fallback — so it costs a whole
    capture to discover. */
 float hash11(float n){ return fract(sin(n * 17.317) * 4321.717); }
+
+/* Smooth signed 1-D value noise off the same hash, for warping a cell coordinate
+   before it is floored. Anywhere a feature is placed by flooring a scaled
+   station, the cell walls sit on a perfect lattice and no amount of per-cell
+   jitter inside the cell removes the period — the jitter moves the feature
+   within its cell but there is still exactly one per cell, so the spacing
+   distribution stays narrow and the eye reads a rhythm. Warping the coordinate
+   makes the cells themselves unequal, which widens the spacing distribution and
+   varies the feature's world width for free, and it is the same cure that fixed
+   the crest that held one bed level for 50-100 m and the apron rows that sat at
+   a dead-regular pitch. Both times it was a phase change and not an amplitude
+   change, and that is the point: nothing gets stronger or weaker, it stops being
+   periodic. Callers must keep the total slope under 1 or the warp folds and
+   cells invert; the bound is 1.5 * amplitude * frequency per term. */
+float vwob(float x, float seed) {
+  float i = floor(x), f = x - i;
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(hash11(i + seed), hash11(i + 1.0 + seed), f) - 0.5;
+}
+
+/* How far below its unit's lip a varnish tongue starts, snapped to whole beds.
+   Every tongue used to hang from lTop with 2.2 m of jitter, and lTop is the top
+   of the *lithological unit*, not of a bed — units here are eight to twenty
+   metres thick, so every tongue in a unit began inside the same two-metre band
+   and the tongues formed one horizontal row per unit. Three units visible in a
+   framing is three rows, which is exactly what the ship critic counted. So the
+   source scatters through the unit instead, snapped to a bed contact because a
+   lip is where water sheds; the read goes from one row per unit to a scatter,
+   and it is still a lip that sheds each one. */
+float vLip(float h, float top, float bot, float bedT) {
+  float bt = max(bedT, 0.6);
+  return floor(h * max(1.0, (top - bot) / bt) * 0.70) * bt;
+}
 
 /* Matched exactly by subResist() on the CPU, which is why it is two low-frequency
    sines rather than the usual large-argument hash. */
@@ -2079,7 +2113,20 @@ vec4 vr  = texture2D(uVar, vec2(aS * 0.037, y * 0.055));
    below. Both features need the same thing from them — a run of cliff face that
    is either doing something or not — and one floor and four hashes is cheaper
    than a texture fetch. */
-float vs = aS * 0.105;
+/* Warped before flooring, so the cells are unequal. Slope of the warp is
+   1.5 * 3.2 * 0.052 + 1.5 * 1.2 * 0.170 = 0.56, comfortably under 1, so the
+   coordinate stays monotone and no cell inverts; cell widths come out between
+   about 0.64 and 2.3 times nominal. The ceiling on that stretch is what sets
+   these amplitudes rather than the wish for irregularity: a plate's width is a
+   fraction of *its cell*, so a stretched cell is a wider plate in world units,
+   and the first pass at 0.67 slope put 3x cells on the far cliff in bend whose
+   plates came out seven metres wide and read as rounded rectangles again for a
+   new reason. The iron lenses read these cells too and
+   their spacing was measured over four rounds, but what was measured was the
+   *distribution* of lens size and saturation, and an unequal cell broadens that
+   distribution rather than shifting it. */
+float aSw = aS + 3.2 * vwob(aS * 0.052, 811.0) + 1.2 * vwob(aS * 0.170, 857.0);
+float vs = aSw * 0.105;
 float vi = floor(vs), vt = vs - vi;
 float vh1 = hash11(vi), vh2 = hash11(vi + 37.0);
 float vh3 = hash11(vi + 71.0), vh4 = hash11(vi + 113.0);
@@ -2327,12 +2374,23 @@ float jOpen = clamp(jt, 0.0, 1.0) * jFace;
    metres below the lip of the bed that sheds it and decaying downward over five to
    twelve. Nothing is thresholded and nothing has a straight edge. It also costs no
    texture fetch at all, which on this rasteriser pays for itself. */
+/* Tapered and wandering, not a band of constant width running straight down.
+   A plate of constant lateral width, held over the five to twelve metres this
+   decays across, *is* a soft-edged rounded rectangle — that is what the critic
+   is describing, and it is a property of the profile rather than of the
+   distribution. A real tongue is widest at the notch that feeds it and narrows
+   downward as the sheet-flow spreads and thins, and it drifts across the face
+   rather than falling plumb, because it follows the face's own drainage. Both
+   are one multiply and one add on a coordinate that is already here. */
+float vSrc = lTop - 0.9 - 2.2 * vh4 - vLip(hash11(vi + 149.0), lTop, lBot, lBedT);
+float vDn = max(0.0, vSrc - y);
 float vW = 0.055 + 0.20 * vh2;
-float vC = vW + (1.0 - 2.0 * vW) * vh3;
-float vLat = 1.0 - smoothstep(vW * 0.30, vW, abs(vt - vC));
-float vSrc = lTop - 0.9 - 2.2 * vh4;
+float vWt = vW * (1.0 - 0.72 * smoothstep(0.0, 7.0, vDn));
+float vC = vW + (1.0 - 2.0 * vW) * vh3
+         + 0.085 * vwob(y * 0.085 + vi * 3.7, 883.0);
+float vLat = 1.0 - smoothstep(vWt * 0.30, vWt, abs(vt - vC));
 float vHang = smoothstep(vSrc + 0.7, vSrc - 0.8, y)
-            * exp2(-max(0.0, vSrc - y) * (0.085 + 0.115 * vh2));
+            * exp2(-vDn * (0.085 + 0.115 * vh2));
 
 /* A second, finer set of tongues, and this is the one that makes varnish
    legible at all.
@@ -2351,15 +2409,23 @@ float vHang = smoothstep(vSrc + 0.7, vSrc - 0.8, y)
    metres at widths from 0.8 to 3.2 m — dense enough to read as streaking, and
    still nothing like a coat. Taken as a maximum with the coarse set rather than
    a sum: tongues overlap on a real wall, they do not add up to black. */
-float vs2 = aS * 0.30;
+/* Its own warp, at its own frequencies and phases, because warping both sets
+   with one field would slide them together and leave their beat intact — the
+   combined spacing is the thing being fixed, not either set's. Slope is
+   1.5 * 2.8 * 0.061 + 1.5 * 1.0 * 0.195 = 0.55, so this one is monotone too. */
+float aSw2 = aS + 2.8 * vwob(aS * 0.061, 907.0) + 1.0 * vwob(aS * 0.195, 941.0);
+float vs2 = aSw2 * 0.30;
 float vi2 = floor(vs2), vt2 = vs2 - vi2;
 float vg1 = hash11(vi2 + 401.0), vg2 = hash11(vi2 + 437.0), vg3 = hash11(vi2 + 479.0);
+float vSrc2 = lTop - 0.6 - 2.6 * vg2 - vLip(hash11(vi2 + 191.0), lTop, lBot, lBedT);
+float vDn2 = max(0.0, vSrc2 - y);
 float vW2 = 0.12 + 0.34 * vg2;
-float vC2 = vW2 + (1.0 - 2.0 * vW2) * vg3;
-float vLat2 = 1.0 - smoothstep(vW2 * 0.30, vW2, abs(vt2 - vC2));
-float vSrc2 = lTop - 0.6 - 2.6 * vg2;
+float vWt2 = vW2 * (1.0 - 0.68 * smoothstep(0.0, 5.5, vDn2));
+float vC2 = vW2 + (1.0 - 2.0 * vW2) * vg3
+          + 0.15 * vwob(y * 0.110 + vi2 * 2.9, 977.0);
+float vLat2 = 1.0 - smoothstep(vWt2 * 0.30, vWt2, abs(vt2 - vC2));
 float vHang2 = smoothstep(vSrc2 + 0.7, vSrc2 - 0.8, y)
-             * exp2(-max(0.0, vSrc2 - y) * (0.070 + 0.100 * vg3));
+             * exp2(-vDn2 * (0.070 + 0.100 * vg3));
 float vPlate = max(step(0.48, vh1) * vLat * vHang,
                    step(0.32, vg1) * vLat2 * vHang2 * 0.85);
 /* Strengthened, and there are more plates. Varnish is the strongest single
@@ -2403,6 +2469,18 @@ float isTal = step(1.3, uDetail);
 float tVarn = isTal * smoothstep(0.30, 0.85, gN.y) * (1.0 - lPale * 0.70)
             * (0.45 + 0.55 * vr.b) * (0.70 + 0.60 * gr.r) * 0.62;
 varn = max(varn, clamp(tVarn, 0.0, 0.72));
+/* Ablatable, for the same reason and by the same rule as uJointK and uWarpK, and
+   declared here rather than injected by a tool because uVarnDbg being injected
+   undeclared cost this project a four-view capture at 2560x1440 this morning.
+   The ship critic's second finding is a lattice of soft dark rounded rectangles
+   in rows along the bedding, and varnish is the strongest candidate by
+   construction: vs2 = aS * 0.30 is a fixed 3.33 m cell and vSrc = lTop - 0.9
+   - 2.2 * vh4 hangs every tongue from its own bed's lip, which is a regular
+   spacing and a shared row origin - exactly the two properties the complaint
+   describes. That is a hypothesis about a specific term and it should be
+   falsified in one page load rather than argued about, since two captures are
+   not a pair. Left at 1.0 by everything except the probe. */
+varn *= uVarnK;
 /* Manganese concentrated in the joints, per the aperture note above. */
 /* Pulled back hard from 0.46. Manganese does concentrate in a joint, but at 0.46
    on top of the groove's own 46% albedo darkening and a doubled occlusion weight,
@@ -2653,6 +2731,7 @@ export function makeRockMaterial(tex, detail = 1.0) {
        lighting is three's and System 4's. */
     uSunDir: { value: SUN_DIR.clone() },
     uJointK: { value: 1.0 },
+    uVarnK: { value: 1.0 },
     uWarpK: { value: 1.0 },
   };
 
