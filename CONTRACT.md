@@ -10770,3 +10770,62 @@ reports 1144 such pixels in `bend`. They are all on bright sky, where 25% of lin
 the gain did**, so that column is only meaningful alongside the encoded delta. Left in
 with the caveat rather than retuned, because it was the column that caught the
 fireflies when they were in the toe, where the two spaces agree.
+
+# System 7 final record: `sys7last` at 2560x1440, `sys7lastpx` at 1997x1123
+
+Thirteen views, both arms, one resolution per tag, tags cleared before shooting, on
+the frame-convergence settle. `src/` clean at `4e15b1a`, which includes jump and the
+landing settle, the mote fix, the far-plant seating, the shrub blades, the hero crown,
+the detail normal, the ground bounce, and the ghost.
+
+Looked at before measured, as every round here has been. No new defect. The two
+residuals visible at full resolution — the diagonal cross-hatch on the near ground and
+the sky motes — are **present identically in the ungraded arm**, so neither is the
+grade's, and both are already dispositioned above. The dark clast in `bend` shows more
+internal texture in the graded arm than the control, which is the local shadow lift
+doing what it was built for.
+
+## The tracked figures
+
+| figure | graded | control | band / previous | verdict |
+| --- | --- | --- | --- | --- |
+| lit rock saturation | **0.615** | 0.614 | guard 0.615-0.626 | at the floor, in band |
+| lit rock hue | **20.5°** | 20.7° | guard 18.9-21.1° | in band |
+| lit rock V | 0.686 | 0.693 | band 0.59-0.73 | in band |
+| lit rock spreads | 0.57-0.68 sat, 17.6-23.8° hue | — | > 3° required | healthy, not collapsed |
+| floor **shade** row | 0.644 sat, 4.4° hue, V 0.134 | 0.662, 6.7°, 0.152 | — | held |
+| floor **lit** row | 0.624 sat, 21.2° hue, V 0.635 | 0.625, 21.5°, 0.639 | — | held |
+| shadow gate | **0.211** | 0.241 | was 0.212 graded | held to 0.001 |
+| midwall hf/lf | **0.53** | 0.53 | brief's floor 0.55 | below floor, **and equal in both arms** |
+| banding worst run, `sun_gap` | 8 | 42 | — | dither working |
+| banding step cv / flat | 0.651 / 42% | 0.129 / 94% | — | dither working |
+| clipped >=254, `wall_lit` | 0.04% | 0.00% | — | shoulder holding |
+| pure black, `wall_shade` | 0.11% | 0.04% | — | +0.07pp, shrub silhouettes |
+
+At 1997x1123 the colour is identical to three decimals (0.615 / 20.5°, floor rows
+0.644 / 4.4° and 0.625 / 21.1°) and the gate is identical to three decimals (0.211
+graded, 0.241 control). Banding at the second buffer: worst run 8 graded against 33
+control in `sun_gap`, step cv 0.722 against 0.186, flat 42% against 93%.
+
+## What moved, stated before the summary rather than after
+
+**The ungraded shadow gate moved, from 0.255 to 0.241.** The graded gate did not — it
+is 0.211 against a tracked 0.212. So the change is under the grade, not in it, and the
+ground bounce landing in this window is the obvious candidate. Recorded rather than
+chased: the figure the contract tracks is the graded one and it held.
+
+**Midwall `hf/lf` is 0.53 against the brief's floor of 0.55, and it reads 0.53 in the
+ungraded control too.** That is the attribution that matters. Depth of field cannot be
+responsible for a figure its own absence does not change, so this is the wall's
+detail rather than the blur, and the DOF is exonerated by measurement rather than by
+argument. It has ranged 0.50 to 0.54 across the last four sets at this resolution;
+quote the resolution with it, always.
+
+## The ghost in the delivered set
+
+One disc, `t = -0.34`, gain 0.15, gated. Visible as a soft rim-brightened disc in
+`bend`'s sky and as a broad glare above the butte in `wash_mid`; suppressed to 1cv in
+`juniper` and 6cv in `sun_gap` where it falls on rock; and **byte-identical between
+arms in `wall_lit`, `shade_far`, `wall_shade` and `ground`**, which is why none of the
+colour figures above can carry any of it. Zero pixels lifted 25cv or more in any
+framing.
