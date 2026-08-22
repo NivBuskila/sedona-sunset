@@ -312,13 +312,20 @@ export const POST_DEFAULTS = {
    * the flare stops responding to the disc's brightness above the clamp — a fair
    * trade for an effect whose source is a nine-tap average of a quarter-scale
    * blur, which is not a flux measurement in the first place. */
-  /* `ghostGain` was 0.0014, which put the discs' peak near 0.004 scene-linear
-     where lit rock sits at 0.36 — three orders down, and inaudible rather than
-     absent. 0.03 lands the two kept discs at 1-5% of the sky they overlay, which
-     is where a real ghost sits; the arithmetic is in the ghost table's comment
-     along with why no single gain can also be safe over shaded rock, and
-     `ghostGate` is the term that resolves that. */
-  ghostGain: 0.03, ghostGate: [0.05, 0.25], veilGain: 0.0026, streakGain: 0.0014,
+  /* `ghostGain` was 0.0014, which put the disc's peak near 0.004 scene-linear where
+     lit rock sits at 0.36 — three orders down, and inaudible rather than absent.
+     It went to 0.03 first, on the argument that a real ghost sits at a few percent
+     of the background it overlays, and that was measured in the wrong space and was
+     still invisible: 5 code values in `bend`. A fraction of *scene-linear*
+     background does not predict visibility, because the sky sits in the shoulder
+     where the transfer is nearly flat, so 5% of linear there is 2cv and gone, while
+     the same 5% in the toe is tens of cv and a firefly. The hundredfold background
+     range shows up a second time, in the curve rather than the scene.
+     0.15 is set in the space that decides the matter, encoded code values: the disc
+     reads at a median of 8cv and a peak of 18cv on sky in `bend`, which is visible
+     on a smooth gradient and not nameable. 0.45 was tried and is a disc rather than
+     a ghost — 2272 pixels past 25cv in `bend` alone. */
+  ghostGain: 0.15, ghostGate: [0.05, 0.25], veilGain: 0.0026, streakGain: 0.0014,
   /* Ceiling on the flare *source*, not on the flare, and it is the reason the
      gains above are a calibration rather than a guess. The soft knee is an
      identity below `flareKnee` and asymptotes at knee+range, so the sky's own
@@ -898,20 +905,23 @@ void main() {
      did. It read as dirt on the sensor rather than as a ghost, and it was the
      loudest disc in the set at 9.19% of local background in `bend`.
      `t = 0.30` was dropped for register: three evenly spaced discs on one line read
-     as a deliberate graphic, two read as an accident of the glass. One either side
-     of the sun keeps the axis legible without spelling it out.
+     as a deliberate graphic rather than as an accident of the glass.
      Tints are dispersion rather than decoration. Coating reflectance is
      wavelength-dependent, so near-sun reflections carry the source's own colour and
      deeper groups drift complementary: `t = -0.34` stays close to this scene's
      sunlight, because a ghost warmer than the sun reads as a coloured light instead
-     of a reflection, and `t = 0.63` is the faint green-gold that magnesium fluoride
-     actually throws. It was near-white, which was the one thing certain to look like
-     a UI element on a warm sky; green-gold also lands in the gap between the scene's
-     oranges and the shadows' teal, so it reads as not belonging to the scene, which
-     is what a lens artefact should do. */
+     of a reflection.
+
+     One disc in the end, not two, and the second was dropped on the evidence of
+     looking at it. At a gain where anything is visible at all, the one that reads
+     as a ghost is this small tight `t = -0.34`; the broad `t = 0.63` was 224 pixels
+     across at 1440p and soft-edged, which reads as a smudge on the front element
+     rather than as an image of the aperture. It was also the disc that produced
+     every firefly the gate had to be rebuilt to catch, and the one that landed on
+     rock in three of the four live framings. Small, tight and singular survives
+     all three arguments; large, soft and paired loses all three. */
   const GHOSTS = [
     [-0.34, 0.045, 1.00, 0.62, 0.34, 0.55],
-    [0.63, 0.078, 0.70, 0.95, 0.52, 0.20],
   ];
 
   const flareMat = new THREE.ShaderMaterial({

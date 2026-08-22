@@ -10686,3 +10686,87 @@ station except the talus and the wash head, which are the two inside the arrival
 lift's forty-five metre window. That is the lift spending its budget, not the
 settle, and the five stations outside the window are the ones that speak to the
 settle.
+
+## The delivered ghost, and the gain specified in the wrong space
+
+**One disc, `t = -0.34`, `ghostGain` 0.15, with the background gate.** Shot as
+`sys7gf` against `sys7gf_ghost0` at 2560x1440, and `sys7ghpx` at 1997x1123.
+
+### The colour record is untouched, and that is measured rather than argued
+
+`wall_lit` and `shade_far` are **byte-identical between the arms at the shipped
+gain**, frame hashes included. Those two framings are where lit rock at 0.615 / 20.5°
+and both paired floor rows are read, and `wall_shade` and `ground` — the shadow gate
+and the clipped fractions — were already a measured zero. All four record-bearing
+framings are provably immune, because the sun is behind rock in each and the flare is
+scaled by the radiance actually measured at the sun. Occlusion does not depend on the
+gain, so this holds at any gain.
+
+**Banding is bit-identical on both arms at both buffers**: worst run 8, median worst
+5, step cv 0.651, flat 42%, span 38 in `sun_gap` at 1440p, and 8 / 6 / 0.722 / 42% /
+42 at 1997x1123, the control agreeing to the last digit in every cell. The one figure
+that could have moved did not.
+
+### A fraction of scene-linear background does not predict visibility
+
+This is the transferable mistake. The gain was first set to 0.03 on the argument that
+a real ghost sits at a few percent of the background it overlays, which is true, and
+the frames came back with the disc **invisible — 5 code values in `bend`**. The error
+is the space: the sky sits in the **shoulder**, where the transfer is nearly flat, so
+5% of scene-linear there is 2cv and gone; the same 5% in the **toe** is tens of code
+values and a firefly. The hundredfold range appears twice, once in the scene and once
+in the curve, and they pull in opposite directions.
+
+Respecified in encoded code values, which is what the eye reads. 0.15 gives a median
+of 8cv and a peak of 18cv on sky in `bend`. 0.45 was tried and is a disc rather than a
+ghost, 2272 pixels past 25cv in `bend` alone. **An additive term's amplitude must be
+specified after the transfer, not before it.**
+
+### The gate had to be rebuilt, and the reason generalises
+
+The first gate read the scene with one bilinear sample. At a low-resolution pass that
+is a **point sample at the block centre, not an average of the block**, and that one
+value then gated the whole upsampled block — so a dark pixel sharing a block with lit
+rock got a gate computed for its neighbours, the steep toe turned a small linear
+addition into a large jump, and 13 pixels in `juniper` and 4 in `wash_mid` came back
+up to 101cv, 405% of their own background. Fireflies, from the very term meant to
+prevent them.
+
+Minimum over five taps at 0.75 low-res texels fixed it: 4 -> 0 in `wash_mid`, 13 -> 2
+in `juniper`, and blob pixels 21 -> 0, 52 -> 6, 3 -> 1. Dropping the second disc took
+the remainder to **zero in all four framings**. The radius is in low-res texels, so it
+tracks the upsample block at every rung without a resolution term.
+
+### Why one disc and not two
+
+Decided by looking, which is the rule that has earned its place here. At a gain where
+anything is visible the disc that reads as a ghost is the small tight `t = -0.34`; the
+broad `t = 0.63` was 224 pixels across at 1440p and soft-edged, and read as a smudge
+on the front element rather than as an image of the aperture. It was also the source
+of every firefly and it landed on rock in three of the four live framings. Small,
+tight and singular survives all three arguments; large, soft and paired loses all
+three.
+
+### What the delivered term actually does
+
+| view | touched | peak | over 25cv | where the disc lands |
+| --- | --- | --- | --- | --- |
+| `bend` | 0.35% | 18cv | 0 | clean sky, reads |
+| `wash_mid` | 0.32% | 13cv | 0 | sky above the butte, broad glare |
+| `sun_gap` | 0.01% | 6cv | 0 | mostly gated, disc is on the dark butte |
+| `juniper` | 0.00% | 1cv | 0 | gated off, disc is on rock |
+| `wall_lit`, `shade_far`, `wall_shade`, `ground` | 0 | 0 | 0 | occluded, byte-identical |
+
+Worth stating plainly: the effect is now **active in two framings of nine**. That is
+the gate working as designed rather than a shortfall — the discs that landed on rock
+are exactly the ones that would have read as decals — but a reader should not expect
+to find it everywhere.
+
+### The blob-count metric is in the wrong space too
+
+`_p7gq.mjs` flags pixels above 25% of their local background in scene-linear, and it
+reports 1144 such pixels in `bend`. They are all on bright sky, where 25% of linear is
+18cv encoded, which is the intended reading. **The threshold inherits the same error
+the gain did**, so that column is only meaningful alongside the encoded delta. Left in
+with the caveat rather than retuned, because it was the column that caught the
+fireflies when they were in the toe, where the two spaces agree.
