@@ -1322,6 +1322,47 @@ export function makeBarkMaterial(bark) {
  * depth — plus a small omnidirectional bleed so the shadowed interior of the
  * crown is coloured rather than dead.
  */
+/* The directional light's shadow term on its own, which three does not expose.
+ *
+ * The light loop multiplies `directLight.color` by the shadow and then hands it to
+ * `RE_Direct`, which folds it into `reflectedLight`. By `lights_fragment_end` the
+ * only trace left is inside a reflected term that also carries the surface normal
+ * — and a backlit card has a reflected direct term of zero in full sun, which is
+ * exactly when transmission matters, so `reflectedLight` cannot be used to ask
+ * "is this fragment in shadow".
+ *
+ * So read the colour twice out of the loop: once as the light arrives, once after
+ * shadowing. The ratio is the shadow factor alone, with the sun's intensity and
+ * hue divided out — which is the property that makes this safe to land late,
+ * because `sky.js` owns both of those and retunes them, and a gate expressed in
+ * absolute radiance would drift the moment it did.
+ *
+ * Spliced from three's own chunk rather than hand-copied, so it tracks whatever
+ * version is installed, and the directional block is isolated by slicing at
+ * `getDirectionalLightInfo` before touching `RE_Direct` — that call appears in the
+ * point and spot blocks too, and instrumenting those would make the gate mean
+ * "any light" instead of "the sun". Validated here at module scope: if a three
+ * upgrade renames either marker this throws on import, which `tools/_p7pre.mjs`
+ * reports by name in two seconds. The alternative failure mode is a shader that
+ * compiles and silently reverts to the emissive behaviour, and this project has
+ * already lost a night to one of those.
+ */
+const LIGHTS_BEGIN_SUNVIS = (() => {
+  const src = THREE.ShaderChunk.lights_fragment_begin;
+  const MARK = 'getDirectionalLightInfo( directionalLight, directLight );';
+  const at = src.indexOf(MARK);
+  if (at < 0) throw new Error('makeFoliageMaterial: three\'s lights_fragment_begin no '
+    + 'longer contains getDirectionalLightInfo; the sun-visibility gate needs rewriting');
+  const head = src.slice(0, at), tail = src.slice(at);
+  if (tail.indexOf('RE_Direct( directLight,') < 0) throw new Error(
+    'makeFoliageMaterial: no RE_Direct call after the directional light info; '
+    + 'the sun-visibility gate needs rewriting');
+  return head + tail
+    .replace(MARK, MARK + '\n\t\tfolSunAll = max( folSunAll, directLight.color );')
+    .replace('RE_Direct( directLight,',
+      'folSunLit = max( folSunLit, directLight.color );\n\t\tRE_Direct( directLight,');
+})();
+
 export function makeFoliageMaterial(map) {
   const mat = new THREE.MeshStandardMaterial({
     map,
@@ -1372,6 +1413,14 @@ export function makeFoliageMaterial(map) {
     /* Sky visibility, 1 being a card that sees the whole hemisphere. Only the
        tiers with no baked occlusion need this; see the note at its use. */
     uAmbScale: { value: 1.0 },
+    /* How much of `aSun` to apply to the ambient term, as opposed to the direct
+       one it has always driven. Zero by default, so the hero crown — whose sky
+       visibility is already baked into its vertex colours, and whose `aSun` means
+       sun self-shadowing rather than sky visibility — is untouched. The near-field
+       tuft tiers set it to 1 and bake real sky visibility into `aSun` instead of
+       the flat 1 they carried; see `addSun` in vegetation.js for why that stub was
+       the cause of a shipped defect. */
+    uSkyOcc: { value: 0.0 },
   };
   mat.userData.uniforms = u;
   mat.onBeforeCompile = (sh) => {
@@ -1384,7 +1433,14 @@ export function makeFoliageMaterial(map) {
       .replace('#include <common>',
         '#include <common>\nvarying float vSun;\nuniform vec3 uSunDir;\nuniform vec3 uTrans;\n' +
         'uniform float uTransAmt;\nuniform float uTransIso;\nuniform float uDirCap;\n' +
-        'uniform float uAmbScale;')
+        'uniform float uAmbScale;\nuniform float uSkyOcc;')
+      /* Declared before the loop that fills them, and read after it. Zero when
+         the scene has no directional light at all, which makes `folSunVis` zero
+         and the transmission off — the right way round, since there is then no sun
+         to transmit. */
+      .replace('#include <lights_fragment_begin>',
+        'vec3 folSunAll = vec3( 0.0 );\nvec3 folSunLit = vec3( 0.0 );\n'
+        + LIGHTS_BEGIN_SUNVIS)
       /* Analytic coverage instead of a binary cutout.
          `alphaToCoverage` has been set on this material for two rounds and has
          done nothing, and the reason is that it had nothing to work with: the
@@ -1459,14 +1515,20 @@ export function makeFoliageMaterial(map) {
            maximum untouched at L 0.874, which is the signature of a term the
            knee does not reach. Defaults to 1, so nothing that does not ask for
            it changes. */
-        reflectedLight.indirectDiffuse *= uAmbScale;
+        reflectedLight.indirectDiffuse *= uAmbScale * mix( 1.0, vSun, uSkyOcc );
         /* The same occlusion applies to the environment's specular lobe, and it
            has to, or the term becomes the whole story: a card at roughness 0.92
            against a sky this bright still returns a broad IBL highlight, and
            unlike the diffuse it was reachable by nothing above. The population
            maximum held at exactly L 0.920 through a 7.5x knee sweep and a 3.3x
            ambient sweep, which is what a term no lever touches looks like. */
-        reflectedLight.indirectSpecular *= uAmbScale;
+        reflectedLight.indirectSpecular *= uAmbScale * mix( 1.0, vSun, uSkyOcc );
+        float folSunVis;
+        {
+          const vec3 LUMA = vec3( 0.2126, 0.7152, 0.0722 );
+          float all = dot( folSunAll, LUMA );
+          folSunVis = all > 1e-5 ? clamp( dot( folSunLit, LUMA ) / all, 0.0, 1.0 ) : 0.0;
+        }
         {
           vec3 sunV = normalize( ( viewMatrix * vec4( uSunDir, 0.0 ) ).xyz );
           vec3 V = normalize( vViewPosition );
@@ -1476,8 +1538,30 @@ export function makeFoliageMaterial(map) {
              the sun-facing side is already lit by the direct term. Added after
              the knee, so the backlit rim is the one thing allowed to be bright. */
           float back = clamp( -dot( normalize( normal ), sunV ) * 0.5 + 0.55, 0.0, 1.0 );
-          reflectedLight.directDiffuse +=
-            diffuseColor.rgb * uTrans * ( phase * back * uTransAmt + uTransIso );
+          /* Gated by whether the sun reaches this fragment at all, and without
+             that gate the whole block is an emissive term.
+             Transmission is light passing *through* a leaf, so it cannot exceed
+             what arrives. Ungated, the isotropic part added
+             albedo * uTrans * uTransIso unconditionally — no light, no normal,
+             no shadow in it anywhere. In sun that is a small fraction of a large
+             direct term and invisible. In deep shade it is the *only* term of any
+             size, so it becomes the entire appearance: a constant times albedo.
+             That is what a critic found at the right edge of wall_shade — scrub
+             cards at V 0.612 against a shaded wall at V 0.099, the brightest thing
+             in a dark corner, with no internal shading and no response to blade
+             orientation, because the term that was lighting them has no normal in
+             it. It also explains the two cards that read as detached: the leak is
+             proportional to albedo, so the pale atlas cells glowed while their
+             darker siblings stayed invisible, and what survived was a few bright
+             shapes with no plant around them.
+             folSunVis is the directional light's colour after shadowing over its
+             colour before, so it is the shadow term alone — free of the sun's
+             intensity and hue, which another system owns and retunes. That matters
+             for what this change costs: in open sun it is 1, so every framing that
+             reads correctly today is untouched to the bit, and only shadowed
+             foliage moves. */
+          reflectedLight.directDiffuse += diffuseColor.rgb * uTrans * folSunVis
+            * ( phase * back * uTransAmt + uTransIso );
         }`);
   };
   mat.customProgramCacheKey = () => 'juniper-foliage';
@@ -1576,7 +1660,32 @@ export function hummock(terrain, cx, cz, seed) {
  *
  * `cols` and `rows` address the source atlas; a tuft picks one cell.
  */
-export function cardTuft(cx, cy, cz, w, h, nCards, rand, arr, cols = 2, rows = 1) {
+/* `uvFit` is the atlas cell's own aspect, cellWidth/cellHeight in texels, or 0 to
+ * map the whole cell onto every card as before.
+ *
+ * Give it, and each card samples the sub-rect of its cell whose shape matches the
+ * card's own — so a texel stays square and whatever the atlas drew keeps its
+ * proportions. Without it the cell is stretched to whatever the card happens to
+ * be, and that is a defect generator rather than a subtlety: `makeScrub` draws a
+ * 256x512 portrait cell of small leaves 12 to 28 texels long, and the bench
+ * shrub's widest variant is a 1.34 x 0.54 m landscape card. The mismatch is 5x
+ * horizontally, so on that variant every leaf was drawn five times wider than
+ * long and every stem five times wider than drawn.
+ *
+ * That is what a critic found close to camera at the right edge of `wall_shade`
+ * and described as "uniformly-coloured cream lozenges — hard-edged, no internal
+ * shading, no response to blade orientation", and in an earlier round as "flat
+ * tapered cream ribbons for stems". Both are literal: a lozenge is what
+ * `makeScrub`'s leaf becomes at 5:1, a ribbon is what its stem becomes, and each
+ * one is filled with a single flat colour by construction, so no amount of
+ * lighting work would have put shading inside one. The variant that reads
+ * correctly at every distance is the one whose aspect already matches the cell.
+ *
+ * Off by default: the tiers that were tuned against the stretch keep it until
+ * their own framings can be re-checked.
+ */
+export function cardTuft(cx, cy, cz, w, h, nCards, rand, arr, cols = 2, rows = 1,
+                         uvFit = 0) {
   const { pos, nrm, uvs, idx } = arr;
   let v = pos.length / 3;
   for (let k = 0; k < nCards; k++) {
@@ -1587,8 +1696,25 @@ export function cardTuft(cx, cy, cz, w, h, nCards, rand, arr, cols = 2, rows = 1
     const ci = (rand() * cols) | 0, ri = (rand() * rows) | 0;
     /* Same boundary-bleed margin as the foliage atlas, scaled to the cell. */
     const iu = 0.04 / cols, iv = 0.04 / rows;
-    const u0 = ci / cols + iu, u1 = (ci + 1) / cols - iu;
-    const v0 = ri / rows + iv, v1 = (ri + 1) / rows - iv;
+    let u0 = ci / cols + iu, u1 = (ci + 1) / cols - iu;
+    let v0 = ri / rows + iv, v1 = (ri + 1) / rows - iv;
+    if (uvFit > 0) {
+      /* The sub-rect's aspect has to equal the card's, so shrink whichever axis
+         is over-represented and leave the other at the full cell. */
+      const want = (hh / w) * uvFit;
+      const fu = Math.min(1, want > 1 ? 1 / want : 1);
+      const fv = Math.min(1, want > 1 ? 1 : want);
+      const uw = (u1 - u0) * fu, vh = (v1 - v0) * fv;
+      /* Where in the cell the window sits is per-card, which is free variety:
+         two cards of one geometry now show different parts of the same drawn
+         plant instead of the same stretch of it. Kept off the extreme ends
+         vertically — the outer margin is the clip border and near-empty, and a
+         card windowed onto it would be the floating-card bug again. */
+      u0 += (u1 - u0 - uw) * rand();
+      v0 += (v1 - v0 - vh) * (0.15 + rand() * 0.70);
+      u1 = u0 + uw;
+      v1 = v0 + vh;
+    }
     const ox = (rand() - 0.5) * w * 0.35, oz = (rand() - 0.5) * w * 0.35;
     for (let q = 0; q < 4; q++) {
       const sx = (q === 0 || q === 3) ? -1 : 1;

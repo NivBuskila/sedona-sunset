@@ -59,9 +59,62 @@ function addWhite(g) {
 /** The hero's foliage shader reads a baked sun-visibility attribute. A distant
     bush has no crown to occlude itself with, so it supplies a constant one —
     without which the attribute reads as zero and every bush loses its key. */
-function addSun(g) {
+/* Per-vertex sky visibility, or a flat 1 where a tier does not want it.
+ *
+ * This was a stub — `new Float32Array(n).fill(1)` — for as long as the near-field
+ * tiers have existed, and that is worth stating plainly because it is the cause of
+ * a defect a critic ranked on the ship set. The hero crown carries two baked
+ * occlusion terms: `aSun` for self-shadowing along the sun ray, and a vertex
+ * colour for sky visibility. These tiers carried neither. Every card in every
+ * shrub and every grass tuft in the scene was lit as though it were a lone leaf in
+ * an open field, with the whole hemisphere visible to it and nothing between it
+ * and the sky.
+ *
+ * In sunlit framings that is invisible, because the capped direct term dominates
+ * and `uDirCap` was tuned against it. In deep shade there is no direct term, so
+ * the unoccluded ambient *is* the plant — and unoccluded ambient over a smooth sky
+ * is a slowly varying function of the normal alone, which is precisely the
+ * "uniformly-coloured cream lozenges, no internal shading, no response to blade
+ * orientation" that was found at the right edge of `wall_shade`. Cards at
+ * different angles shared one tone because, with a flat 1 here, nothing in their
+ * shading knew where in the plant they sat.
+ *
+ * Height off the tuft's foot and radial distance from its axis, because those are
+ * the two things that decide how much sky a leaf in a volume of leaves can see: a
+ * leaf at the base and near the stem is looking through the whole plant, one at an
+ * outer tip is looking at the sky. Cheap — the geometry is built once at load and
+ * this is one pass over its vertices.
+ *
+ * Applied to the ambient term only, and that is deliberate rather than lazy: the
+ * class reads correctly at the `juniper` and `sun_gap` distances and the brief was
+ * not to break what works. Ambient-only means every fragment in open sun is
+ * untouched, so the failing case moves and the working ones cannot.
+ */
+function addSun(g, occlude = false) {
   const n = g.attributes.position.count;
-  g.setAttribute('aSun', new THREE.BufferAttribute(new Float32Array(n).fill(1), 1));
+  const a = new Float32Array(n).fill(1);
+  if (occlude) {
+    const p = g.attributes.position.array;
+    let maxY = 1e-6, maxR = 1e-6;
+    for (let i = 0; i < n; i++) {
+      const y = p[i * 3 + 1], r = Math.hypot(p[i * 3], p[i * 3 + 2]);
+      if (y > maxY) maxY = y;
+      if (r > maxR) maxR = r;
+    }
+    for (let i = 0; i < n; i++) {
+      const h = Math.min(1, Math.max(0, p[i * 3 + 1] / maxY));
+      const r = Math.min(1, Math.hypot(p[i * 3], p[i * 3 + 2]) / maxR);
+      /* Floored at 0.60, which is the hero crown's own ambient floor and is
+         floored for the reason it gives: unfloored occlusion crushed its shaded
+         sprays to near-black and put internal contrast at 5.2:1 against a real
+         juniper's 2.4:1. The same argument applies here and with more force,
+         because these tiers stand on shaded benches where a critic has already
+         called the shrubs "jet-black spiky silhouettes". The job of this term is
+         to give a tuft an inside and an outside, not to darken it. */
+      a[i] = Math.min(1, Math.max(0.60, (0.26 + 0.74 * h) * (0.70 + 0.30 * r)));
+    }
+  }
+  g.setAttribute('aSun', new THREE.BufferAttribute(a, 1));
   return g;
 }
 
@@ -72,7 +125,7 @@ function addSun(g) {
 function grassTuftGeo(seed) {
   const rand = rng(seed);
   return addSun(addWhite(
-    cardGeometry((arr) => cardTuft(0, 0, 0, 0.62, 1.0, 4, rand, arr, 4, 1))));
+    cardGeometry((arr) => cardTuft(0, 0, 0, 0.62, 1.0, 4, rand, arr, 4, 1))), true);
 }
 
 /* Four bench silhouettes instead of one.
@@ -145,9 +198,12 @@ function shrubGeo(seed, s = SHRUB_SHAPES[0]) {
        with clear air between it and everything else: "several cards floating
        detached" in the nearest shot of this shrub. Overlap is cheap here — this
        geometry is instanced once and drawn a few hundred times. */
-    cardTuft(0, 0, 0, s.lo[0], s.lo[1], s.lo[2], rand, arr);
-    cardTuft(0, s.lift, 0, s.hi[0], s.hi[1], s.hi[2], rand, arr);
-  })));
+    /* 0.5 is makeScrub's cell: 512 square, two columns, full height, so 256x512.
+       See cardTuft for why passing it matters — the widest of these three shapes
+       is a 2.5:1 card and was stretching that portrait cell fivefold. */
+    cardTuft(0, 0, 0, s.lo[0], s.lo[1], s.lo[2], rand, arr, 2, 1, 0.5);
+    cardTuft(0, s.lift, 0, s.hi[0], s.hi[1], s.hi[2], rand, arr, 2, 1, 0.5);
+  })), true);
 }
 
 /**
@@ -977,6 +1033,7 @@ export function buildVegetation(path, terrain, rocks) {
     u.uTrans.value = new THREE.Color(1.40, 1.16, 0.62);
     u.uTransAmt.value = 0.34;
     u.uTransIso.value = 0.30;
+    u.uSkyOcc.value = 1.0;   // see addSun
   }
   const scrubMat = makeFoliageMaterial(scrubTex());
   scrubMat.alphaTest = 0.40;
@@ -1005,6 +1062,11 @@ export function buildVegetation(path, terrain, rocks) {
     u.uTrans.value = new THREE.Color(1.22, 1.14, 0.64);
     u.uTransAmt.value = 0.30;
     u.uTransIso.value = 0.40;
+    /* Sky occlusion on the ambient term; see addSun. This tier is the one a
+       critic found glowing in deep shade, and ambient is what was lighting it —
+       killing transmission outright moved V 0.600 to 0.522, so the leak was a
+       seventh of the problem and the flat cream was the other six. */
+    u.uSkyOcc.value = 1.0;
   }
   /* Cactus and agave are succulent: waxy, so a touch glossier than anything
      else in the frame, and a pale glaucous blue-green — much lighter and bluer
