@@ -6449,3 +6449,83 @@ saltation ribbons and the bed drift do not blow along.** That is a real
 inconsistency rather than a naming one, it is nobody's mistake in particular, and
 it is too large to start at half past ten on delivery day. It is recorded here so
 it is not rediscovered from scratch.
+
+## The `far_320` headwall streaks are not in the height field
+
+Not landed, and reverted. What follows is what was eliminated, so the next
+person does not spend their first hour where I spent mine.
+
+The critic reads the upper headwall as *"long, parallel, soft-edged streaks…
+brushed hair, drizzled candle wax… no bedding, no facets, no shadow terminator,
+no scale cue"*, and gives the diagnostic that **the streaks cross what should be
+separate landforms without breaking**. That points at something applied in a
+space that does not know about landforms, which is right, and it points *away*
+from the two height-field terms that look guilty. Both were tested and both are
+innocent:
+
+| ablated | expectation | result |
+|---|---|---|
+| `rill`, `ridged(z*0.19, x*0.022)` — grooves every 5 m in z, near-constant over 45 m in x, and carried by `0.62*ramp + 0.85*wall` with a **single phase across both landforms** | the obvious suspect, and it matches the "crosses without breaking" detail exactly | **streaks unchanged** |
+| `gully`, `ridged(x*0.085, z*0.016)` — flutes every 12 m in x running 62 m in z, i.e. parallel lines down the wall converging in perspective, and named "converging" in its own comment | matches "flow down and to the left, converging at the base" | **streaks unchanged** |
+
+Two independent ablations, each a real geometry change (triangle count moved),
+each leaving the signature untouched. **The streaks are shading, not landform.**
+That is also what "no shadow terminator inside them" was telling us, and I should
+have weighted it higher than the two terms whose comments happened to use the
+critic's vocabulary — a term that *describes* itself as converging gullies is not
+thereby the converging thing you can see.
+
+They are also visible in `ao1_far_320`, from before the breach, so the arrival
+geometry did not cause them and reverting it would not remove them.
+
+**The untested candidate, stated so it can be tested rather than believed.** A
+world-XZ (plan) projected shading term smeared across a steep face produces
+exactly this: soft parallel streaks down the fall line, converging in
+perspective, indifferent to landform boundaries because the projection is
+indifferent to them, and with no relief of its own so no terminator inside them.
+`terrain.js` has a triplanar branch with a blend weight for precisely this
+problem. **The next step is one instrumented render painting that blend weight,
+to see whether the streak region is being fed by the stretched horizontal
+projection.** I did not get to it; it is the first thing to do, and it is cheap.
+
+### The grit layer's slope gate, verified safe and reverted as no-benefit
+
+Separately: `floorB` and `floorM` both carry `smoothstep(0.34, 0.12, slope)`, so
+the far-field grain layer — the one term designed to carry detail past the grain
+fade at 30 m — is **switched off entirely on anything steeper than a gentle
+grade**. That includes the colluvial slopes flanking the head, which the
+playthrough measured as the only outlier station on the route at 0.16 relative
+contrast against 0.38–0.40. The gate excludes the surface the layer exists to
+serve, which still looks like a real defect.
+
+Widening it to `smoothstep(0.75, 0.45, slope)` (rock and wall still excluded,
+only the slope cutoff moving to near-vertical) is **measurably safe**: `ground`
+and `wash_mid` come back byte-identical on both bands — the gate was never
+binding on a flat floor — and `far_270` colour is identical to three decimals.
+It is also **measurably worthless on its own**: no visible change to the head
+slopes, and zero movement on the mid-distance floor it was also meant to help.
+Reverted on that basis rather than on risk. It buys nothing and would have cost
+System 7 a reshoot.
+
+That last point is the honest correction to my own reasoning: I inferred the
+slope gate was the cause of the smooth head slopes from reading the mask, and
+the render says the slopes are smooth for some other reason. **Reading a gate
+and concluding it is binding is the same error as quoting a metric without its
+population** — the tenth instance tonight, and the second I have committed
+myself.
+
+### Mid-distance floor, for the record
+
+Untouched and unfixed. The grit layer was measured contributing 3.9% of the mid
+band's energy, so reaching the per-band `hf9` reference from 0.0716 needs roughly
+4.7x its amplitude, which at that footprint is a noise risk rather than a detail
+gain. There is gradient headroom there — mid `grad/L` is 0.121 against a 0.12–0.16
+band — so the room exists; the mechanism to spend it does not yet.
+
+### Tooling note
+
+`tools/glslcheck.mjs` does not parse the JavaScript that wraps the shader, so a
+backtick inside a shader template literal passes it and fails only in the page.
+That cost one seven-minute render tonight and it is the fifth instance of this
+exact failure. `_p7pre` catches it. Run `_p7pre`, not `glslcheck`, before any
+capture that follows an edit inside a template literal.
