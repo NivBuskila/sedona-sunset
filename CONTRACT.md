@@ -9286,6 +9286,14 @@ moved it by +1.66 — 99.4% of the cost removed. On the complained-about facet t
 and unrestricted arms are **bit-identical at 41.5 red** — none of the benefit removed. The
 lit-rock figures return to the ablated build to within one thousandth.
 
+The four taps are not a wall/clast binary and the intermediate case is the only evidence
+that the ramp earns its three extra taps. On a large shaded bank in `wash_low` — an earth
+slope of the order of a metre, so a shadow of the order of 3.7 m — the arms read 37.52,
+41.24 and **39.60** in red: the restriction removes about **half** the lift rather than all
+or none of it. That is what the geometry says such a facet is owed. It sees no sunlit floor
+for the first few metres and then sees it out to the horizon, so it has earned the outer
+taps and not the inner ones.
+
 Spatially, `tools/_banddelta.mjs` differences the two arms so that the frame cancels and
 what is left is the term alone. It lands on the shaded verticals and nowhere else: mean lift
 2.1 cv on base red under 30, falling to 0.12 cv on base red over 140 with a p99 of 1, so no
