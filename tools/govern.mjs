@@ -48,6 +48,7 @@
  */
 import { chromium } from 'playwright';
 import fs from 'node:fs';
+import path from 'node:path';
 import { decode } from './png.mjs';
 
 const args = process.argv.slice(2);
@@ -73,7 +74,14 @@ try {
   }
 } catch (_) {}
 
-const srv = serve();
+/* `--root` serves a detached worktree instead of the shared tree, so a commit can
+   be held still while it is measured. Four captures died tonight on `Invalid or
+   unexpected token` from a file that was mid-edit, and src/terrain.js and
+   src/vegetation.js are both dirty as this runs; a committed checkout cannot be
+   half-written. Defaults to the shared tree, which is what every existing caller
+   wants. */
+const rootArg = process.argv.indexOf('--root');
+const srv = serve(rootArg < 0 ? undefined : path.resolve(process.argv[rootArg + 1]));
 await new Promise(r => srv.listen(0, r));
 /* #adapt and nothing else. No pinned tier, no #noadapt, no #perf — the overlay
    is a DOM write per frame and this is the one measurement where that would be

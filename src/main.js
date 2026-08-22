@@ -358,8 +358,61 @@ function syncCamera() {
    depends on — so the same player position always yields the same shadow
    texels. sky.js owns the arithmetic. */
 const shadowRig = makeShadowRig(sun, sunNear);
+/* And each cascade is redrawn only when *that* cascade moved, which is the half
+ * of the paragraph above that was missing.
+ *
+ * `renderer.shadowMap.needsUpdate` is one flag for the whole pass, so raising it
+ * redraws both cascades. But the two grids are quantised at very different
+ * pitches, the fine one a fraction of the coarse: while walking the fine cascade
+ * moves on nearly every frame and the coarse cascade moves on roughly one frame
+ * in five — and the coarse one was being redrawn on all five. It is the expensive
+ * one, 4096 against 2048, and both passes walk the same ~2.1 M triangles of
+ * terrain and rock.
+ *
+ * That the cost is the *draw* and not the fill was measured before this was
+ * written, and it is what makes this the right lever instead of a smaller map:
+ * the walking penalty is a flat +3.3 ms and it does not move when the tier steps
+ * the maps from 4096/2048 to 1024/512. Sixteen times less depth written for the
+ * same milliseconds means what is being paid for is walking the casters, and the
+ * only thing that removes that is not walking them.
+ *
+ * three gates each light on `shadow.autoUpdate === false && shadow.needsUpdate
+ * === false` and clears the flag after drawing, so this needs no patch — unlike
+ * the cascade split itself. Nothing about the picture changes: a cascade is
+ * skipped exactly on the frames where redrawing it would write the same texels,
+ * which is the same argument the global flag is already making, one level down,
+ * and is why the harness's pixel-identical recapture is unaffected. The position
+ * is read back off the light rather than returned from the rig because sky.js
+ * owns that arithmetic and is being edited by someone else tonight. */
+sun.shadow.autoUpdate = false;
+sunNear.shadow.autoUpdate = false;
+/* `renderer.shadowMap.needsUpdate = true` has to keep meaning "redraw
+   everything", because four tools in tools/ set it directly to force a redraw
+   after they have changed a material or a light, and none of them know cascades
+   are scheduled separately now. So the public flag forces both cascades and the
+   frame loop below uses a private path that does not. Writing false is three
+   clearing the flag after a pass and must not force anything. */
+let shadowPass = true;
+Object.defineProperty(renderer.shadowMap, 'needsUpdate', {
+  get: () => shadowPass,
+  set: (v) => {
+    shadowPass = v;
+    if (v) { sun.shadow.needsUpdate = true; sunNear.shadow.needsUpdate = true; }
+  },
+});
+/* NaN, not 0, so the first call cannot decide a cascade has not moved. The
+   quantised far target on frame one really can be exactly the origin. */
+const shadowWas = [NaN, NaN, NaN, NaN, NaN, NaN];
 function syncShadow() {
-  if (shadowRig(player.x, player.y, player.z)) renderer.shadowMap.needsUpdate = true;
+  if (!shadowRig(player.x, player.y, player.z)) return;
+  shadowPass = true;
+  const p = [sun.target.position, sunNear.target.position];
+  for (let i = 0; i < 2; i++) {
+    const t = p[i], k = i * 3;
+    if (t.x === shadowWas[k] && t.y === shadowWas[k + 1] && t.z === shadowWas[k + 2]) continue;
+    shadowWas[k] = t.x; shadowWas[k + 1] = t.y; shadowWas[k + 2] = t.z;
+    (i ? sunNear : sun).shadow.needsUpdate = true;
+  }
 }
 
 placeAt(0);

@@ -446,6 +446,13 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
       /* Dropping the map is what makes the new size take effect; three
          reallocates it on the next shadow pass. */
       if (l.shadow.map) { l.shadow.map.dispose(); l.shadow.map = null; }
+      /* Per light as well as globally, because main.js schedules the two cascades
+         independently now — it sets shadow.autoUpdate = false on both so that a
+         cascade which has not moved is not redrawn while walking. A resize is the
+         one case where a cascade must redraw without having moved, and without
+         this line the light whose map was just disposed would wait for the player
+         to cross a texel boundary before it had a map at all. */
+      l.shadow.needsUpdate = true;
     }
     renderer.shadowMap.needsUpdate = true;
 
