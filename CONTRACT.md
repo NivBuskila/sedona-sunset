@@ -9206,3 +9206,114 @@ cap on exactly that. This correction spent 0.021 of the 0.037 that was available
 Boynton frame twenty minutes before the sun leaves the rim plausibly sits above 0.25, so
 **further progress on this finding is a decision about the gate ceiling rather than a
 transport bug**, and that is not System 4's call to make.
+
+## The law: a statistic taken in a space the viewer does not occupy measures an object nobody is looking at
+
+Four independent instances in one day is enough to stop calling it a lesson and
+call it a rule. Every one of them cleared something that was wrong, and every one
+was cleared by a figure that was arithmetically correct.
+
+- **Whole hull rather than visible cap.** The largest facet was 6.5-9.3% of hull
+  area, which cleared the shape. Burial leaves a fifth of the height above the
+  bed, and a thin cap off a convex body is not a small version of that body: over
+  what is actually visible the same facet is 27.8-34.1%. Wrong by 4x.
+- **Whole population rather than the stones covering pixels.** The >55% flat tail
+  was quoted as a population fraction. Weighted by screen area, 87% of it is
+  deeply buried slivers and there is **zero** in the largest-area quartile. The
+  tail and the complaint were never counting the same objects.
+- **Exact normals rather than perceived ones.** Every facet statistic merged
+  planes at a dot of 0.9995 — 1.8 degrees. Under one dominant sun the eye merges
+  inside about ten. At ten degrees the largest perceived face on a cobble's
+  visible cap is 57%, not 32%. This is the correction that reconciled "the shape
+  measures fine" with "the crop shows paving slabs": both were true, about
+  different measurements.
+- **Bounding extents rather than projected area.** The geometry fix was
+  compensated to hold the bounding box, and the box held to three decimals while
+  the silhouette area — the only thing a camera integrates — fell 12-21%. The
+  guarded metric was not the visible one.
+
+The operational form: before quoting a shape statistic, state the space it was
+taken over and check that a camera occupies it.
+
+## Clast tops: the detail normal landed (commit 3c31ccc)
+
+The geometry route was closed because vertical bumpiness is the same quantity as
+clast thickness, and burial measures against thickness — every way of breaking
+the lid either shrank the stones or moved the seat. Shading has neither coupling.
+
+The gap was structural rather than a matter of strength. The clast already had a
+grit normal, but it is footprint-locked to about one texel per pixel, so it is a
+millimetre or two at every distance. That is the right scale for texture and the
+wrong one for shape: the eye groups a surface into faces by normal direction over
+a patch, and noise finer than the patch averages out inside it. **Grain cannot
+change a face.** Above it there was nothing until the hull's own facets, across a
+stone 0.14-0.38 m wide — the centimetre band of spall scars and conchoidal steps
+was simply absent, and that absence is what let a cobble present one lid.
+
+`tools/_detnorm.mjs` sizes it against both constraints at once, per sample rather
+than per triangle because a smooth field varies *within* a facet:
+
+| RMS tangent slope | largest 10 deg face | past terminator |
+|---|---|---|
+| 0 (shipped) | **57%** | 15.8% |
+| 0.16 | 36-38% | 18.0% |
+| **0.24 (landed)** | **25%** | 20.5% |
+| 0.34 | 17% | 23.5% |
+
+0.24 buys what the geometry route bought (27%) at under a third of the 0.8
+binary-field trap. Feature scale between 1.0 and 3.2 cm is almost irrelevant to
+the gain, so it was chosen on tiling grounds instead: world-fixed at 0.625,
+because 0.625*256 is an integer and the layer stays seamless across the 256 m
+position wrap, and because 0.625 is not a power of two and therefore can never
+coincide with the grain tap's exp2 scale. Two taps of one map at
+power-of-two-related scales is the coincidence lattice already on the record.
+
+Verified in the render, not only offline. On the plate previously called a
+concrete kerb-stone: grad/L +14.6%, hf9/L +10.7%, mean luminance -0.8%.
+`_lattice.mjs` finds **no new periodicity** — near-band period 23.0 px before and
+after, correlation 0.090 to 0.095, far band weaker — so the caution about adding
+a second regular field is discharged with a measurement. gate.mjs passes.
+
+## The straight waterline: closed, and it is larger than it looked, not smaller
+
+Two routes, both measured, both shut.
+
+**Terrain refinement cannot work, because there is nothing to refine towards.**
+The near-field grid is 0.20 x 0.42 m against a 0.14-0.38 m cobble, so the bed
+under a stone is one triangle and exactly planar — that diagnosis is right. But
+the bed's 25 mm of relief is `DIRT_RELIEF_M`, and it feeds `uSunRise`: it is a
+rake-march self-shadowing term in the shader, not geometry. The height field is
+analytically smooth at clast scale. A finer mesh samples the same smooth function
+more densely and adds no relief at all. Making refinement meaningful means adding
+sub-metre content to the height field itself, which moves every burial seat,
+every scour and the whole verified near field. This is a bigger change than the
+hull fix, not a smaller one.
+
+**Correction to my own claim: the fillet is not a surface of revolution.** I
+said a lens centred on the clast raises a waterline without breaking it, could
+not demonstrate it, and committed the tool saying so. The reason I could not
+demonstrate it is that it is false. The wedge mesh is `roundedClast`, lumpy by
+about thirty percent in radius, so the fillet already carries the azimuthal
+variation that breaking a contact line requires. It was putting it in the wrong
+place: at 1.55-2.10 radii the lens is nearly twice the width of the stone, so its
+ragged rim wanders around outside the clast while the part crossing the contact,
+at one radius, is near the lens's own smooth centre.
+
+That predicts a fix — narrow the lens so the rim straddles the rim — and the
+prediction is wrong for a reason worth recording. Narrowed to 0.94-1.36 radii it
+moved 1-3% of pixels by a mean of about one code value, and **0.000%** on the
+plate itself, which turned out to be one of the 38% drawing no fillet. Raising
+`fillet` to 1.0 so every cobble got one changed nothing visible either.
+
+The reason is amplitude and it is arithmetic. At `sink: 0.72` the fillet stands
+about 1.5 cm proud; a thirty percent lump on that is **+-0.45 cm** of azimuthal
+variation, roughly 1.5 px at the plate's range. Visibly breaking a contact line
+needs of the order of 5 cm — ten times more — and 5 cm of proud, ragged bank is a
+mound with its own silhouette. The existing note refuses that explicitly and is
+right to: a mound with a silhouette is a new object rather than a broken line.
+The fillet was never built to break a silhouette. Its stated job at distance is
+tone, and it does that.
+
+So the waterline stays straight and the near field ships as it is, with the lid
+fixed and the contact not. Shading cannot help here — a silhouette is geometry by
+definition — and both geometric routes have a number against them.
