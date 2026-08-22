@@ -510,10 +510,38 @@ function wallGrid(path, terrain, side) {
        sun disc through, and a perturbation that can only *lower* a crest cannot
        cost them anything, whereas a symmetric one would need re-verifying every
        time an amplitude moved. On delivery morning that is the whole argument.
-       Six and a half metres at a twenty-six metre wavelength, against level
-       spacings of three metres within a pair and ten between pairs, so the snap
-       lands on a different bed several times in the length of a framing. */
-    raw -= 6.5 * (0.5 + 0.5 * fbm(s * 0.0385, side > 0 ? 131 : 137, 2, 383));
+       Six and a half metres, against level spacings of three metres within a pair
+       and ten between pairs, so the snap lands on a different bed several times
+       over the length of the corridor.
+       The wavelength is the part that had to be measured rather than chosen, and
+       the first attempt at it — twenty-six metres — was wrong in an instructive
+       way. It stepped the crest exactly as intended, eight steps of 3 to 11 m over
+       two hundred metres by tools/_crestprof.mjs, and it changed the frame
+       essentially not at all. Seen square-on, one screen column is one station and
+       the crest profile *is* the skyline; seen end-on, as shade_far sees this wall,
+       one column spans tens of metres and the skyline is the *upper envelope* of
+       the crest over every station in it. An envelope is set by the un-notched
+       stations, so a notch narrower than a bearing bin is invisible at any depth —
+       tools/_skyenv.mjs showed the envelope pinned at crest 55.6 m across the whole
+       visible run with the 51.6 m notches showing in isolated bins and the
+       silhouette still a smooth line, its apparent rise coming from range closing
+       from 97 to 73 m rather than from any change in the rock.
+       Widening it does not rescue the end-on view either, and it is worth writing
+       down why so nobody spends a third round on it. At eighty metres the half
+       cycle is forty metres of wall, and shade_far only sees about seventy metres
+       of wall in total, so the whole framing falls inside one half cycle and the
+       envelope goes back to being one constant level. Short notches make a comb
+       the eye reads straight past; long ones are wider than the frame. The end-on
+       skyline is set by the *highest* station in each bearing bin, so the only
+       thing that moves it is amplitude comparable to the crest's own variation —
+       genuinely taking a long section of wall down — which is a landform change
+       across every framing and not a delivery-morning one. See CONTRACT.md; the
+       cheap fix there is a juniper on the rim, which costs this file nothing.
+       So the wavelength is chosen for the case it *can* fix, which is every
+       square-on rim: forty metres, giving ten level changes over the first two
+       hundred metres of wall with steps of 3 to 11 m. Those are the "dead-straight
+       horizontal top line" complaints in bend, far_170 and far_220. */
+    raw -= 6.5 * (0.5 + 0.5 * fbm(s * 0.025, side > 0 ? 131 : 137, 2, 383));
     raw *= 1 - open;
     let best = CREST_LEVELS[0], bd = 1e9;
     for (const lv of CREST_LEVELS) { const d = Math.abs(lv - raw); if (d < bd) { bd = d; best = lv; } }

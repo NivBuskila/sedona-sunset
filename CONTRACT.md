@@ -4635,3 +4635,146 @@ deliberately: terrain heights move under it every time somebody touches
 
 The gate pins `#high`. The adaptive governor is a moving target by design and you
 cannot draw a reference band around one.
+
+## An end-on skyline is an envelope, not a profile
+
+The final critique's second-ranked finding, and the object it called the most conspicuous in
+the set, was a "left mesa" in `shade_far` with a "perfectly straight, un-notched, un-eroded"
+rimline over a "wood veneer" face and a "cream-white band of constant thickness running
+perfectly parallel to the rim".
+
+**It is not a mesa.** `tools/_pixowner.mjs` attributes those pixels to `wallL`, and hiding
+`wallL` puts sky at the rim: it is the corridor wall seen end-on from the new station looking
+back down-canyon. `tools/_aniso.mjs` — new, because every surface instrument here was
+isotropic and would score a sheet of perfect horizontal rules the same as a jointed cliff —
+puts that crop at **0.67 vertical-to-horizontal coherent-line energy, the most
+horizontal-dominated surface anywhere in the set**, against 0.79 for the same walls seen
+square-on. The critique was measuring something real.
+
+The cause is the crest snap, and the snap is right: a rim is the top of whatever bed survived
+and it steps between bed tops. What was wrong was *how often*. `raw` turns over once in
+139 m, so the nearest of the ten `CREST_LEVELS` is the same level for 50 to 100 m at a
+stretch and the rim is exactly constant across a whole framing. Invisible across the wall,
+which is why it survived; a ruler along it. It also accounts for the cream band with no
+second cause: bedding is level, so a layer band is level, and a rim that is also level sits a
+constant distance above it.
+
+### The part worth more than the fix
+
+The obvious repair — step the crest between beds more often — was landed and measured on the
+crest itself with `tools/_crestprof.mjs`: eight steps of 3 to 11 m over 200 m. **It changed
+the frame essentially not at all**, and the reason is geometry rather than amplitude.
+
+Square-on, one screen column is one station and the crest profile *is* the skyline. End-on,
+one column spans tens of metres of wall and the skyline is the **upper envelope** of the crest
+over every station in that column. An envelope is set by the *un-notched* stations, so a notch
+narrower than a bearing bin is invisible at any depth. `tools/_skyenv.mjs` bins every mesh
+vertex by bearing from the eye and takes the maximum elevation angle per bin, which is exactly
+the silhouette, with no render: it showed the envelope **pinned at crest 55.6 m across the
+whole visible run**, the 51.6 m notches appearing in isolated alternating bins, and the
+apparent rise of the "straight line" coming from range closing from 97 m to 73 m rather than
+from anything about the rock.
+
+Widening the notch does not rescue it either. At an 80 m wavelength the half cycle is 40 m of
+wall and `shade_far` sees only about 70 m of wall in total, so the whole framing falls inside
+one half cycle and the envelope returns to a single constant level. **Short notches make a
+comb the eye reads straight past; long ones are wider than the frame.** The only thing that
+moves an end-on skyline is amplitude comparable to the crest's own variation — genuinely
+taking a long section of wall down — which is a landform change across every framing and not
+a delivery-morning one.
+
+So the crest term is set at a 40 m wavelength and 6.5 m amplitude, chosen for the case it
+*can* fix: **10 level changes over the first 200 m of `wallL` and 7 of `wallR`, with steps of
+3 to 11 m**, which are the "dead-straight horizontal top line" complaints in `bend`, `far_170`
+and `far_220`. Strictly subtractive, which is the rule this file already applies to the butte
+rims and for the stated reason: the corridor skyline is what the sun disc clears, and a
+perturbation that can only lower a crest cannot cost that anything, while a symmetric one
+needs re-verifying every time an amplitude moves.
+
+**The cheap fix for `shade_far` is not in `rock.js`.** The critique's own list of what is
+missing from that rimline includes "no vegetation breaking it". A juniper or two on the rim
+breaks a geometrically straight silhouette at zero cost to the rock, and it is the one
+intervention here whose cost does not scale with how much wall is in frame.
+
+### Two rules this leaves behind
+
+- **A crest measurement square-on does not predict the same crest end-on.** Use
+  `_skyenv.mjs` for silhouette questions and `_crestprof.mjs` for profile questions, and do
+  not quote one at the other. This is the same shape as the sun-versus-view finding recorded
+  for the wash head: *a landform can be open to the sun and closed to the eye*, and a rim can
+  be stepped to the profile and straight to the silhouette.
+- **Isotropic surface statistics cannot see directional structure.** `grad.mjs`, `hf.mjs` and
+  `wallprobe.mjs` all scored these walls fine. Quote `_aniso.mjs`'s vertical/horizontal
+  coherent-line ratio whenever the complaint is about bedding, jointing or plywood.
+
+## The vertical joints existed and contributed three per cent
+
+Measured before anything was added, which is what the brief asked for. Ablating the entire
+four-set joint system through `uJointK` moves the lit midwall's vertical/horizontal line ratio
+from **0.77 to 0.75**. Four sets, four fetches, three per cent of the wall's structure. They
+were not too weak and not lost to distance — `jointRes` passes all four at this footprint —
+they were gated off for most of the wall by a termination term whose two periods were both
+functions of height with a 90 m along-wall phase. At any given height it therefore held one
+value across a whole hero framing, which cut every vertical into metre-and-a-half dashes *and*
+laid another horizontal band over a wall already accused of being nothing but horizontal
+bands.
+
+Termination phase now comes off a joint-block index, so a joint dies at a different height on
+each slab. The same index cuts the bedding, which is the half that answers "running
+continuously across the entire face": a joint is a free face, so the slabs either side weather
+back independently and a bed contact is a sharp lip on one and a rounded nothing on the next.
+Bedding stays level — faking a wobble into it is a failure this file has already made once —
+but a trace is no longer the same trace for four hundred metres.
+
+**A structural term must not be able to darken anything.** The first form of the block field
+was two-sided and it cost 0.012 of lit saturation, 0.618 out to 0.630 against a defended
+0.615–0.626, while taking `wall_shade`'s min-channel-under-20 share from 66.2% to 68.4% —
+making worse the very crush the occlusion fix exists to relieve. Both terms are now one-sided
+and can only lighten. Same discipline System 1 applied to the multi-bounce curve, right for
+the same reason: a term added for structure should not move a measured population downward, or
+its effect is a calibration rather than an identity. A bed trace that dies on one slab and
+survives on the next breaks continuity exactly as well as one that deepens, so nothing was
+given up for it.
+
+## The occlusion fix, and the part of the crush it cannot reach
+
+Landed in `rock.js` character-for-character identical to `terrain.js`'s line in `2548d04`, as
+asked. Both properties that make it safe are identities rather than calibrations: exactly unity
+at visibility 1, so an unoccluded surface cannot move, and clamped below by the occlusion term,
+so it can never darken.
+
+Measured with the new `tools/_crush.mjs`, which reports the bottom of the distribution because
+a mean cannot see this — lifting every pixel whose max channel is under 10 cv moves the region
+mean 1.3% and the shadow gate from 0.211 to 0.214, still mid-band, which is why the gate never
+caught it.
+
+| | min channel < 10 cv | < 20 cv | mean min channel |
+| --- | --- | --- | --- |
+| `wall_lit` before | 38.3% | 62.8% | 20.5 |
+| `wall_lit` after | **34.7%** | **60.1%** | **21.2** |
+| `wall_shade` before | 43.1% | 66.2% | 18.6 |
+| `wall_shade` after | 42.4% | 68.4% | 16.9 |
+
+**On `wall_lit` the fix reads. On `wall_shade` it does not, and it cannot.** This is what the
+change's own note predicted: the lift is albedo-weighted, so at the `tAO` floor of 0.18 red
+rises about 37% and blue about 2%, and a red crevice having little blue light to bounce is
+correct physics rather than a defect in the curve. On `wall_shade` the wall is *in shadow*, so
+every photon reaching it is indirect and its blue is the product of sky irradiance and a blue
+albedo near 0.115. **No occlusion term can raise that product.** Carrying blue from six code
+values to twenty is a question about the shaded illuminant or the shaded albedo, not about
+visibility. That is the handoff, with the arithmetic done.
+
+The `< 20 cv` regression in that table was the two-sided block field and is reversed.
+
+## `far_320`: the blocking lip is in the height field, not in the talus
+
+Worth stating because the item arrived described as an apron problem and the apron cap is
+mine. `tools/_headlook.mjs`, which produced the 6.4 m crest twenty metres in front of the
+camera, marches `terrain.heightAt` and nothing else — it never sees a rock mesh. So the object
+it measured is the colluvial ramp in the height field, `_headRise`, and not `apronL`/`apronR`.
+The talus aprons at that station were already clamped earlier the same night: the wall curtain
+is held to `sEndOf(path)` and apron reach to seven tenths of the wall's set-back, precisely so
+nothing of mine stands across the mouth of the wash head. That clamp is verified and still in
+place. The remaining lip is the ramp, and the specified fix — pulling the notch onset upstream
+so the incision runs *through* the apron rather than beginning behind it — is a change to the
+same height field.
