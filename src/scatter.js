@@ -247,7 +247,32 @@ const LITH = [
    about half of them are the local red family. Talus fell off the wall thirty
    metres above it, so it is nearly all local: an apron of pale blocks reads as
    builders' rubble rather than as a collapsed wall. */
-const MIX_TRANSPORTED = [0.17, 0.20, 0.10, 0.13, 0.07, 0.10, 0.11, 0.06, 0.04, 0.02];
+/* ---- the pale share cut here too, and why it is the share and not the colour ----
+   `shade_far`'s corner reads as placeholder geometry: clasts brighter than the
+   sunlit floor at half its saturation. `_pixowner` attributes those pixels to
+   `gravel3` and `scour`, which draw from this mix, and both sit at essentially
+   zero `aDust` because `resid` is zero below a 75 mm radius — so the morning's
+   proud-fraction fix multiplies nothing on them and their paleness is lithology
+   rather than film.
+
+   The colours are not the problem and were not touched. The pale entries were
+   brought to 1.2-1.3x the matrix deliberately, two notes above, and measured
+   they sit at 1.18, 1.24 and 1.31 — on target. What was never done is what
+   `MIX_LOCAL` had done to it for this same complaint: its *share*. This mix
+   carried 32% pale by the census's own criterion against `MIX_LOCAL`'s 13.5%,
+   and it feeds the fine fraction, which is numerous — `scour` alone is 24.6k
+   instances near the walk. A third of a very large population is a pale crust
+   over the floor rather than a scatter of pale clasts in it.
+
+   Cut by value rather than by saturation, because the file's own diagnosis is
+   that "a pale *and* neutral clast is the combination that reads as concrete":
+   the three entries that are both bright and desaturated — off-white Coconino,
+   cream caprock and quartz — are halved, buff sandstone and buff chert trimmed,
+   and the weight goes to the local red family and the two dark entries. All ten
+   lithologies survive with a share, because the polychrome scatter is the point
+   and flattening it to red is the opposite mistake. Local red lands at 0.455,
+   still the "about half" the note above claims. */
+const MIX_TRANSPORTED = [0.21, 0.245, 0.10, 0.10, 0.035, 0.11, 0.12, 0.05, 0.02, 0.01];
 /* Buff sandstone pulled back from an eighth of the local mix to under a tenth.
    It is the palest thing with a large share, and the coarse fraction now draws
    from this mix, so it was supplying most of the large pale plates — two of them

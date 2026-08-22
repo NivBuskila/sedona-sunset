@@ -8076,3 +8076,57 @@ pale fraction of the mix, and `MIX_TRANSPORTED` is on record earlier in this fil
 as never having been thinned while `MIX_LOCAL` was, for this exact complaint.
 That is a one-constant change on a CPU path with an offline census to verify it,
 and it is the right next item for this defect.
+
+---
+
+## `MIX_TRANSPORTED` thinned — landed, verified offline
+
+The colours were already on target and were not touched: the pale entries were
+brought to 1.2-1.3x the matrix deliberately and measure 1.18, 1.24 and 1.31.
+What had never been done is what `MIX_LOCAL` had done to it for this same
+complaint — its **share**. Cut by value rather than saturation, following the
+file's own diagnosis that *"a pale and neutral clast is the combination that
+reads as concrete"*: the three bright-and-desaturated entries halved, the two
+buffs trimmed, weight to the local red family and the two dark entries.
+
+|  | before | after |
+|---|---|---|
+| pale share (census criterion) | 0.320 | **0.215** |
+| bright-pale (Coconino, caprock, quartz) | 0.130 | **0.065** |
+| local red family | 0.370 | 0.455 |
+| sum | 1.0000 | 1.0000 |
+
+All ten lithologies keep a share; the polychrome scatter is the point and
+flattening it to red is the opposite mistake. Local red at 0.455 still matches
+the "about half" the existing note claims.
+
+**Census, s 0-175 m** - the classes `_pixowner` attributed the corner pixels to:
+
+| class | pale% before | pale% after |
+|---|---|---|
+| `gravel3` | 27.5% | **22.5%** |
+| `gravel0-4` | 27.5-29.6% | 22.5-23.9% |
+| `granule0-2` | 27.7-28.4% | 22.1-23.1% |
+| `cobble0-3` | 23.6-28.2% | 18.7-21.7% |
+| `collar` | 14.4% | 14.4% (unchanged) |
+| `pavement0-2` | 12.1-15.6% | 12.1-15.6% (unchanged) |
+| `block0-3` | 24.0-29.9% | 24.0-29.9% (unchanged) |
+
+The unchanged rows are the control: they draw `MIX_LOCAL`, `MIX_BLOCK` and their
+own mixes, and they are identical to the digit. The change is scoped exactly to
+the mix that was edited.
+
+**Reported honestly: the instance-count effect is smaller than the share cut.**
+The share fell 33% relative and the pale instance count fell **18%** relative,
+because the census's criterion is on the final per-instance albedo after jitter
+and dusting rather than on the raw lithology draw, so entries migrate across the
+boundary in both directions. The share is the thing that was changed; 18% is the
+thing that was delivered.
+
+`FAR_COL` moves with it by design - it is documented as *"computed rather than
+guessed so it tracks the palette"* - by **-4.6% luminance**, with saturation
+rising 0.601 to 0.628. That is the intended direction and not a colour
+regression, but it is a real change to the far-field convergence colour and is
+recorded as such.
+
+**Visual confirmation rides along with the next capture; it does not need its own.**
