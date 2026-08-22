@@ -1009,12 +1009,28 @@ void main() {
        under about 5% everywhere and makes the effect a whisper in every
        framing. Rejected because it fails the request: it was asked to be seen.
        Sampling the scene at this pass's low resolution is deliberate. The gate
-       wants the local background, not this pixel's detail, and a bilinear read
-       of the full-res buffer at low res averages it for free. It also softens
-       and breaks up the disc edge where it crosses onto rock, which works
-       against the decal reading rather than for it. */
-    float bgLum = max(luma(sane(texture2D(tScene, vUv).rgb)), 0.0);
-    float gate = smoothstep(uGhostGate.x, uGhostGate.y, bgLum);
+       wants the local background, not this pixel's detail. It also softens the
+       disc edge where it crosses onto rock, which works against the decal
+       reading rather than for it.
+       The minimum over five taps rather than one bilinear read, and that is a
+       fix rather than a refinement. With a single average the first capture put
+       13 pixels in juniper and 4 in wash_mid up by as much as 101 code values,
+       and they were not the disc reading loudly -- they clustered exactly where
+       the t=0.63 disc lands and they were the *dark* pixels inside it. The flare
+       buffer is low resolution and the background is not, so a dark pixel in a
+       brighter neighbourhood was handed a gate computed for its neighbours; the
+       toe is steep down there, so a small linear addition became a large code
+       value jump and read as a firefly. Taking the darkest nearby background
+       instead means one dark neighbour switches the disc off locally. The cost
+       is that the disc takes a soft bite near silhouettes, which at a few
+       percent of background is not visible, and four extra taps in a
+       quarter-scale pass, which is not measurable. */
+    float bgLum = luma(sane(texture2D(tScene, vUv).rgb));
+    for (int i = 0; i < 4; i++) {
+      vec2 o = vec2(i < 2 ? -1.0 : 1.0, (i == 0 || i == 2) ? -1.0 : 1.0) * uTexel * 0.75;
+      bgLum = min(bgLum, luma(sane(texture2D(tScene, vUv + o).rgb)));
+    }
+    float gate = smoothstep(uGhostGate.x, uGhostGate.y, max(bgLum, 0.0));
 ${GHOSTS.map(([t, r, tr, tg, tb, gi]) => `    {
       vec2 gp = mix(uSun, CTR, ${t.toFixed(3)});
       float d = length((vUv - gp) * vec2(uAspect, 1.0));
