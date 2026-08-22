@@ -7918,3 +7918,42 @@ take first.
 
 Held: performance has four measurements that need an idle machine and has not
 reported.
+
+### Second item: why the dust fix could not have reached `shade_far`'s corner class
+
+The proud-fraction term is **multiplicative**:
+
+```js
+const resid  = clamp((rad - 0.075) / 0.16, 0, 1);
+const dustW  = resid * (0.30 + 2.85 * clamp((paleL - 0.33) / 0.19, 0, 1))
+                     * (0.48 + 0.52 * (1 - buried));      // <- this morning's fix
+```
+
+`resid` is **zero for any clast under 0.075 m radius**, and zero times the new
+term is still zero. So for those classes the fix is a no-op *by construction* -
+this is not a gate that fails to reach them, it is a scaling applied to a
+quantity that is already nothing.
+
+The census at s 175 shows which classes are in that state - mean `aDust` 0.00 on
+`granule0-2`, `gravel0-4`, `scour`, `collar` and `talus0-3`, against 0.10 on
+cobble, 0.22-0.30 on slab and 0.32-0.37 on boulder.
+
+**The consequence matters more than the mechanism:** if the corner class carries
+no dust, then its paleness is **not the dust film** - it is the per-instance
+lithology. System 7's numbers are consistent with that, since saturation barely
+moved (0.362 to 0.364) while the fix demonstrably worked everywhere it had
+something to scale. The lever for that class is the pale fraction of the
+lithology mix, and `MIX_TRANSPORTED` is recorded earlier in this file as never
+having been thinned while `MIX_LOCAL` was, for this exact complaint.
+
+**Not yet attributed:** which class actually draws those corner pixels.
+`_pixowner` answers it in one render and should be folded into the next turn
+rather than argued from the picture. Two candidate readings - a sub-75 mm class
+with no dust to scale, or a pale lithology in a larger class - and they take
+different fixes, so the render is worth waiting for.
+
+A note against the tool: `_slabwho` prints mean albedo as 0.000 when a mesh has
+no `instanceColor`, which is indistinguishable from a genuinely black instance
+colour. `talus0-3` print that way. I nearly attributed a different path from it
+before noticing `dip`, `aspect` and `seat` were non-zero on the same rows. The
+zeros should be printed as a dash.
