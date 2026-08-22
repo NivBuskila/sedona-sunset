@@ -1283,6 +1283,11 @@ longer there.
 
 ### 11.4 The ratchet, and why widening the band was the wrong fix
 
+> **This section describes the constants that were removed.** For what the governor
+> targets now, how a climb is decided, what the price expiry and the probe do, and how
+> it behaves on a contended machine, see **§15**. The `t * 0.62` climb gate below no
+> longer exists.
+
 The old rule descended above `t * 1.15` and climbed below `t * 0.62` — 9.58 ms and
 5.17 ms against a 120 fps target. The measured cost of every rung below 4 sits
 *between* those, so the governor could descend and then never satisfy the
@@ -1573,3 +1578,186 @@ quad, so the implicit gradient is undefined and was never used — not one whose
 value is unbounded. Asking for level zero stops the compiler computing something
 nobody read. It is not the bug class that produced the grazing lattice, and it was
 never going to be worth milliseconds.
+
+## 15. What the governor targets, and how it decides
+
+Nothing in either document said what the governor aims at. §11.4 quotes "9.58 ms and
+5.17 ms against a 120 fps target", which is a true statement about the *old ratchet's*
+constants, and the ratchet is gone. This is the current policy, with the reasoning,
+because a reader who knows why it remembers prices rather than guessing headroom can
+reason about it and one who only has the constants cannot.
+
+### The target: 8.33 ms, fixed
+
+**120 fps.** `targetFps = #target=N` if given, else the loop cap from `#fps=N`, else
+120; `target()` is `1000 / targetFps`. Every threshold below is a multiple of it, so
+changing the target moves the whole policy coherently — which is the point of writing
+them as ratios.
+
+It is a *fixed* number and not an inferred one, and that was a deliberate reversal.
+The first version tried to measure the panel's refresh period from the loop's shortest
+observed interval, on the reasonable theory that the refresh period is the deadline a
+frame actually misses. It fails in the worst possible direction: on a vsynced uncapped
+loop the shortest interval you can observe is the *scene's* frame time, not the
+panel's, so a machine running this at 40 fps measures 40, concludes 40 is the target,
+and never adapts. The governor switches itself off on exactly the hardware that needs
+it.
+
+120 rather than 60 because this machine has a 200 Hz panel and its owner's reference
+for "smooth" is a AAA title at 200+; 120 rather than 200 because shedding image
+quality to chase the last 80 Hz of a walking-pace landscape buys fan noise.
+
+### The signal: GPU time, and a refusal to guess when there is none
+
+`cost` is the GPU timer's median where `EXT_disjoint_timer_query_webgl2` is available,
+because that is the quantity every lever on the ladder actually moves. Where the
+extension is missing it falls back to CPU frame time, which is blunter and better than
+nothing.
+
+The third case has to be handled rather than coerced, and getting it wrong is a
+runaway. `gotoRung` flushes the timer, so for a moment after every rung change the
+median is empty. Treating an empty median as `cpuMs` hands the governor the *submit*
+time — a couple of milliseconds on a scene of sixty draws — one frame after a rung
+change, reads it as enormous headroom, and climbs again. That is a climb loop with no
+brakes, so `adapt()` returns instead: `if (!(cost > 0)) return;`.
+
+### Descending: above 9.58 ms, by one to three rungs
+
+`cost > target × 1.15` — **9.58 ms** at the shipping target. The step size is scaled
+to how far off the pace the machine is, `r = target / cost`: one rung if `r > 0.72`,
+two if `r > 0.45`, three otherwise. A machine running at a fifth of the target does
+not want one notch a second for half a minute, it wants to be somewhere playable now.
+
+After a descent it holds **700 ms** until the frame has been inside the band even
+once, and **2500 ms** thereafter. That `settled` flag is what makes a cold load reach
+a playable rung in a couple of seconds instead of seventeen; see §11.3 for the units
+bug that made it seventeen.
+
+### Climbing: it remembers what a rung cost instead of guessing headroom
+
+This is the part worth understanding, and the defect it replaced is the clearest
+statement of why.
+
+**The old rule asked the wrong question.** It descended above `target × 1.15` and
+climbed below `target × 0.62` — 9.58 ms and 5.17 ms — and on this scene the measured
+cost of every rung below 4 sits *between* those two. So the governor could descend and
+then never satisfy the condition to come back: a transient stall was permanent until
+the page was reloaded, and the playthrough found it at the floor for 99 of 108 samples
+across nine minutes. `cost < target × 0.62` asks **"is the rung I am on very cheap"**.
+The question that decides a climb is **"would the next rung up fit"**. Those differ by
+the size of one rung step, which is 6% to 20% here — so demanding 38% headroom to gate
+a step worth 6–20% is between two and six times the size of the thing it is gating, and
+at the bottom of the ladder it is **unsatisfiable by construction**. Widening the band
+would have moved the number without fixing the question.
+
+So the governor keeps `seen[i]`, what rung *i* has actually cost on this machine,
+blended as an exponential average with weight 0.25 on each new reading. A climb needs
+all four of:
+
+| condition | value | why |
+|---|---|---|
+| `cost < target × 0.92` | **7.67 ms** | some headroom on the rung being stood on |
+| sustained for `CLIMB_HOLD` | **3000 ms** continuously | one cheap frame is a viewpoint, not a machine |
+| the rung above is not on cooldown | — | it failed recently; do not thrash it |
+| its price is unknown, or `< target × 1.02` | **8.50 ms** | "would the next rung up fit", asked directly |
+
+"Unknown counts as eligible" is deliberate. A rung that has never been measured is
+worth one look, and the probe below is what makes looking cheap.
+
+### Why the remembered price expires after 8 seconds
+
+`SEEN_TTL` is **8000 ms**, and the rung currently being stood on is exempt because it
+is re-measured every frame anyway. The expiry exists because **what a rung costs
+depends on where the player is standing, and the player is walking.**
+
+This was measured, not assumed, and the measurement was of my own first version, which
+had no TTL and reproduced the ratchet in a new place: descending through rung 5
+recorded its price at the mouth of the wash, the walk then reached the cheap far end
+where the frame ran at a third of that, and the governor still would not climb past 6
+because a fifty-second-old estimate said 5 would not fit. A permanent memory of a
+position-dependent price is the same trap as an unsatisfiable threshold — a stale
+number is the reason both times.
+
+Note the deliberate asymmetry between the two memories. `cool` is a **penalty**: this
+rung was tried and could not hold the budget. `seen` is only an **estimate**, so it
+expires on its own shorter clock.
+
+### The probe and the backoff, which are what stop it being a ratchet
+
+A climb is not a decision, it is a **trial**. The governor moves up, records where it
+came from, and re-evaluates after **900 ms** — deliberately short, because a probe
+that does not fit has to be caught and undone in about a second or the cost of looking
+is a visible excursion rather than a blink. The trial window itself is `PROBE_MS`,
+**5000 ms**.
+
+If the probe fails, the rung being stood on is by definition the one that cannot hold
+the budget, so it is priced, put on a cooldown, and the governor returns to **exactly**
+the rung it came from. Not the one-to-three-step ratio descent above: a probe fails on
+a single reading, that reading is sometimes a viewpoint rather than a rung, and letting
+a spike compute a three-rung drop turns a failed look into a visible collapse. That is
+also measured — a probe from 8 to 7 failed on a spike as the walk entered the wash
+mouth, and the ratio would have sent it three rungs past the floor it had just left.
+
+Cooldowns are **15 s, then 30, then 60**, doubling per failure and capped. And the
+mechanism that makes this a governor rather than a ratchet: **when a cooldown expires
+it clears that rung's remembered price**, so the rung becomes probeable again. Nothing
+is ever closed off permanently. A rung that keeps failing is retried rarely enough to
+be invisible and often enough to recover, which is the whole requirement — someone
+whose machine stalls for ten seconds should not have a soft picture for the rest of
+their session.
+
+### Against the delivery ladder: the target is not reachable, so it sits on the floor
+
+A reader comparing 8.33 ms against the delivery table in `CONTRACT.md` — "The delivery
+table — 2560×1440, RTX 4060, machine gated quiet", the only one to quote — will notice
+immediately, so
+the document should say it rather than leave it to be inferred.
+
+**At the shipping target, on this scene, the governor descends to the floor of the
+ladder and stays there.** That is measured, not inferred — it is why §11.4's recovery
+trace had to be run at `#target=60` to have any climb to observe at all: with nothing
+on the tree reaching 8.33 ms, a correctly-working governor and a broken one are
+indistinguishable at 120 because both sit at the bottom. So **the picture a player
+gets on the default target is rung 8, 1280×720**, and the honest frame rate is the
+moving column, not the held one.
+
+The practical consequence is worth stating plainly, because it is a product decision
+and not a performance one. Since the target is unreachable, the governor spends the
+walk at its *lowest* quality rung — a softer picture than this machine actually needs.
+A 4060 that can hold a walk at 1997×1123 is being given 1280×720 because it was asked
+for 120 and could not have it. **`#target=60` is the setting that changes that**: the
+descend threshold moves to 19.2 ms and the climb gate to 15.3, which mid-ladder rungs
+clear, and §11.4's trace shows it climbing seven rungs and settling without
+oscillation. Recorded rather than changed, because the default is defensible if the
+brief's 120 is read as an instruction and indefensible if it is read as an aspiration,
+and that is not performance's call to make.
+
+**One caveat on comparing the target against the ladder at all, and it cuts in the
+user's favour.** They are not the same quantity. The governor's `cost` is the GPU
+timer's median — GPU execution alone. The delivery ladder is wall time across
+`renderOnce` with a one-pixel `readPixels` fence, which serialises CPU submit behind
+GPU execution and therefore reads roughly their *sum*, where a real loop overlaps them
+and pays about the larger. The gap is real and it is not small: §11.4's trace climbed
+to and held rung 1 under a 16.67 ms target, which requires its GPU median there to
+have been under 15.3 ms, against 24.02 ms for the same rung in the fenced ladder. So
+**the fenced ladder is a conservative floor on what a player sees, not an estimate of
+it**, and the README's numbers are quoted from it deliberately for that reason. What
+this project has never had is a quiet real-loop `fps` trace to put beside it; that is
+the one measurement left worth taking, and `tools/govern.mjs` already produces it.
+
+### On a contended machine, which is the case people will actually hit
+
+Someone with a game, a stream, a compile or a video call running does not get the table
+above, and the governor's behaviour in that case is the reason it exists at all.
+
+It will descend to the floor within a few seconds — the `settled` flag makes those
+first holds 700 ms rather than 2500, so the descent is fast — and it will stay there
+while the contention lasts, at whatever frame rate the leftover card allows. When the
+other work stops, the climb path is what recovers it: three seconds of continuous
+headroom, then a probe every rung, and cooldowns that clear their prices as they
+expire. **It climbs back on its own and the user should not need to reload.** That is
+the specific failure the ratchet caused and the specific thing the rewrite had to fix.
+
+What it will *not* do is hide contention. The governor can trade image quality for
+frame time and nothing else; if another process is taking two thirds of the card, the
+picture gets softer and stays smooth, and that is the whole of what it can offer.

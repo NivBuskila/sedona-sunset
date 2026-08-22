@@ -59,13 +59,20 @@ There is no crosshair, no HUD and no menu, on purpose.
 
 On a computer that isn't doing anything else, the walk runs at about **37 frames a second
 at the full 2560×1440 setting** on an RTX 4060, and the game quietly lowers the resolution
-and detail to hold a **smooth 60** rather than letting the motion stutter.
+and detail to keep the motion smooth rather than letting it stutter — **settling at
+1280×720, where the same walk runs at about 89**.
 
-That is the honest number and it is a measured one, not a target. The scene is expensive
-to draw at full resolution, so the game renders into a somewhat smaller buffer and lets
-the screen scale it back up, choosing how much smaller by watching how long frames are
-actually taking. Left alone it settles around 1997×1123, which on a 1440p monitor is hard
-to tell from native and is nearly twice as fast.
+Those are honest numbers and they are measured ones, not targets. The scene is expensive
+to draw at full resolution, so the game renders into a smaller buffer and lets the screen
+scale it back up, choosing how much smaller by watching how long frames are actually
+taking. It is aiming for 120 frames a second, which this scene cannot reach on this card
+at any setting, so left alone it goes all the way down to the softest setting it has and
+gives you the smoothest picture instead of the sharpest one.
+
+**If you would rather have the sharper picture, load `http://localhost:8099/#target=60`.**
+That asks it for a steady 60 instead of an unreachable 120, and it settles around
+1997×1123 — hard to tell from native on a 1440p monitor — at roughly 52. Which of those
+two you prefer is a matter of taste and neither is wrong.
 
 **Give it a couple of seconds to find its level.** It starts at full 2560×1440 and steps
 down to the setting it settles on within about two and a half seconds of the first frame.
@@ -89,14 +96,20 @@ you move:
 | 1280×720 | 126 fps | **89 fps** |
 
 So it will not give you 120 frames a second while you are walking, at any setting, on this
-card — the bottom of that list is 89. If your monitor runs at 200 Hz you will not saturate
-it, and the sixty you get in the middle of the list is a steady sixty rather than a number
-that collapses when you turn to face the wall.
+card — the bottom of that list is 89, and that is where it ends up by default. If your
+monitor runs at 200 Hz you will not saturate it. What you do get is a frame rate that
+holds its number rather than collapsing when you turn to face the wall.
+
+These are also a floor rather than a best guess: the way they were timed makes the
+computer do its own work and the graphics card's work one after the other, where in
+normal play the two overlap. Real play should be a little better than the table, never
+worse.
 
 If you would rather have the sharpest possible image and do not mind the high thirties,
 load `http://localhost:8099/#high`, which pins it at full 1440p and turns the automatic
-adjustment off. The address has to be loaded fresh — typing `#high` onto the end of a page
-that is already open does nothing, because the setting is only read once at startup.
+adjustment off. Any of these addresses has to be loaded fresh — typing `#high` onto the
+end of a page that is already open does nothing, because the setting is only read once at
+startup.
 
 One last thing. It will use as much of your graphics card as you let it, so if something
 else demanding is running at the same time it will notice and quietly drop its own quality

@@ -38,8 +38,10 @@ is hidden:
 - **Performance does not meet the brief and this is the largest open item.** The contract
   asked for 120+ fps at 1440p. **That is not reachable on this scene on this GPU at any rung
   with the camera moving.** The honest figure is **37 fps walking at native 2560×1440** on the
-  top tier, and the governor lowers the buffer to 1997×1123 to hold **a steady 60**; the floor
-  of the ladder is 89. The frame is fill-bound, not geometry-bound. One measurement in that
+  top tier. The governor targets 8.33 ms, cannot reach it at any rung, and therefore **descends to
+  the floor of the ladder — 1280×720 at 89 fps moving** — trading the sharpest picture for the
+  smoothest one; `#target=60` inverts that trade and settles around 1997×1123 at 52. The frame is
+  fill-bound, not geometry-bound. One measurement in that
   account is **unexplained and is recorded as unexplained**: the same cell read 16.80 ms in one
   tool and 23.06 in another on the same commit, and neither code growth (a fourteen-commit
   bisect says the frame is flat to 0.83 ms) nor machine contention (23.06 quiet against 23.30
@@ -152,8 +154,9 @@ a real sunset photograph of Sedona. Not stylized, not low-poly, not "good for a 
   the triangle ceiling was measured to be the wrong axis entirely — removing the far
   ridgelines is worth 0.02 ms of a 30 ms frame, and the frame is fill-bound. **120 fps at
   native 1440p is not reachable on this scene on this GPU**, at any rung, with the camera
-  moving. The shipped figure is **37 fps walking at native 2560×1440**, with a steady 60 at
-  the governor's reduced 1997×1123 buffer. See "Triangles are not what this frame costs" and,
+  moving. The shipped figure is **37 fps walking at native 2560×1440**, and the governor — unable
+  to reach its 8.33 ms target anywhere on the ladder — settles at the floor, 1280×720 at 89 fps
+  moving. See "Triangles are not what this frame costs" and,
   for the one table to quote, **"The delivery table — 2560×1440, RTX 4060, machine gated
   quiet"** — every earlier fps table on this project was taken with the camera held and is not
   what a walking player gets, and every "120 fps", "123", "59 fps" and "55 fps" figure in this
@@ -4404,8 +4407,11 @@ Per rung at `sun_gap`, 2560×1440, RTX 4060, median of seven blocks of thirty:
 ~~The governor targets 8.33 ms and settles at rung 4, so the shipped experience on this machine
 is **120+ fps at an upscaled 1997×1123**, and `#high` pins 2560×1440 at 59.~~ **Struck: those are
 held-camera figures and neither survives.** The delivery run puts rung 4 at **63 fps moving** and
-rung 0 at **37 fps moving**; the governor targets a steady 60 and settles at rung 4 for that, not
-for 120. **No rung on this ladder reaches 120 fps with the camera moving.** Quoting a
+rung 0 at **37 fps moving**. And the governor does not target 60: **it targets 8.33 ms / 120 fps,
+which nothing on this ladder reaches while moving, so it descends to the *floor* — rung 8,
+1280×720 — and stays there.** That is measured; see `PERF.md` §15 for the whole policy and for
+`#target=60`, which is the flag that settles it around rung 3 instead. **No rung on this ladder
+reaches 120 fps with the camera moving.** Quoting a
 scale-1.0 tier row as the fallback is the error the row above documents — and quoting a
 held-camera row as the shipped experience is the error this sentence was.
 
@@ -4628,11 +4634,20 @@ because walking is what the player does. Both include the cascade-scheduling fix
 | 8 | potato | 0.50 | 1280×720 | 7.95 | 126 | **11.27** | **89** | 0.07 |
 
 **What the user gets, and it is what the README now says.** **37 fps walking at native 2560×1440 on
-the top tier**, and the governor lowers the buffer to hold **a steady 60** — rung 4, 1997×1123, at
-63 fps moving. The floor of the ladder is 89 fps moving. **120 fps is not reachable at any rung with
-the camera moving**, and the brief's target is met only at a reduced buffer, which is said plainly
-rather than implied. The one-sentence version is in `README.md` under "How it will run", with the
-whole ladder beside it.
+the top tier**, and because the governor targets 8.33 ms and no rung on this ladder reaches it while
+moving, **it descends to the floor — rung 8, 1280×720, at 89 fps moving — and stays there.** So the
+default trade is the smoothest picture rather than the sharpest, and `#target=60` is the flag that
+inverts it, settling around rung 3 at 1997×1123 and 52 fps. **120 fps is not reachable at any rung
+with the camera moving**, and the brief's target is not met at any buffer on this scene, which is
+said plainly rather than implied. Both sentences are in `README.md` under "How it will run" with the
+whole ladder beside them, and the governor's full policy is in `PERF.md` §15.
+
+**These figures are a floor, not a best estimate, and the direction matters.** They are wall time
+across `renderOnce` behind a one-pixel `readPixels` fence, which serialises CPU submit behind GPU
+execution where a real loop overlaps them. The governor's own signal is the GPU median alone, and
+the two differ by several milliseconds — §15 has the evidence. Real play should read better than
+this table, never worse. A quiet real-loop `fps` trace is the one measurement the project never
+took.
 
 None of that is a regression. §10's table was accurate when it was taken and the frame has not
 grown — see item 1 above, and note that the 16.80 that table rests on is not reproduced by a second
@@ -4645,6 +4660,17 @@ than implied, because resolution has stopped being the strong lever it was — `
 because a governor whose bottom step is over budget has nowhere to put a struggling machine.
 
 ### What the governor does now
+
+**What it targets: 8.33 ms, 120 fps, fixed.** `#target=N` overrides it, `#fps=N` caps the loop and
+targets that, and every threshold is a multiple of the target so moving it moves the policy
+coherently. It is deliberately not inferred from the panel: measuring the refresh period from the
+loop's shortest observed interval reads the *scene's* frame time on a vsynced uncapped loop, so a
+machine running at 40 fps concludes 40 is the target and never adapts — the governor switches itself
+off on exactly the hardware that needs it. The signal is the GPU timer's median where the extension
+exists, CPU frame time where it does not, and **nothing at all after a rung change**, which is
+handled by returning rather than by falling through to `cpuMs` — that would read submit time as
+enormous headroom one frame after a change, which is a climb loop with no brakes. Full policy,
+constants and reasoning: `PERF.md` §15.
 
 **Cold start: 2.5 s, was 17.** The governor was accumulating its clock and its holds from
 `main.js`'s `dt`, which is `Math.min(0.05, ...)`. That clamp is right for `step()` and exactly
@@ -4661,7 +4687,15 @@ here against a 38% headroom demand. The governor now remembers what each rung co
 memory after 8 s because the player is walking, probes a climb for 900 ms, reverts one step if it
 overruns, and puts a failed rung on a 15/30/60 s backoff whose expiry clears the price — so
 nothing is closed off permanently. Verified by putting it at the floor and watching: it climbed
-8→7→6→5→4→3→2→1 with no oscillation, back where it started after 37 s.
+8→7→6→5→4→3→2→1 with no oscillation, back where it started after 37 s. **That test had to be run at
+`#target=60`**, because at the shipping target nothing on this tree reaches 8.33 ms, so the governor
+correctly sits at the floor and a working ladder is indistinguishable from a broken one.
+
+**On a contended machine — a game, a stream, a compile — expect it at the floor within a few
+seconds**, and expect it to climb back on its own when the other work stops: three seconds of
+continuous headroom, then a probe per rung, and backoffs that clear their prices as they expire. No
+reload needed. That recovery is the specific thing the ratchet broke. What it cannot do is hide
+contention; it can trade picture for frame time and nothing else.
 
 **`#adapt` is new and matters to anyone writing a probe.** `perf.js` pins the top tier whenever
 `navigator.webdriver` is set, which is right and is why every capture is deterministic — but it
