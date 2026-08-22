@@ -32,6 +32,7 @@ import * as THREE from 'three';
 import { rng, fbm, ridged, clamp, smoothstep } from './noise.js';
 import { foliageTex, grassTex, scrubTex, succTex } from './plantex.js';
 import { cardTuft, makeFoliageMaterial, JUNIPER_XZ } from './juniper.js';
+import { meshStepX, meshStepZ } from './terrain.js';
 
 const TAU = Math.PI * 2;
 
@@ -396,6 +397,20 @@ function blobGeo(seed) {
     v.y = v.y * 0.92 + 0.5;
     p.setXYZ(i, v.x, Math.max(0, v.y), v.z);
   }
+  /* Put the foot at zero, rather than asserting above that it is there.
+     The clamp on the line above stops a vertex going *below* the origin and
+     guarantees nothing about one reaching it: the bottom vertex lands at
+     `-0.5 * n * 0.92 + 0.5`, which is only zero if the noise happens to return
+     its maximum there. For seed 3003 it returns 0.72 and the lowest vertex sits
+     at **+0.179**, so every one of these stands on nothing — 0.2 to 0.9 m of
+     daylight once the instance scale is applied, and `tools/_seat.mjs` counted
+     345 of 450 far instances hovering almost entirely on this one offset. It is
+     the same defect class as the severed junipers and the shrub tier whose cards
+     all bottomed at one local y, and it was hiding behind a comment that said
+     "whose origin is at its foot". Measure the geometry; do not describe it. */
+  let lo = Infinity;
+  for (let i = 0; i < p.count; i++) lo = Math.min(lo, p.getY(i));
+  if (lo > 0) for (let i = 0; i < p.count; i++) p.setY(i, p.getY(i) - lo);
   g.computeVertexNormals();
   g.computeBoundingSphere();
   return addWhite(g);
@@ -433,6 +448,35 @@ function corridorDist(path, x, z, q) {
   const u = (x - qq.x) * Math.cos(qq.th);
   const over = qq.s < 0 ? -qq.s : (qq.s > path.length ? qq.s - path.length : 0);
   return Math.hypot(u, over);
+}
+
+/**
+ * The ground the terrain *mesh* draws at (x, z), which out here is not what
+ * `heightAt` returns.
+ *
+ * `heightAt` is analytic and continuous; the mesh samples it on a graded axis
+ * that is 0.20 m across the corridor and expands geometrically past the core, so
+ * by 500 m a triangle is tens of metres wide. Seating a plant on the analytic
+ * height there puts it on a bump the mesh cannot carry, and the plant stands on
+ * a surface that is not drawn. `tools/_seat.mjs` measures exactly that shape:
+ * the far tier's air-under-origin runs p10 −1.36, median −0.11, p90 +0.76 —
+ * scattered either side of correct rather than biased, which is the signature of
+ * a sampling mismatch rather than of a wrong offset.
+ *
+ * The mesh cannot represent anything shorter than a couple of its own steps, so
+ * the height it draws is the local mean over one step, and `meshStepX`/`meshStepZ`
+ * report that step from the built axes rather than from a figure quoted in a
+ * comment. Taking the *lower* of the two is deliberate and one-sided: it can only
+ * ever sink a plant, never lift one, so where the mesh is dense and the two agree
+ * it does nothing at all, and where they disagree it cannot invent the defect it
+ * exists to remove. A plant a little buried is invisible at these ranges; a plant
+ * standing on air is the thing a critic finds.
+ */
+function meshSeat(terrain, x, z, h) {
+  const dx = meshStepX(x) * 0.5, dz = meshStepZ(z) * 0.5;
+  const m = (terrain.heightAt(x - dx, z - dz) + terrain.heightAt(x + dx, z - dz)
+    + terrain.heightAt(x - dx, z + dz) + terrain.heightAt(x + dx, z + dz)) * 0.25;
+  return Math.min(h, m);
 }
 
 /* Where the blob stops being defensible. A far blob is a faceted hull with no
@@ -949,8 +993,12 @@ export function planVegetation(path, terrain, rocks) {
     if (rr() > 0.2 + 0.8 * alt) continue;
     const sz = 1.1 + rr() * 2.6;
     const dark = 0.72 + rr() * 0.5;
+    /* Proportional sink, and against the mesh's ground rather than the analytic
+       one. A fixed 0.1 m is a shrinking sink in the geometry's own units — the
+       same finding as the bench tier's, where the largest and most visible plants
+       were the least firmly seated. */
     (du < CARD_RANGE ? mid : far).push({
-      x, y: y - 0.1, z, rot: rr() * TAU,
+      x, y: meshSeat(terrain, x, z, y) - 0.10 * sz, z, rot: rr() * TAU,
       sx: sz * (0.8 + rr() * 0.4), sy: sz * (0.9 + rr() * 0.7), sz: sz * (0.8 + rr() * 0.4),
       r: dark, g: dark, b: dark,
     });

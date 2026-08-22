@@ -10363,13 +10363,83 @@ fault above, and they rhyme: **a mask is a claim about which pixels an object ow
 and both faults broke it by changing what else was in the scene.** Searchable
 under "mask".
 
-# Carried, not fixed: the far tier hovers
+# The far tier hovers: a geometry that never touched its own origin, and a
+# ground that is not the ground that is drawn
 
-`tools/_seat.mjs` reports `veg-far` with **345 of 450 instances hovering**, up to
-5.68 m of air under the lowest vertex, and a lowest local vertex of **+0.179** —
-geometry that starts above its own origin, which is the exact signature of the
-severed-trunk bug fixed twice before on other tiers. Not touched: it is the rim
-planting, it is 400–580 m out, it is not one of the three items, and any change to
-those cards moves rim silhouettes that a previous round established as the only
-intervention able to break a geometrically straight skyline. The one-line fix is
-the same `skirt` used here. Flagged so it is not discovered as new.
+Flagged in the round above and fixed here. `tools/_seat.mjs` had `veg-far` at
+**345 of 450 instances hovering**, up to 5.68 m of air, and a lowest local vertex
+of **+0.179** — geometry starting above its own origin, the signature of the
+severed-trunk bug fixed twice before on other tiers.
+
+**First correction: `veg-far` is not the rim planting.** The line above said it was,
+and the rim pass pushes to `mid` unconditionally, so every skyline-breaking plant is
+in `veg-mid` and none of them is in this tier. That matters because it is the
+difference between a change that is free and one that risks the only intervention
+able to break a geometrically straight silhouette. `veg-far` is the distant bench
+harvest and the far height-field scatter, 150 m out and beyond.
+
+**Two causes, in very different proportions.**
+
+The `blobGeo` comment said "a squat irregular blob whose origin is at its foot".
+It was not. `Math.max(0, y)` stops a vertex going below the origin and guarantees
+nothing about one reaching it: the bottom vertex lands at `-0.5 * n * 0.92 + 0.5`,
+which is zero only if the noise returns its maximum there, and for seed 3003 it
+returns 0.72 and the foot sits at +0.179. Scaled by the instance, 0.2 to 0.9 m of
+daylight under **every** far plant — the whole of the 76.7%. Now measured and
+subtracted at build time.
+
+The tail was a different thing. `heightAt` is analytic and continuous; the mesh
+samples it on a graded axis that is 0.20 m across the corridor and expands
+geometrically outside a ±52 m core, so by 500 m one triangle is tens of metres
+wide. A plant seated on the analytic height stands on a bump the mesh does not
+draw. The distribution says so before any code is read: air under origin ran p10
+**−1.36**, median −0.11, p90 **+0.76** — scattered either side of correct, which is
+a sampling mismatch and not a wrong offset. `meshSeat` takes the local mean over
+one mesh step, asking `meshStepX`/`meshStepZ` for the step rather than quoting one,
+and takes the *lower* of that and the analytic height. One-sided on purpose: it can
+only sink a plant, never lift one, so it does nothing where the mesh is dense and
+cannot invent the defect it exists to remove.
+
+| | before | after |
+| --- | --- | --- |
+| hovering | 345 of 450, **76.7%** | 25 of 450, **5.6%** |
+| lowest local vertex | +0.179 | **0.000** |
+| air p10 / median / p90 | −1.36 / −0.11 / +0.76 | −2.06 / −0.41 / **−0.10** |
+| max air | 5.68 m | 2.56 m |
+
+Ninety percent of the tier is now at or below the drawn ground. The 25 that remain
+are 400–615 m out on coarse terrain where a step is 40 m and a four-tap mean is
+still an approximation of a triangle.
+
+**What it cost, measured against the same frozen source.** `sys3oA` and `sys3oB`
+differ only in this file: **0.005% of pixels in `sun_gap`, 0.003% in `juniper`,
+0.001% in `wash_mid`, and 0.000% in `shade_far` — byte-identical.** Six clusters,
+165 pixels, the largest 11x15. Draw calls and triangle counts are identical in
+every view, so nothing was added or removed. Lit rock is digit-for-digit identical
+on every figure. The 61 changed pixels in `juniper` have luminance 60.5 to 182.9,
+median 126.4, against a hero crown at value 0.08 — so none of them is crown, which
+is a number rather than an argument. Mote counts are identical in all four
+framings, 18 / 12 / 6 / 16 in both arms.
+
+**Honest disposal: nobody was going to see this.** At 3x the before and after crops
+are near-indistinguishable; a plant a few pixels tall sliding half a metre onto its
+slope is not a visible defect, and `shade_far` cannot tell the difference at all.
+What was worth fixing is that a geometry claiming its origin was at its foot had it
+0.179 above, on 450 instances, in a project that has shipped that same bug twice —
+and that the fix is one-sided and provably free.
+
+# Instrument fault, twice in one hour: a probe that returns zero for everything
+
+Both mine, both caught by the answer being too clean. A pixel-difference probe
+reported **0 changed pixels in all three framings** where `pxdiff` had just
+reported 85, 61 and 19, because it read `decode()` as `{width, data, channels}`
+where `png.mjs` returns `{w, h, ch, px}`: `data[NaN]` is `undefined`, every
+comparison was `NaN >= 5`, and every answer was false. A probe with the wrong
+field names does not throw — it agrees with you.
+
+The pair that matters is this one and the mask fault above. **A wrong instrument
+almost never reports an error; it reports a clean number.** Zero differing pixels,
+byte-identical brightest pixels across an A/B that changed the atlas, and a colour
+sample that matched the critic's own sky value to one code value were all *this*
+failure. Ask what the instrument would print if it were broken, and if the answer
+is "something plausible", check it against a second measurement that must move.
