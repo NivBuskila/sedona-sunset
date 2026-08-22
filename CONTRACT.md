@@ -4943,11 +4943,65 @@ missing from that rimline includes "no vegetation breaking it". A juniper or two
 breaks a geometrically straight silhouette at zero cost to the rock, and it is the one
 intervention here whose cost does not scale with how much wall is in frame.
 
+### Superseded: it was a reversed heading, and the mesa was never a landform
+
+**Everything above about `shade_far` is wrong about its object, and the "measured impossibility"
+it concluded with was measured off a surface that should not have existed.** Recorded rather
+than deleted because the way it went wrong is the useful part.
+
+`WashPath.headingAt` clamped its *backward* sample at `s = 0` while leaving the forward sample
+free, so below `s = -3` the two straddled the origin backwards and the heading came out
+reversed — **-177.6° at `s = -34` and -174.5° at `s = -3.2` against a true +5.7°**, through a
+degenerate `atan2(0, -0) = 180°` at exactly `s = -3` where the samples coincide. Since
+`cNx = cos(th) * side`, fifty columns of the curtain were built on the **far side of the
+corridor**, and the one transition column at `s = -3` stretched a single quad **eighty-three
+metres** across it, from x -42 to x +40 at a near-constant y 46.8.
+
+The ruler was the **interior of that one triangle**. `tools/_rimtri.mjs` — new, reports the
+drawing triangle for a pixel by taking the raycast hit's `faceIndex` back through the index
+buffer — returns corner separations of **0.99 / 83.04 / 82.76 m** between two adjacent 0.62 m
+columns. A silhouette drawn across the middle of one triangle cannot vary however much the
+crest varies, because there are no vertices there to carry it. That is why the crest fix did
+nothing here while measuring 23, 18 and 15 px of residual in `bend`, `far_170` and `far_220`,
+and why five separate rim-planting strategies all measured 0.50 px.
+
+Fixed by clamping `headingAt` to `-sZero` instead of to zero, and by clamping the curtain's
+near end to the path's real domain with `sStartOf`, mirroring `sEndOf` — the same
+out-of-domain stacking that produced the `far_320` ledge, at the other end of the same array,
+missed the first time because nothing frames the start of the walk. On a same-HEAD pair,
+`_skystraight.mjs` on `shade_far` goes from **0.50 to 21.42 px** worst residual over the
+straightest 200 columns and 0.79 to 51.11 px median; `far_270` is unmoved at 6.93 → 6.99 px and
+saturation 0.483 → 0.482; lit rock holds at 0.671 saturation and 13.9° hue. Triangles fall
+22-52k per view, since the removed columns were never in the world.
+
+**`tools/_skyenv.mjs` should not be trusted and `_crestprof.mjs` only for profiles.** Two
+independent faults, both found by System 3:
+
+- It bins **vertex positions**, so its envelope is the envelope of a face's *corners*, not of
+  the drawn edge. Against an 83 m triangle those are different objects, and its "pinned at
+  crest 55.6 m" was the corner stack.
+- It measured **flatness**, and this edge *rises* at slope 0.159. A flatness test scores every
+  bin as a step and calls a perfect ruler unremarkable. `_skystraight.mjs` fits a line and
+  reports the residual, which is the critic's actual statistic, on the PNG, in a second, with
+  no `src` import to be blocked by anyone else's mid-edit file.
+
+Two further traps worth keeping: `buildWalls` does not return the distant buttes, since
+`buildDistantButtes` is a separate call, so any pass harvesting rock off `buildWalls` alone has
+never seen them; and **a node-side `buildWalls(path, terrain, {})` is not the wall the app
+draws** — one reported no rock above y 0 where the running scene has wall at y 46.8. Ask the
+running scene.
+
+The general claim about end-on envelopes is still true as physics. It simply did not apply,
+because this was not an envelope over many stations — it was one triangle. **An elegant
+argument about why something is impossible is worth exactly as much as the attribution of the
+object it is about**, and the attribution here stopped at "`_pixowner.mjs` says `wallL`" when
+the next question was which *triangle* of `wallL`, and how big.
+
 ### Two rules this leaves behind
 
 - **A crest measurement square-on does not predict the same crest end-on.** Use
-  `_skyenv.mjs` for silhouette questions and `_crestprof.mjs` for profile questions, and do
-  not quote one at the other. This is the same shape as the sun-versus-view finding recorded
+  `_skystraight.mjs` for silhouette questions and `_crestprof.mjs` for profile questions, and
+  do not quote one at the other. This is the same shape as the sun-versus-view finding recorded
   for the wash head: *a landform can be open to the sun and closed to the eye*, and a rim can
   be stepped to the profile and straight to the silhouette.
 - **Isotropic surface statistics cannot see directional structure.** `grad.mjs`, `hf.mjs` and
