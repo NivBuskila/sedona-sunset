@@ -180,7 +180,29 @@ Faster hardware hides it but does not fix it — a person opening this page stil
 Procedural generation is a hard requirement so the work cannot be removed, but it can be
 moved: generate at lower resolution first and refine, defer textures not needed for the
 first frame, move generation into workers, or cache into IndexedDB after the first visit.
-Unowned and unscheduled; worth doing before this is ever shown to anyone.
+
+**Partly addressed. The wait is unchanged; the black frozen tab is not.** `src/main.js`
+now paints a dusk-coloured canvas carrying one line of text and *yields* before any
+generation begins, then yields between phases so the line can say which one is running.
+The distinction that matters is that the yield is the fix and the paint is not: a message
+drawn into a canvas in front of forty seconds of synchronous work never reaches the
+compositor, and the tab a person sees is the same black one. Measured on a GPU box at
+twelve cores, boot is 40–43 s and the message is on screen at **8 ms**.
+
+**A screenshot cannot measure this and it is worth knowing why.** Six cold loads had been
+characterised by screenshot attempts at 5, 10, 15, 20, 25, 30 and 35 s, every one of which
+failed — and they still fail with the loading screen working perfectly, because taking a
+screenshot is a request to the same blocked main thread. The instrument and the defect
+share a bottleneck. What does measure it is a timestamp taken *inside a `requestAnimationFrame`
+callback*, since rAF only runs when the browser is producing a frame; `window.__game._boot`
+carries that stamp plus the duration of every phase, and `tools/_bootpaint.mjs` reads it.
+A grab issued with a long timeout instead of a short one is also served — at the first
+yield — and returns the loading screen itself rather than a timeout.
+
+The remaining cost is three stalls that cannot be broken up without restructuring files
+other systems own: the wall curtain at 11 s, the clast scatter at 10 s and the terrain mesh
+at 8 s. Workers were explicitly *not* attempted; every one of these hands back a live THREE
+object built against this context.
 
 ## The composition the brief asks for is a geometry constraint, and it can be measured
 
@@ -4220,3 +4242,58 @@ bright quadrilateral — the decal that critics named originally. With it on, th
 noisy. The penumbra work traded a hard edge for a grainy one, and *both* read as artificial for the
 same reason: they sit against a wall carrying no tone at all. The crush fix is worth more here than
 any further work on this filter, and that conclusion did not depend on getting the mechanism right.
+
+## The walls were scenery you passed through, and a corridor limit is the cheap fix
+
+Found by walking the build rather than by looking at it, which is the whole point: every
+instrument this project has ever pointed at the scene judges a still frame from a fixed
+station, and none of them can see that twenty-five metres of strafing — sixteen seconds —
+puts the camera *inside* a canyon wall. Fifty metres put it on top of one, eighty out of
+the mouth ran off the end of the built world, and a curious player reached the first of
+those in under a minute. The ground clamp was never the problem and was never touched.
+
+**The corridor limit is in `src/corridor.js` and it beats mesh collision on three counts,
+not one.** Cost is the obvious one and the least interesting. The two that decided it:
+
+- **It cannot be climbed.** A wall you collide with is a wall you can walk up if it has a
+  talus pile leaning on it, and this corridor has aprons the length of both sides.
+- **It cannot leak.** No tunnelling case, no missing back face, and nothing to go wrong at
+  the seam where the wall curtain meets the apron.
+
+**Read the width out of the cross-section, and read it twice.** Per side, per metre of arc
+length, the limit is the lesser of `Terrain.frame().ws` — the talus toe, i.e. where the
+floor stops being floor — plus slack, and where the height field first stands `WALL_RISE`
+above the floor less a clearance, which is the same question `rock.js` asks to seat the
+foot of the cliff. Neither reading alone is safe: `ws` runs past the toe where the wall has
+been eaten into a bay, and the rise march finds the wrong thing at the head of the wash
+where the floor itself is climbing. The result opens to 18 m where the wash is wide and
+closes to 8 m at the head, with nothing hard-coded.
+
+**`WALL_RISE = 4.5` is the number doing the work, and the cautious value is the wrong one.**
+Cut banks in this wash reach 3.0 m. Any threshold below about 3.5 finds the bank crest
+instead of the wall and pulls the limit in to five or six metres in places the wash is
+genuinely thirty across — which is an invisible wall in the playable middle of the walk,
+arrived at from the safe direction. The failure mode of a confinement system is not only
+letting people out.
+
+**Apply it to velocity, not to position.** A positional remap applied to the integrated
+position is re-applied to its own output on the next frame and drifts. Bleeding the outward
+component of the velocity across a 1.6 m band before integration does not, is identically
+zero at rest — so the render loop is still the fixed point every capture depends on — and
+reads as the ground refusing rather than as a box. `walkTo` places the player on the
+centreline, so no capture ever enters this code path.
+
+**The verification is a driven trajectory, and it belongs in Node.** "Does it stop you" is
+easy and a hard clamp would pass it; the question is whether it can be *felt* while walking
+the walk, and that is a property of a trajectory. `src/corridor.js` is pure JavaScript over
+the height field and `step`'s velocity model is eight lines, so `tools/_walktest.mjs` walks
+a wandering walker over the whole route in a second and a half instead of paying a
+six-minute boot per attempt. Measured: 4.2 minutes of walk, drifting up to 5.8 m off the
+centreline, **never nudged sideways once**, closest approach 5.07 m of clearance, and the
+only stop it meets is the head of the wash 0.05 m short of it. `tools/_corridor.mjs` checks
+the limit against `rock.js`'s own plan position for the cliff foot, reproduced from its
+constants; clearance runs 1.1 to 16 m positive over the walk.
+
+The one thing the walk test copies rather than imports is `step` itself, because `main.js`
+owns the canvas and cannot be loaded without a document. If the two drift, the walk test is
+measuring a game nobody is playing.
