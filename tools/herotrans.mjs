@@ -315,7 +315,10 @@ await run({ width: W, height: H, waitReady: false }, async ({ page }) => {
       const dir = path.resolve(new URL('..', import.meta.url).pathname
         .replace(/^\//, ''), 'shots', 'sys7look');
       fs.mkdirSync(dir, { recursive: true });
-      const tag = `${t.amt}_${t.iso}_${t.rim}`.replace(/\./g, 'p');
+      /* The tint has to be in the name. It was not, and four arms of one sweep
+         each overwrote the last, leaving one file labelled as the whole sweep. */
+      const tag = `${t.amt}_${t.iso}_${t.rim}`
+        + (t.tint ? '_' + t.tint.join('_') : '_straw');
       const f = path.join(dir, `${SAVE}_${VIEW}_${tag}.png`);
       fs.writeFileSync(f, encodeRGB(w, h, rgb));
       console.log(`  wrote ${f}`);
@@ -340,7 +343,7 @@ for (const r of rows) {
   if (!r.n) { console.log('  no crown pixels in frame'); continue; }
   const f = (x, d = 3) => x.toFixed(d).padStart(d + 3);
   console.log(`  ${r.t.amt.toFixed(2)}  ${r.t.iso.toFixed(2)}  ${r.t.rim.toFixed(2)}`
-    + ` ${(r.t.tint ? r.t.tint.map(x => x.toFixed(2)).join(',') : 'straw   ').padEnd(14)}|`
+    + ` ${(r.t.tint ? r.t.tint.map(x => x.toFixed(2)).join(',') : 'as-built').padEnd(14)}|`
     + ` ${f(r.p10)} ${f(r.p50)} ${f(r.p90)} ${f(r.p99)} ${f(r.max)} |`
     + ` ${r.ratio.toFixed(2).padStart(6)} ${r.mid.toFixed(1).padStart(6)}`
     + ` ${String(r.clip).padStart(5)} |`

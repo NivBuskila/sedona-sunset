@@ -1969,30 +1969,47 @@ export function buildJuniper(terrain, tex) {
        much as shaded ones: over this sweep it bought 0.05 of ratio for triple the
        hue shift. The near field needs it because in deep shade there is no direct
        term for the shaped part to ride on. The crown is in open sun and does not.
-       The cost is hue, it is measured, and it is the reason `uTransAmt` stops at
-       0.35 rather than the 0.55 that scores slightly better. `uTrans` is warm at
-       (1.35, 1.12, 0.58), which is hue 42 — a dry cream grass blade, inherited
-       from the near-field tiers by default. The crown warms by 1.6 degrees in
-       `juniper` and 2.7 in `wash_mid` at 0.35, and by 2.1 and 3.6 at 0.55. A
-       critic verified this crown's rendered hue against its atlas to within 1.1
-       degrees and quoted a real juniper band of 49-65, so 0.55 is the arm that
-       risks leaving it. A term that fixes the split by turning the crown orange
-       has not fixed anything.
-       Those figures are over a population held fixed at the arm-0 one, and that
-       matters: transmission raises value, so the chroma-carrying population grows
-       when it is switched on — 59550 crown pixels to 64200 here — and the
-       arrivals carry the transmission's own tint, which moves a median with no
-       pixel changing colour. Measured both ways the two agree to 0.4 degrees, so
-       the warming is real and not that artefact. Worth stating because it was the
-       comfortable explanation and it was wrong.
-       The mitigation is queued rather than done: transmitted light is filtered by
-       the pigment it passes through, so this crown should not be using a grass
-       tint at all. Retinting toward its own foliage may close the split at near
-       no hue cost, and if it does, 0.35 is not the ceiling either. */
+       `uTransAmt` stops at 0.35 rather than the 0.55 that scores slightly better
+       because the hue cost scales with it and 0.55 risks leaving the real juniper
+       band of 49-65 that a critic quoted after verifying this crown's rendered
+       hue against its atlas to within 1.1 degrees.
+       The tint below is why there is almost no hue cost left to trade. Inherited
+       from the near-field tiers, at (1.35, 1.12, 0.58), it moved the crown 1.6
+       degrees up-hue in `juniper` and 2.7 in `wash_mid` — toward the chartreuse a
+       critic has already complained of. Measured over a population held fixed at
+       the arm-0 one, because transmission raises value and a population gated on
+       value therefore grows when it is switched on, 59550 crown pixels to 65343,
+       and the arrivals carry the tint and can move a median with no pixel
+       changing colour. Both ways agree to within 0.7 degrees, so the shift was
+       real rather than that artefact. */
     const u = folMat.userData.uniforms;
     u.uTransAmt.value = 0.35;
     u.uTransIso.value = 0.0;
     u.uTransRim.value = 0.70;
+    /* Hue-neutral by measurement, and the direction is the opposite of the
+       obvious one.
+       The physical argument says transmitted light is filtered by the pigment it
+       passes through, so the tint should be greener than the grass straw it
+       inherited. Swept, every greener tint made the shift *worse*: (1.25, 1.20,
+       0.58) gave +2.3 degrees, (1.15, 1.25, 0.58) +2.9, (1.05, 1.25, 0.52) +3.3,
+       against the straw's +1.6, and all four returned the same contrast to two
+       decimal places. The argument was sound and the conclusion drawn from it was
+       backwards, for a reason worth keeping: this uniform is not the transmitted
+       colour. The shader multiplies it by albedo, so it is the transmitted colour
+       *over* the albedo — and the albedo is already yellow-green at hue 64. A
+       green tint counts the leaf's pigment twice. A leaf's transmittance and
+       reflectance spectra are not the same shape, and using one as a stand-in for
+       the other is what this uniform exists to correct.
+       Going the other way lands it: at (1.60, 1.00, 0.50) the fixed-population
+       hue is 42.9 in `juniper` against a no-transmission baseline of 42.9, and
+       40.9 in `wash_mid` against 40.3 — a 1.6 degree cost taken to zero and a 2.7
+       to 0.6. Contrast is unchanged, 14.96 and 9.71 against 14.96 and 9.66, and
+       the midtone share is within 0.5 of a point. The one thing it costs is
+       saturation, up 0.017 rather than the straw's 0.014, which is not a defended
+       figure on this crown: the defended one is lit rock, and that is outside the
+       mask and does not move. At 3x the shaded sprays read very slightly less
+       chartreuse and nothing else changes. */
+    u.uTrans.value.setRGB(1.60, 1.00, 0.50);
   }
   const fol = new THREE.Mesh(foliageGeometry(clumps, 4242), folMat);
   fol.position.copy(trunk.position);
