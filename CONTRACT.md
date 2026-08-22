@@ -7531,3 +7531,74 @@ and lands on the far slopes that fix was written for.
 The corollary for the ablation below: **run it on `far_320` as well as on the
 reported clast framing.** A `frac` ablation on scatter alone would clear the
 reported instance and leave the worse one untested.
+
+---
+
+## The octave ablation: run, and the octave pair is EXONERATED
+
+**Result: the quilt survives both endpoints at full strength.** A single octave
+cannot be in registration with itself, so the two-octave crossfade is not the
+mechanism. This was the outcome the offline analysis predicted, and it means the
+quilt is **unattributed again with its strongest suspect eliminated** - which is
+the more important half of the result.
+
+Run on the GPU path at HEAD `7c0cbfc`, working tree carrying only another
+agent's `tools/shoot.mjs`. `gLodC - gFlC` was forced to a literal at **all three
+sites at once** - `scatter.js:811`, `rock.js:1961`, `terrain.js:1500` - because
+the question was whether the mechanism exists at all, not which site owns it.
+Frame hashes moved on every variant, so the ablation was live. `src/` was
+restored immediately afterwards and is clean.
+
+### The numbers, on System 2's own instrument and their own reported object
+
+`tools/_lattice.mjs` on the `ground` boulder, identical bands across the three
+frames. This is internally controlled: same frame, same bands, one variable.
+
+| band | family | shipped | `frac = 0` | `frac = 1` |
+|---|---|---|---|---|
+| upper face | 28.3 px @ 8 deg | r 0.235 | r **0.239** | r 0.195 |
+| lower face | 34.5 px @ 68 deg | r 0.386 | r **0.441** | r 0.354 |
+| lower face | 30.1 px @ 6 deg | r 0.352 | r **0.427** | r 0.326 |
+
+The two crossing families survive at **identical periods and angles**, and at
+`frac = 0` they are the *strongest* of the three. Same on `far_320`, where the
+lower band is 34.4 px @ 26 deg at r 0.105 / 0.102 / 0.097 across the three -
+unchanged to within noise. Shooting `far_320` mattered: clearing only the
+reported clast framing would have left terrain's normal-field instance untested.
+
+By eye at 4x on the boulder face, the dark stipple is present in all three; it
+changes character slightly with the octave, as it must, and never goes away.
+
+### What this does and does not settle
+
+- **Settled:** the octave pair is not the mechanism. The proposed phase fix is
+  now doubly dead - it was a translation of a relationship it could not break,
+  *and* the relationship was not the cause.
+- **Settled:** the `A = B` is a point, not a patch reasoning stands. Had the
+  quilt vanished at both endpoints and returned in the middle, that is where the
+  error would have been; it did not, so it holds.
+- **Not settled:** what draws the quilt. Still open.
+
+### The next hypothesis, labelled as one
+
+The families are two crossing directions at a roughly fixed screen period, on a
+surface whose texture comes from a **world-planar projection sampled at close to
+one texel per pixel by design** - `gLodC = log2(cFootG * 256.0)` targets exactly
+that, and the comment beside it says so deliberately: *"slightly under a texel
+per pixel ... is the sampling rate at which mip level zero is actually used"*.
+
+One texel per pixel is the Nyquist edge. A stochastic texture sampled there
+aliases, and the alias of a planar-projected grid on a tilted facet is **two
+crossing families whose angles are the screen projections of the texture's u and
+v axes** - which is the shape of what is measured. That would also explain why it
+survives a single octave, why the period is screen-constant rather than obeying
+perspective, and why it is worst on a large tilted near-field facet.
+
+**The test is the same shape and one render:** add a constant to `gLodC` - `+1.0`
+samples at half the frequency, well clear of Nyquist - and see whether the
+families collapse. If they do, the fix is an LOD bias and the cost is a little
+softness in the grain, traded against a regular pattern. If they do not, this
+hypothesis dies with the others and the projection itself is next.
+
+I have **not** run it: the ablation was the authorised turn on the lock and
+others are queued behind it.
