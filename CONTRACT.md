@@ -132,11 +132,16 @@ a real sunset photograph of Sedona. Not stylized, not low-poly, not "good for a 
 # THE PROCESS RULES — read these before measuring anything
 
 Every rule below was paid for with hours, most of them more than once. They were scattered
-through five thousand lines of this file in the order they were learned; they are gathered
+through seven thousand lines of this file in the order they were learned; they are gathered
 here in the order they are needed, each with the instances that earned it, because a rule
 without its instances is an aphorism and this project has a rule about those (rule 7). The
 long-form account of each is still in place further down and is worth reading when you hit
 the thing it describes.
+
+Rules 1–10 were consolidated the morning of delivery; **11–15 were earned on the last night and
+added after**, which is itself the shape of the thing — three of them come from one defect that
+took four sections to find because a comment, a gradient band and a utilisation percentage each
+pointed confidently at the wrong place.
 
 ## Rule 1 — A negative result is only evidence if the thing you removed was doing something
 
@@ -525,6 +530,113 @@ is and is not for:
 So `hf/lf` remains the right gate for "has this surface gone to wax overall", and the wrong one
 for "is the spectrum the right shape", "is this tiling", and any comparison across two
 resolutions.
+
+## Rule 11 — A comment that describes the symptom is evidence about the author's intent, not about current behaviour
+
+**And the code most likely to carry that description is the code written to *prevent* it.** Three
+instances in one night, all on the `far_320` headwall streaks, all of them pulling an hour each
+away from the thing that was actually wrong:
+
+1. **`rill` and `gully` in the height field.** `gully`'s own comment names converging gullies;
+   the critic reported streaks converging at the base of a gully. Both ablated — real geometry
+   changes, triangle count moved — and both **innocent**.
+2. **The triplanar branch**, whose comment reads *"every feature smears into a long streak, all of
+   them parallel, and the bank ends up looking brushed"* — the complaint almost verbatim. Painting
+   its blend weight into the frame showed **1.0 exactly where the streaks are**. It exists for
+   this artefact and it was working correctly.
+3. **The 24 cm** that matched the sand ripple wavelength and the bed spacing exactly, and was
+   neither. The numeric and the verbal case are one failure.
+
+In all three an observation that discriminated between *categories* was available and was
+outranked by one that matched *vocabulary*. Here it was **"no shadow terminator inside them"**,
+which says shading rather than geometry before any ablation is run. **Rank the discriminating
+observation first; a matching name is the weakest evidence in the room.** The corollary is the
+one that cost the most: the real cause was an *absence* — `terrain.js` never read the two
+channels `makeGrit` packs the normal into — and **nothing writes a comment about a term that
+is not there.**
+
+## Rule 12 — A metric can pass a setting the eye refuses, and when the sun is grazing, terminator crossing is the column to rank
+
+Rule 5's converse, promoted because it recurred with two *sanctioned* guardrails rather than an
+ad-hoc figure, and because the round that found it also found which column to trust.
+
+`GRIT_N` at 2.2 was rendered and **rejected by eye on `far_270`** — the mid floor came back as
+high-contrast hash with too many fully-dark texels, torn straw rather than gravel. At the same
+moment its `grad/L` read **0.1508, comfortably inside the 0.12–0.16 band**, and its RMS tangent
+slope was **0.284 against a trap at 0.8**, a third of the way there. Both guardrails passed it.
+
+| `GRIT_N` | RMS slope | past terminator | eye |
+|---|---|---|---|
+| 1.0 | 0.129 | 0.1% | invisible |
+| **1.4 (shipped)** | **0.181** | **1.7%** | gravel |
+| 2.2 | 0.284 | 9.7% | torn straw |
+
+**The terminator-crossing fraction is the column that agreed with the eye**, at 9.7% against 1.7%,
+and it is the first time it has been the one that did. That is the fourth instance of `hf/lf` and
+its relatives being blind to this family — the earlier ones being the pebble-dash grit at full
+amplitude, whose binary lit/unlit field has an excellent one-pixel gradient and a very good
+`hf/lf`; the quilted floor at 0.45 in rule 10; and the shimmer that measured too weak and looked
+like melting. **When the sun is grazing, rank terminator crossing above RMS and above the
+gradient band.** A gradient band bounds a defect; it does not certify a setting.
+
+## Rule 13 — Relative contrast and `hf/lf` are both resolution-dependent, so only ratios within one run survive
+
+**Relative contrast is a per-pixel Laplacian and it scales with resolution**, exactly as `hf/lf`
+does. A number taken at 1600×900 cannot be set beside one taken at 2560×1440, in either metric.
+
+- `hf/lf`: byte-identical rock measures midwall **0.49 at 1600×900 and 0.54 at 2560×1440**, and
+  the 0.54–0.75 reference band came from photographs at their own pixels per metre. That produced
+  a false shortfall, which is already in rule 3's table.
+- Relative contrast: the walk figures — the head slopes at 0.16, the strip at 0.38–0.40, the same
+  station later at 0.2525 against a 0.409 mean — are only comparable because `tools/_walk2.mjs`
+  now takes width and height as arguments and both runs were taken at 2560×1440.
+
+**What survives a resolution change is the ratio between stations of one run**, and both of the
+walk's headline claims are stated that way for this reason: 0.41 of the route average before,
+0.62 after. State the resolution beside the figure, and prefer a within-run ratio to an absolute
+whenever one is available. This is rule 3's population discipline arriving on the structure
+metrics, and it now applies to every one of them.
+
+## Rule 14 — A point estimate the build can outgrow between commits rots; a bound holds
+
+The loading screen and the README were corrected from a guess to a measurement — **six page loads
+at 39–44 s, so "about forty seconds"** — and one hour later the same probe read **49.0 s**, with
+`Raising the canyon walls` at 14.0 s (was 11.4) and `Scattering the stones` at 12.5 s: exactly the
+two phases that were being worked. Nobody noticed. Both strings now say **under a minute**.
+
+The asymmetry is what makes this a rule rather than a mistake. Under-promising a wait leaves the
+reader watching an apparently-stuck screen for the overrun, **which is the precise failure the
+loading screen exists to prevent** — so a point estimate is not merely imprecise here, it is
+imprecise in the direction that costs the most.
+
+This is the same lesson as the eleven-degree comment in `gate.mjs`: **a figure in prose cannot
+notice the thing it describes moving.** The difference is the remedy. Where the premise can be
+handed to code, hand it to code — `gate.mjs` now imports `SUN_EL_DEG` and refuses if it differs
+from `MEASURED_AT_SUN_DEG`. Where it cannot be checked cheaply, **make it a bound instead of a
+point**, and accept the vagueness as the price of not rotting.
+
+## Rule 15 — `utilization.gpu` counts time with any kernel resident, so gate on the memory controller
+
+An animated desktop wallpaper at 60 fps reads **65% utilisation while consuming almost nothing**,
+because the field is the fraction of sampled time in which *any* kernel was resident, not the
+fraction of the machine being used. **This is precisely why the contention story was so
+convincing**: the box showed a 65–100% utilisation floor, six unexplained milliseconds needed a
+home, and the two facts appeared to be one fact. A quiet-machine run then measured **23.06 ms held
+against 23.30 contended** — 0.24 ms, not 6 — and the story died.
+
+The memory controller separates the cases, and the three readings on this box are worth keeping:
+
+| state | `utilization.gpu` | memory controller |
+|---|---|---|
+| idle, animated wallpaper | 63–66% | **12%** (max 13) |
+| an agent capture running | 88–100% | **16–19%** |
+| a game running | 100% | **34%** |
+
+`tools/_regress.mjs` gates the run on the memory controller and prints load beside every number;
+`gate.mjs --preflight` exists so the non-GPU half can run at all when the machine is not ours.
+The general form is rule 2 wearing a different hat: **a field that returns a high number for an
+idle machine is an instrument that cannot report the thing you are asking it about**, and reading
+it as though it could is what turned an unexplained measurement into a confident wrong one.
 
 ## Performance budget, measured on the target machine
 
@@ -6477,14 +6589,21 @@ watched to fire at `31e7a4b` and the bounds they exercise are unchanged.
 
 ## Two documentation inconsistencies, settled
 
+> **Superseded within two hours, in the direction that makes the point.** Both strings now say
+> **under a minute**, not forty seconds: the same probe read **49.0 s** an hour later, on a build
+> that had grown while two agents worked on the two slowest phases. See "The third walk" — *a
+> point estimate the build can outgrow between commits rots; a bound holds.* The reasoning below
+> for preferring the measurement over the guess is right; picking a *point* was the mistake.
+
 **Boot.** The loading screen said "About a minute" and the README said forty
 seconds. Forty is the measured one and the screen was the outlier — six page loads
 on 22 August, all after the texture phase was split into seven, ran 39 to 44
 seconds from navigation to `__game`, and `main.js`'s own comments already said
-"forty-odd". Both now say forty seconds, and the comment beside the string says to
+"forty-odd". ~~Both now say forty seconds~~, and the comment beside the string says to
 revise it from a measurement if it is ever revised.
 
-`tools/_bootpaint.mjs` on the delivery build puts the in-page total at **41.3 s**,
+`tools/_bootpaint.mjs` on the delivery build puts the in-page total at **41.3 s**
+*(and at **49.0 s** two hours later — see "The third walk")*,
 with the message on screen at 7 ms and the longest single stall 11.4 s. The split
 did not lengthen the boot; it broke up the silence. The four phases worth knowing
 are raising the canyon walls at 11.4 s, scattering the stones at 10.4 s, cutting
