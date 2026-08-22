@@ -9078,6 +9078,33 @@ it, and the open question is whether what it is told is right.**
 Both halves of the answer turned out to be true. There was a missing term, and the
 target is beyond what transport can deliver.
 
+### Read this before reopening the finding
+
+**The 90-110 target is inconsistent with the contract's own photograph-derived shadow band
+by a factor of two, and that has been shown twice from unrelated premises.** This is not a
+record of failing to reach a target. It is a bounded, explained deviation, and the two
+demonstrations are:
+
+- **From what light can physically arrive.** A facet with no direct sun, given a fully
+  sunlit infinite floor filling its lower hemisphere plus this corridor's warm upper one,
+  reaches side/top **0.250**. The target implies **0.401**. Derived below, from
+  `albedo_g / 2` plus the sky and escarpment terms; needs no model to state.
+- **From the contract's own ratio.** The complained-about facet, measured against its own
+  slab top, sits at **0.173 before any of this work and 0.189 after** — inside the
+  photograph-referenced **0.15-0.25** either way. The target, at that facet's own hue, is a
+  facet gate of **0.409 to 0.500**, which is **1.6x to 2.0x the top of the band**.
+
+Two routes, one factor: the first from radiometry, the second from the photograph band the
+critics themselves supplied. **The facet was already inside the band before the work
+started**, in its bottom quarter, and the restricted term moves it to the middle. So the
+same critic lineage is asking simultaneously for a compressed range and for a cap on
+compression, and on this population those two requests differ by two. No transport term
+satisfies both, and one of them has to be given up before any further work here is
+meaningful.
+
+What was genuinely missing was real, is fixed, and is worth **4 code values of red**, from
+37.5 to 41.5. The rest of this section is how that was established.
+
 ### The instrument, and why it is a ratio
 
 `tools/_clastbounce.mjs` reports the **side/top irradiance ratio**, never an absolute
