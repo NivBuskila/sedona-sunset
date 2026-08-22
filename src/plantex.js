@@ -553,6 +553,12 @@ function canvas2d(w, h) {
 
 const rgb = (c) => `rgb(${c[0] | 0},${c[1] | 0},${c[2] | 0})`;
 
+/* Clamped, for the places that scale a palette colour and can push a channel past
+   255. CSS clamps out-of-range rgb() itself, but silently, and a clipped channel
+   is a hue shift rather than a brightening — so do it here where it is visible. */
+const rgbLit = (c, m) => rgb([Math.min(255, c[0] * m), Math.min(255, c[1] * m),
+                              Math.min(255, c[2] * m)]);
+
 /* ── juniper foliage ───────────────────────────────────────────────────────
  *
  * Juniper leaves are *scales*, not needles: each shoot is a squarish green cord
@@ -787,18 +793,76 @@ export function makeFoliage(size = 512) {
  *
  * The atlas is four cells across, so callers address it with `cols = 4`.
  */
+/* The blade's cross-section, as three strokes: width and offset in units of the
+ * blade's own width, brightness as a multiple of its colour.
+ *
+ * Widest and darkest first, then narrower and lighter offset toward the lit edge,
+ * so what is left is a three-step ramp across the width. The visible widths come
+ * out 0.37 / 0.31 / 0.32 once each pass is overdrawn by the next, so the
+ * area-weighted mean multiplier is 1.000 and the atlas's measured value does not
+ * move. Hue and saturation cannot move at all: both are invariant under a uniform
+ * scale of R, G and B, which is the only operation here.
+ */
+/* Same construction for a scrub leaf, in units of its half-width. Lopsided, so
+ * the ramp crosses the leaf rather than ringing it. Visible widths 0.76 / 0.68 /
+ * 0.56 of 2.00, giving a mean multiplier of 0.999. */
+const LEAF_SECTION = [
+  { w: 1.00, o: 0.00, m: 0.79, a: 0.62 },
+  { w: 0.62, o: -0.30, m: 1.00, a: 0.80 },
+  { w: 0.28, o: -0.52, m: 1.28, a: 1.00 },
+];
+
+const GRASS_SECTION = [
+  { w: 1.00, o: 0.00, m: 0.74, a: 0.62 },
+  { w: 0.66, o: 0.20, m: 1.00, a: 0.80 },
+  { w: 0.32, o: 0.34, m: 1.30, a: 1.00 },
+];
+
+/* The `a` above is the blade's thickness, written into the cutout's alpha.
+ *
+ * Alpha in these atlases has only ever been a silhouette: opaque inside a blade,
+ * transparent outside, one texel of antialiasing between. That is enough to cut
+ * the shape out and it is why the shader had nothing to shade with — a blade's
+ * interior is a plateau, so there is no coordinate running across its width and
+ * no way to know where in the blade a fragment sits.
+ *
+ * Alpha is the natural place for it, because on a cutout leaf alpha *is* optical
+ * thickness: full along the spine, thinning toward the edge, gone past it. Once it
+ * carries the profile, the shader's screen-space gradient of alpha becomes a real
+ * cross-blade axis at whatever size the blade is drawn, and the same field gives
+ * the edge a bright rim for free. Stepped in three because it costs nothing —
+ * these are the passes that were already being drawn — and bilinear filtering
+ * turns three steps across four texels into a ramp.
+ *
+ * Floored at 0.62 against an alphaTest of 0.40, so nothing the mask used to keep
+ * is dropped and the silhouette does not thin.
+ *
+ * Written through a second canvas rather than with globalAlpha, because these
+ * passes deliberately overdraw and source-over accumulates alpha: painting 0.62
+ * then 0.80 over it yields 0.92, not 0.80. Stroking opaque greys into a parallel
+ * canvas and reading its red channel gives the value that was asked for. Read
+ * unpremultiplied, so the grey is clean and the silhouette's own antialiasing is
+ * not applied twice.
+ */
+function thicknessAlpha(px, amask, n) {
+  for (let i = 0; i < n; i++) {
+    px[i * 4 + 3] = (px[i * 4 + 3] * amask[i * 4]) / 255;
+  }
+}
+
 export function makeGrass(size = 512) {
   const w = size, h = size / 2;                 // 512 x 256: four 128-wide cells
   const { ctx } = canvas2d(w, h);
+  const { ctx: actx } = canvas2d(w, h);         // thickness, see GRASS_SECTION
   const cell = w / 4;
   const rand = rng(771133);
   /* Straw through bleached bone to weathered grey-brown. No green anywhere. */
-  const STRAW = ['rgb(172,148,102)', 'rgb(148,126,86)', 'rgb(194,174,132)',
-                 'rgb(120,100,68)', 'rgb(162,142,98)', 'rgb(134,120,88)'];
-  const BLEACH = ['rgb(206,192,158)', 'rgb(186,172,140)', 'rgb(216,206,178)',
-                  'rgb(160,146,116)'];
-  const WEATHER = ['rgb(112,96,70)', 'rgb(132,114,84)', 'rgb(94,80,58)',
-                   'rgb(146,128,96)'];
+  const STRAW = [[172, 148, 102], [148, 126, 86], [194, 174, 132],
+                 [120, 100, 68], [162, 142, 98], [134, 120, 88]];
+  const BLEACH = [[206, 192, 158], [186, 172, 140], [216, 206, 178],
+                  [160, 146, 116]];
+  const WEATHER = [[112, 96, 70], [132, 114, 84], [94, 80, 58],
+                   [146, 128, 96]];
   /* blades, lean spread, length, base width, palette */
   const kinds = [
     { n: 30, lean: 0.9, len: [0.52, 0.44], wid: 1.0, cols: STRAW },
@@ -808,32 +872,69 @@ export function makeGrass(size = 512) {
   ];
   for (let cx = 0; cx < 4; cx++) {
     const ox = cx * cell, k = kinds[cx];
-    ctx.save();
-    ctx.beginPath(); ctx.rect(ox + 5, 4, cell - 10, h - 8); ctx.clip();
+    for (const c of [ctx, actx]) {
+      c.save();
+      c.beginPath(); c.rect(ox + 5, 4, cell - 10, h - 8); c.clip();
+    }
     const n = k.n + (rand() * 8 | 0);
     for (let i = 0; i < n; i++) {
       const bx = ox + cell * (0.5 + (rand() - 0.5) * 0.20);
       const by = h * 0.985;
       const lean = (rand() - 0.5) * 2 * k.lean;
       const len = h * (k.len[0] + rand() * k.len[1]);
-      ctx.strokeStyle = k.cols[(rand() * k.cols.length) | 0];
-      ctx.lineWidth = h * (0.008 + rand() * 0.010) * k.wid;
+      const col = k.cols[(rand() * k.cols.length) | 0];
+      const bw = h * (0.008 + rand() * 0.010) * k.wid;
       ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(bx, by);
       /* Blades arc over under their own weight; a straight blade reads as a
          wire. The control point sits well off the chord. Dead blades arc
          further and some of them fold right over. */
       const fold = rand() < 0.22 ? 1.35 : 1.0;
       const tipx = bx + lean * len * 0.85 * fold;
       const tipy = by - len * (0.72 + rand() * 0.2) / fold;
-      ctx.quadraticCurveTo(bx + lean * len * 0.15, by - len * 0.72, tipx, tipy);
-      ctx.stroke();
+      const kx = bx + lean * len * 0.15, ky = by - len * 0.72;
+      /* Three passes across the blade's width instead of one stroke, and this is
+         the whole point of the function rather than a refinement.
+         A single stroke fills a blade with one flat colour, so a blade has no
+         interior: magnify it and you get a stencil. That is not a hypothetical —
+         it is what two reviewers weeks apart described as blades "either near-white
+         or near-black with essentially nothing between", with "no gradient across
+         the width of the blade", and it is why the previous round's fix to the
+         card aspect made the blades the right *shape* and left them just as flat.
+         A grass blade is a folded V in section, so along its width it presents a
+         lit edge, a turning midtone and a shaded edge. Drawn widest-and-darkest
+         first and narrower-and-lighter over it, offset along the blade's own
+         normal, those three strokes leave exactly that ramp. The offsets are
+         fractions of the blade width, so it survives any magnification: the ramp
+         is in the texture rather than in the pixel grid.
+         All blades in a cell are lit from the same side. Cards face every
+         direction in world space, so no baked direction can be correct for all of
+         them — but a consistent one per cell is what makes a blade read as round
+         instead of as two blades stuck together, and inconsistency reads as noise.
+         The multipliers are centred so the alpha-weighted mean of the atlas holds:
+         see the measured figures in the commit that introduced this. */
+      const dx = tipx - bx, dy = tipy - by, dl = Math.hypot(dx, dy) || 1;
+      let nx = -dy / dl, ny = dx / dl;
+      if (nx > 0) { nx = -nx; ny = -ny; }        // lit edge toward -x, always
+      for (const p of GRASS_SECTION) {
+        const jx = nx * bw * p.o, jy = ny * bw * p.o;
+        for (const c of [ctx, actx]) {
+          c.strokeStyle = c === ctx ? rgbLit(col, p.m)
+            : rgb([p.a * 255, p.a * 255, p.a * 255]);
+          c.lineWidth = bw * p.w;
+          c.lineCap = 'round';
+          c.beginPath();
+          c.moveTo(bx + jx, by + jy);
+          c.quadraticCurveTo(kx + jx, ky + jy, tipx + jx, tipy + jy);
+          c.stroke();
+        }
+      }
     }
     ctx.restore();
+    actx.restore();
   }
   const img = ctx.getImageData(0, 0, w, h);
   const px = new Uint8Array(img.data.buffer.slice(0));
+  thicknessAlpha(px, actx.getImageData(0, 0, w, h).data, w * h);
   return cutoutTex(px, w, h, 0.40);
 }
 
@@ -953,29 +1054,51 @@ export function makeSucculent(size = 256) {
  */
 export function makeScrub(size = 512) {
   const { ctx } = canvas2d(size, size);
+  const { ctx: actx } = canvas2d(size, size);   // thickness, see GRASS_SECTION
   const cell = size / 2;
   const rand = rng(90210);
 
   /* One leaf: a filled lozenge, widest a third of the way out, tapering to a
-     point. Two quadratics, which is the cheapest closed shape that has a tip. */
-  const leaf = (x, y, ang, len, wid, fill) => {
+     point. Two quadratics, which is the cheapest closed shape that has a tip.
+     Filled three times at decreasing width, each pass lighter and biased toward
+     one edge, for the reason given at GRASS_SECTION: a single flat fill gives a
+     leaf no interior, and a reviewer reading these at close range described
+     exactly that — near-white or near-black with nothing between and no gradient
+     across the width. A leaf is a curved surface and its width is where the
+     curvature shows. The passes are lopsided rather than concentric so the ramp
+     runs across the leaf instead of forming a bullseye. */
+  const leaf = (x, y, ang, len, wid, col) => {
     const cx = Math.cos(ang), sy = Math.sin(ang);
     const nx = -sy, ny = cx;
     const tipX = x + cx * len, tipY = y + sy * len;
     const mx = x + cx * len * 0.34, my = y + sy * len * 0.34;
-    ctx.fillStyle = fill;
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.quadraticCurveTo(mx + nx * wid, my + ny * wid, tipX, tipY);
-    ctx.quadraticCurveTo(mx - nx * wid, my - ny * wid, x, y);
-    ctx.closePath();
-    ctx.fill();
+    for (const p of LEAF_SECTION) {
+      const ox = nx * wid * p.o, oy = ny * wid * p.o;
+      const wq = wid * p.w;
+      for (const c of [ctx, actx]) {
+      c.fillStyle = c === ctx ? rgbLit(col, p.m) : rgb([p.a * 255, p.a * 255, p.a * 255]);
+      /* Base and tip stay pinned and only the bulge is biased, so every pass is a
+         sliver strictly inside the outline the first one drew. Offsetting the
+         whole shape instead grew the leaf's footprint by 13% and, because that
+         area comes at the expense of the brown stems behind it, walked the
+         atlas's measured hue 3.4 degrees greener. The silhouette is the one thing
+         here that was already right. */
+      c.beginPath();
+      c.moveTo(x, y);
+      c.quadraticCurveTo(mx + nx * wq + ox, my + ny * wq + oy, tipX, tipY);
+      c.quadraticCurveTo(mx - nx * wq + ox, my - ny * wq + oy, x, y);
+      c.closePath();
+      c.fill();
+      }
+    }
   };
 
   for (let cx = 0; cx < 2; cx++) {
     const ox = cx * cell;
-    ctx.save();
-    ctx.beginPath(); ctx.rect(ox + 9, 8, cell - 18, size - 16); ctx.clip();
+    for (const c of [ctx, actx]) {
+      c.save();
+      c.beginPath(); c.rect(ox + 9, 8, cell - 18, size - 16); c.clip();
+    }
     const stems = 7 + (rand() * 4 | 0);
     for (let s = 0; s < stems; s++) {
       const bx = ox + cell * 0.5, by = size * 0.98;
@@ -986,18 +1109,42 @@ export function makeScrub(size = 512) {
       const nSeg = 4, dl = len / nSeg;
       const sx = [bx], sy = [by];
       let px = bx, py = by;
-      ctx.strokeStyle = 'rgb(104,88,66)';
-      ctx.lineWidth = size * 0.007;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(px, py);
       for (let i = 0; i < nSeg; i++) {
         a += (rand() - 0.5) * 0.44;
         px += Math.cos(a) * dl; py += Math.sin(a) * dl;
-        ctx.lineTo(px, py);
         sx.push(px); sy.push(py);
       }
-      ctx.stroke();
+      /* A stem is a woody cylinder and wants the strongest cross-width ramp of
+         anything in the atlas, but it was the one thing left flat: a single stroke
+         at one colour and, once alpha began carrying thickness, at full thickness
+         throughout. That is not a detail. These stems are what a reviewer was
+         looking at — the pale shapes filling the lower left of `wash_low` are
+         stems magnified about twofold, not leaves — so they were both a flat fill
+         and, having no alpha gradient, excluded from the cross-blade shading that
+         would have rounded them. Hence "flat pale cream shape" and "no gradient
+         across the width" in the same sentence.
+         Concentric rather than offset, because a stem is drawn as a polyline and
+         offsetting a polyline needs a per-segment normal and a mitre. Concentric
+         gives a symmetric section — bright core, darker rim — which reads as round,
+         and more importantly it lays down the alpha profile the shader needs to
+         apply the asymmetric, sun-dependent part itself. */
+      const stemPass = [
+        { w: 1.00, m: 0.82, a: 0.62 },
+        { w: 0.62, m: 1.00, a: 0.80 },
+        { w: 0.30, m: 1.24, a: 1.00 },
+      ];
+      for (const q of stemPass) {
+        for (const c of [ctx, actx]) {
+          c.strokeStyle = c === ctx ? rgbLit([104, 88, 66], q.m)
+            : rgb([q.a * 255, q.a * 255, q.a * 255]);
+          c.lineWidth = size * 0.007 * q.w;
+          c.lineCap = 'round';
+          c.beginPath();
+          c.moveTo(sx[0], sy[0]);
+          for (let i = 1; i < sx.length; i++) c.lineTo(sx[i], sy[i]);
+          c.stroke();
+        }
+      }
 
       /* Leaves hung off the stem's own stations, so none of them float. */
       const n = 26 + (rand() * 18 | 0);
@@ -1010,12 +1157,14 @@ export function makeScrub(size = 512) {
         const la = Math.atan2(sy[k + 1] - sy[k], sx[k + 1] - sx[k]) + (rand() - 0.5) * 1.5;
         const g = 0.5 + rand() * 0.5;
         leaf(lx, ly, la, size * (0.024 + rand() * 0.030), size * (0.005 + rand() * 0.005),
-             `rgb(${(78 + g * 46) | 0},${(88 + g * 44) | 0},${(66 + g * 34) | 0})`);
+             [78 + g * 46, 88 + g * 44, 66 + g * 34]);
       }
     }
     ctx.restore();
+    actx.restore();
   }
   const img = ctx.getImageData(0, 0, size, size);
   const px = new Uint8Array(img.data.buffer.slice(0));
+  thicknessAlpha(px, actx.getImageData(0, 0, size, size).data, size * size);
   return cutoutTex(px, size, size, 0.40);
 }

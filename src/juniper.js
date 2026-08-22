@@ -1421,6 +1421,23 @@ export function makeFoliageMaterial(map) {
        the flat 1 they carried; see `addSun` in vegetation.js for why that stub was
        the cause of a shipped defect. */
     uSkyOcc: { value: 0.0 },
+    /* Extra forward scatter at the cutout's edge, where a blade is thinnest. See
+       its use. Zero by default, so the hero crown and the mid tier — neither of
+       which carries transmission at all — cannot be reached by it. */
+    uTransRim: { value: 0.0 },
+    /* Whether the knee compresses irradiance (1) or the albedo-times-irradiance
+       product (0, and the historical behaviour). See its use. */
+    uKneeAlb: { value: 0.0 },
+    /* Cross-blade cylindrical shading from the cutout's alpha gradient, as a
+       signed fraction: 0.8 means one edge of a blade goes 80% brighter and the
+       other 80% darker when the sun is across it. See its use. */
+    uBladeRound: { value: 0.0 },
+    /* How strongly the ambient fill follows the sun's half of the sky. See its
+       use. Zero by default, which is a uniform fill. */
+    uAmbWrap: { value: 0.0 },
+    /* The floor of the atlas's thickness profile, so the silhouette can be taken
+       back out of it. 1 means the atlas has no profile. See its use. */
+    uThickFloor: { value: 1.0 },
   };
   mat.userData.uniforms = u;
   mat.onBeforeCompile = (sh) => {
@@ -1433,7 +1450,9 @@ export function makeFoliageMaterial(map) {
       .replace('#include <common>',
         '#include <common>\nvarying float vSun;\nuniform vec3 uSunDir;\nuniform vec3 uTrans;\n' +
         'uniform float uTransAmt;\nuniform float uTransIso;\nuniform float uDirCap;\n' +
-        'uniform float uAmbScale;\nuniform float uSkyOcc;')
+        'uniform float uAmbScale;\nuniform float uSkyOcc;\nuniform float uTransRim;\n' +
+        'uniform float uKneeAlb;\nuniform float uBladeRound;\nuniform float uAmbWrap;\n' +
+        'uniform float uThickFloor;')
       /* Declared before the loop that fills them, and read after it. Zero when
          the scene has no directional light at all, which makes `folSunVis` zero
          and the transmission off — the right way round, since there is then no sun
@@ -1457,6 +1476,21 @@ export function makeFoliageMaterial(map) {
          anywhere — a checkerboard on the horizon, flagged independently by two
          critics. */
       .replace('#include <alphatest_fragment>', /* glsl */`
+        float folRawA = diffuseColor.a;
+        /* Thickness out, silhouette back.
+           Alpha now carries optical thickness for the cross-blade shading, but
+           alpha is also what the coverage test cuts the shape out with, and those
+           two uses fight: dropping a blade's interior to 0.62 thinned distant
+           cards enough to lift whole-frame median V by 10% in wall_lit as bright
+           rock showed through where plants had been. Vegetation reading thinner is
+           the opposite of what this scene was last asked for.
+           The outermost of the three passes is at the floor uniformly, and it is
+           the pass that draws the silhouette, so dividing by the floor returns the
+           antialiased edge to exactly the value it had before the profile existed
+           while the interior saturates at 1. The shading reads folRawA, which
+           still has the profile. One divide, and the two uses stop fighting.
+           Defaults to 1, so an atlas without a profile is untouched. */
+        diffuseColor.a = min( 1.0, diffuseColor.a / uThickFloor );
         {
           float aw = max( fwidth( diffuseColor.a ), 1e-5 );
           float cov = ( diffuseColor.a - alphaTest ) / aw + 0.5;
@@ -1501,8 +1535,57 @@ export function makeFoliageMaterial(map) {
       .replace('#include <lights_fragment_end>', /* glsl */`
         #include <lights_fragment_end>
         reflectedLight.directDiffuse *= vSun;
-        reflectedLight.directDiffuse =
-          uDirCap * ( 1.0 - exp( -reflectedLight.directDiffuse / uDirCap ) );
+        /* The knee, and where it is applied matters more than its value.
+           It exists because a card presenting a full-facing normal to a
+           15-degree key takes about 3.9x what the grazing-lit floor beside it
+           takes, and it stands in for a volume of cords whose sub-pixel average
+           saturates instead of following one cosine. That argument is entirely
+           about *irradiance* — how much light arrives — and says nothing about
+           albedo.
+           Applied to the product, as it was, it destroys albedo detail: the
+           diffuse term is albedo times irradiance, and once the exponential
+           saturates the output is uDirCap whatever went in. Measured on a sunlit
+           grass blade, mean V 0.730 with a maximum of 0.737 — a 0.7% range across
+           the whole blade, on an albedo carrying a deliberate 30% ramp. So a lit
+           blade is a flat plateau and an unlit one is near-black, which is
+           precisely the "either near-white or near-black with essentially nothing
+           between, no gradient across the width" that two reviewers reported. The
+           atlas ramp was arriving and being flattened here.
+           Dividing the albedo out first, compressing the irradiance, and
+           multiplying it back keeps the whole point of the knee and lets albedo
+           through untouched. uKneeAlb is 0 by default, in which case this is the
+           previous expression to the bit — the hero crown and the mid tier keep
+           what they were tuned with. Note the hero's own "hard lit/shade split
+           within each spray" is very likely this same saturation, and switching it
+           over is a real improvement left for a round that can verify it. */
+        {
+          vec3 alb = max( diffuseColor.rgb, vec3( 1e-3 ) );
+          vec3 e = mix( reflectedLight.directDiffuse,
+                        reflectedLight.directDiffuse / alb, uKneeAlb );
+          e = uDirCap * ( 1.0 - exp( -e / uDirCap ) );
+          reflectedLight.directDiffuse = mix( e, e * alb, uKneeAlb );
+        }
+        /* Round each blade across its own width.
+           A card is a flat quad carrying dozens of blades, so every blade on it
+           shares one geometric normal and therefore one shading value: a blade has
+           a lit side and a shaded side in life and none here. That is the
+           "no gradient across the width of the blade" finding, and it cannot be
+           fixed in the atlas — a blade is two to five texels wide, so any ramp
+           painted into it is averaged away by the mip chain before it reaches a
+           pixel. It also cannot be fixed by perturbing the normal before lighting,
+           because the knee above compresses irradiance and would flatten whatever
+           the perturbation produced.
+           But the cutout's alpha already carries the one piece of information
+           needed: it peaks along each blade's spine and falls to the cutoff at
+           each edge, so its screen-space gradient is a per-blade cross-width axis,
+           free and at whatever scale the blade is being drawn. Tilt an imaginary
+           cross-section along that axis, ask which way the sun is, and the blade
+           gains a bright edge and a dark edge with a continuous ramp between them.
+           Applied after the knee so the knee cannot flatten it, which makes it a
+           shading term rather than a BRDF one — the honest description is a cheap
+           stand-in for a cylindrical section, and it is doing the job that a
+           per-blade normal would do if a blade had geometry of its own.
+           Zero by default. */
         reflectedLight.directSpecular *= 0.28 * vSun;
         /* Sky visibility. A card stands in for a volume of leaves, and a leaf
            inside that volume sees a fraction of the sky rather than all of it.
@@ -1516,6 +1599,81 @@ export function makeFoliageMaterial(map) {
            knee does not reach. Defaults to 1, so nothing that does not ask for
            it changes. */
         reflectedLight.indirectDiffuse *= uAmbScale * mix( 1.0, vSun, uSkyOcc );
+        /* Round each blade across its own width, and note where this sits: after
+           the ambient scale, applied to both terms, because the ambient is the
+           dominant one. The note above records that a 7.5x sweep of the knee moved
+           the level 14% and left the population maximum untouched — these cards
+           are mostly lit by a term with no orientation dependence at all. Applying
+           the rounding to the direct term alone was measured at uBladeRound 3.0, a
+           deliberately absurd value, and produced no visible change: whatever ramp
+           it made was diluted by the flat ambient sitting on top of it. So a blade
+           is uniform because most of its light is uniform.
+           A card is a flat quad carrying dozens of blades, so every blade on it
+           shares one geometric normal and one shading value. That is the reported
+           "no gradient across the width of the blade", and it cannot be fixed in
+           the atlas — a blade is two to five texels wide, so a painted ramp is
+           averaged away by the mip chain — nor by perturbing the normal before
+           lighting, since the knee compresses irradiance and would flatten it.
+           What the cutout does have is alpha, which now carries optical thickness
+           rather than just a silhouette: full along each blade's spine, tapering
+           to the cutoff at its edges. Its screen-space gradient is therefore a
+           per-blade cross-width axis, free, and correct at whatever size the blade
+           is drawn. Tilting an imaginary cross-section along that axis and asking
+           which way the sun is gives one edge a bright rim, the other a shaded
+           one, and a continuous ramp between.
+           Scaling the total rather than re-lighting is a cheat, and the honest
+           description is a stand-in for the cylindrical section a blade would have
+           if it had geometry of its own. Zero by default. */
+        if ( uBladeRound > 0.0 ) {
+          vec2 ga = vec2( dFdx( folRawA ), dFdy( folRawA ) );
+          float gl = length( ga );
+          if ( gl > 1e-6 ) {
+            vec3 sunV = normalize( ( viewMatrix * vec4( uSunDir, 0.0 ) ).xyz );
+            /* 0 along the spine, 1 at the edge, so the ramp is continuous and the
+               term vanishes wherever alpha is flat and its gradient meaningless. */
+            float edge = 1.0 - clamp( ( folRawA - alphaTest )
+              / max( 1.0 - alphaTest, 1e-3 ), 0.0, 1.0 );
+            /* The cross-blade axis has to be built in three dimensions, not in the
+               screen plane. Tilting the normal inside the screen plane and dotting
+               with the sun looks equivalent and is not: in a frame shot into the
+               sun the sun's view-space direction is almost pure -z, its x and y are
+               both near zero, and the whole term collapses. Measured — at
+               uBladeRound 3.0 the frame was unchanged. So take the screen-space
+               gradient, project it into the card's own plane to get the real
+               cross-blade direction, tilt the normal along that, and compare
+               cosines. The difference form has no division and so cannot blow up
+               where a card is edge-on to the sun. */
+            vec3 n = normalize( normal );
+            vec3 s = vec3( ga.x, -ga.y, 0.0 ) / gl;
+            vec3 t = s - n * dot( s, n );
+            if ( length( t ) > 1e-4 ) {
+              t = normalize( t );
+              vec3 nb = normalize( n - t * uBladeRound * edge );
+              float f = 1.0 + ( dot( nb, sunV ) - dot( n, sunV ) );
+              f = clamp( f, 0.25, 1.60 );
+              reflectedLight.directDiffuse *= f;
+              reflectedLight.indirectDiffuse *= f;
+            }
+          }
+        }
+        /* Ambient that knows where the sun is.
+           At golden hour the sky is nothing like uniform — the aureole around a
+           low sun is several times the brightness of the opposite horizon — and
+           these cards are lit mostly by ambient. That is the measured reason the
+           clump reads as two tones: with the knee holding direct at a ceiling,
+           what remains is a term with no orientation dependence whatever, so every
+           card in a clump takes the same fill and the only distinction left is
+           whether a card is in sun or not. Hence "either near-white or near-black
+           with essentially nothing between".
+           Weighting the fill by how much a card faces the sun's half of the sky
+           puts a spread of midtones between those two, which is what a clump of
+           blades at many angles should show. Wrapped rather than clamped, so a
+           card facing fully away still receives the opposite sky instead of going
+           black. Zero by default. */
+        reflectedLight.indirectDiffuse *= mix( 1.0,
+          0.62 + 0.38 * dot( normalize( normal ),
+                             normalize( ( viewMatrix * vec4( uSunDir, 0.0 ) ).xyz ) ),
+          uAmbWrap );
         /* The same occlusion applies to the environment's specular lobe, and it
            has to, or the term becomes the whole story: a card at roughness 0.92
            against a sky this bright still returns a broad IBL highlight, and
@@ -1560,8 +1718,18 @@ export function makeFoliageMaterial(map) {
              for what this change costs: in open sun it is 1, so every framing that
              reads correctly today is untouched to the bit, and only shadowed
              foliage moves. */
+          /* A blade thins toward its edge, so that is where the least material
+             stands between the sun and the eye and where a backlit leaf actually
+             glows. The cutout's own alpha ramp is a usable stand-in for that
+             thickness: it falls off across the last few texels of every blade,
+             which is exactly the band wanted, and it costs nothing because it is
+             already sampled. Read before the coverage ramp overwrites it.
+             Rides on the forward-scatter lobe rather than adding a term of its
+             own, so it inherits both gates — no sun, no rim, and none of it
+             pointing away from the sun. Zero by default. */
+          float rim = 1.0 - smoothstep( alphaTest, alphaTest + 0.34, folRawA );
           reflectedLight.directDiffuse += diffuseColor.rgb * uTrans * folSunVis
-            * ( phase * back * uTransAmt + uTransIso );
+            * ( phase * back * uTransAmt * ( 1.0 + uTransRim * rim ) + uTransIso );
         }`);
   };
   mat.customProgramCacheKey = () => 'juniper-foliage';

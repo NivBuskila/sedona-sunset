@@ -1026,7 +1026,16 @@ export function buildVegetation(path, terrain, rocks) {
   grassMat.color = new THREE.Color(0.90, 0.85, 0.78);
   {
     const u = grassMat.userData.uniforms;
-    u.uDirCap.value = 0.22;
+    /* Knee in irradiance space, so the blade's own albedo ramp survives it; see
+       the note at the knee. The cap is the old one divided by this atlas's mean
+       linear albedo — 0.585 measured in sRGB, so about 0.30 linear, times the
+       0.90 red channel of the tint — which holds the level the old cap produced
+       while letting the albedo through. */
+    u.uKneeAlb.value = 1.0;
+    u.uDirCap.value = 0.70;
+    u.uBladeRound.value = 1.15;
+    u.uAmbWrap.value = 1.0;
+    u.uThickFloor.value = 0.62;   // GRASS_SECTION's outer pass
     u.uAmbScale.value = 0.52;
     /* Dry grass transmits straw rather than the crown's dead-scale amber, and a
        dead blade is thinner and leakier than a live leaf. */
@@ -1034,6 +1043,7 @@ export function buildVegetation(path, terrain, rocks) {
     u.uTransAmt.value = 0.34;
     u.uTransIso.value = 0.30;
     u.uSkyOcc.value = 1.0;   // see addSun
+    u.uTransRim.value = 0.80;
   }
   const scrubMat = makeFoliageMaterial(scrubTex());
   scrubMat.alphaTest = 0.40;
@@ -1057,7 +1067,11 @@ export function buildVegetation(path, terrain, rocks) {
        the backlit rim, which is the part that was already too bright.
        Greener and less amber than the crown's, which is tuned for dead scale.
        Light through a live grey-green desert leaf comes out yellow-green. */
-    u.uDirCap.value = 0.18;
+    u.uKneeAlb.value = 1.0;      // see grassMat above
+    u.uDirCap.value = 1.10;      // 0.18 over this atlas's ~0.14 mean linear albedo
+    u.uBladeRound.value = 1.00;
+    u.uAmbWrap.value = 1.0;
+    u.uThickFloor.value = 0.62;   // LEAF_SECTION's outer pass
     u.uAmbScale.value = 0.46;
     u.uTrans.value = new THREE.Color(1.22, 1.14, 0.64);
     u.uTransAmt.value = 0.30;
@@ -1067,6 +1081,7 @@ export function buildVegetation(path, terrain, rocks) {
        killing transmission outright moved V 0.600 to 0.522, so the leak was a
        seventh of the problem and the flat cream was the other six. */
     u.uSkyOcc.value = 1.0;
+    u.uTransRim.value = 0.70;
   }
   /* Cactus and agave are succulent: waxy, so a touch glossier than anything
      else in the frame, and a pale glaucous blue-green — much lighter and bluer
