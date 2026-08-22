@@ -7990,3 +7990,89 @@ no `instanceColor`, which is indistinguishable from a genuinely black instance
 colour. `talus0-3` print that way. I nearly attributed a different path from it
 before noticing `dip`, `aspect` and `seat` were non-zero on the same rows. The
 zeros should be printed as a dash.
+
+---
+
+## The reprojection ablation: my prediction was falsified, and inverted
+
+Pre-registered: *"striations reduce markedly on far_320"* with the grit
+reprojection ablated. **They increased sharply.** With XZ retained on steep
+ground the whole headwall combs into long heavy fibre; the shipped frame is
+mild by comparison. Renders `rp0` (ablated) against the `ab0` baseline, which
+was still valid because `src/` had not moved since it was taken.
+
+**The reprojection is load-bearing and must not be removed.** That is the
+opposite of what my analysis said, and the analysis was wrong in a way worth
+recording.
+
+### Where the model went wrong
+
+`_dipaniso.mjs` computes the **geometric stretch of the texture** on a tilted
+plane, which is real and correctly calculated. It is not the quantity that makes
+the streaks. What smears the surface is the **anisotropy of the sample
+footprint** under a grazing view: on a steep face seen near edge-on the XZ
+projection's footprint is enormously elongated, the filter averages along that
+axis, and the result is a smear along the dip. The vertical projections have a
+far rounder footprint on the same face, which is why swapping to them helps.
+
+So the model measured a real thing that was not the mechanism, and being
+quantitative did not save it.
+
+**And I over-claimed the corroboration.** I presented "predicts the severity
+ordering, 36.0% against 23.7%" as though it discriminated. It does not: far_320
+simply has more steep ground than far_270, so *any* slope-driven mechanism
+predicts that ordering. It was consistent with my model and with every rival,
+and I read it as support. That is the fourth instrument-shaped error today and
+the first where the instrument was my own reasoning rather than a tool.
+
+### The tangent frame is real, and is not the driver either
+
+Defect 2 measured true - the frame is built from world X regardless of which
+projection supplied `gr.gb`, a mean 41.2 degrees off and up to a quarter turn.
+Implemented properly as `tsToWorldAx`, with the axis matched to the dominant
+projection (`world Z` when `|N.x|` leads on steep ground, `world X` otherwise),
+which is byte-safe in the near field because `gritNK` is zero there.
+
+Rendered as `tf1`. **By eye the striations are essentially unchanged**, and the
+directional autocorrelation on the lit slope is ambiguous rather than improved.
+It is a correctness fix with no demonstrable benefit, so it is **not landed** -
+the tree is frozen and a reshoot costs more than an invisible correction is
+worth. The code is described here so it can be picked up:
+
+```glsl
+vec3 gAx = (steep > 0.006 && abs(gN.x) >= abs(gN.z))
+         ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+gWN = tsToWorldAx(normalize(vec3((gritGB - 0.5) * (GRIT_N * gritNK), 1.0)), gWN, gAx);
+```
+
+### What the ablation actually points at, untested
+
+Since the reprojection **helps**, the candidate it suggests is the inverse of my
+original proposal: apply it *earlier and harder* rather than later. `steep =
+smoothstep(0.14, 0.40, slope)` delivers only 0.36 average weight across the
+38-45 degree band that dominates far_320, so most of the frame is getting a
+third of a treatment that works. Bringing that to full weight, and sharpening
+`pw` with the `pow(...,4)` weighting `triW` already uses, is the untested lever
+- and performance has just reported 26% headroom, so a fourth fetch pair is
+affordable in a way it was not this morning.
+
+**Not run.** It is a new hypothesis after two failed ones and it needs its own
+turn rather than a rushed change on a frozen tree.
+
+## `shade_far`'s corner class, attributed by render
+
+`_pixowner` on the two palest corner pixels:
+
+- `0.010,0.927`  rgb 237,219,183  ->  **`gravel3`** (hiding it gives 222,180,135)
+- `0.058,0.897`  rgb 220,161,111  ->  **`scour`**
+
+Both are classes the census puts at **`aDust` 0.00-0.01**, because `resid =
+clamp((rad - 0.075) / 0.16, 0, 1)` is zero below a 75 mm radius. So the
+proud-fraction term multiplies nothing and the morning's fix is a no-op on them
+**by construction** - confirmed by render, not inferred.
+
+**Their paleness is per-instance lithology, not the dust film.** The lever is the
+pale fraction of the mix, and `MIX_TRANSPORTED` is on record earlier in this file
+as never having been thinned while `MIX_LOCAL` was, for this exact complaint.
+That is a one-constant change on a CPU path with an offline census to verify it,
+and it is the right next item for this defect.
