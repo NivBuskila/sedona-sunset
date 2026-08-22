@@ -9850,3 +9850,139 @@ rise from the vegetation work — while **the chain's own multiplier fell from 7
 Also noted and *not* a regression: the dark mottled banding on pale plate tops is
 present identically in the previous build, so it is albedo and predates the detail
 normal. Checked by a paired full-resolution crop rather than assumed.
+
+## The floating slab: three candidates, two falsified, and a real bug that is not this one
+
+The item was ranked highest-return on the near field. It is reported here as
+**not reproduced at the stated location**, with a genuine and separate defect
+found on the way, measured, fixed, and then reverted for a cost.
+
+### The complaint does not appear where it was placed
+
+x 960-1180 at y ~690 in sys7deliverpx_ground.png (1997x1123) is open bed and
+pebbles. `_contactprof.mjs` down those columns shows luminance bouncing 25 to 220
+with no clast-then-lit-floor-then-shadow ordering anywhere in the band. There is
+a small pale clast at x 960 - R/G 1.30 against the bed's 1.68 - but it is nine
+pixels tall, not a hero slab.
+
+Profiled at the actual hero slab (x 541-661, bottom rim y ~898) the ordering is
+**clast straight into shadow**: 150-198 code values on the lit top at y 890-897,
+then 25-40 at y 898-904. There is no lit run between them. At this slab the
+shadow starts at the rim.
+
+### The signature, counted over the whole frame
+
+`_sliver.mjs` turns the one coordinate into a population figure by looking for
+the ordering rather than the location, classifying by hue as well as luminance
+because a lit bed pixel and a lit clast pixel share luminances but never share
+colour - bed R/G ~1.7, pale clast 1.1-1.35.
+
+| frame | clast rims | with a lit gap | gap median / p90 |
+|---|---|---|---|
+| delivered | 24231 | 80 - **0.33%** | 3 px / 9 px |
+| ungraded control | 30096 | 158 - 0.52% | 3 px / 12 px |
+
+**0.33% of rims, 80 instances in the frame.** Whatever is driving the read, it is
+not that clasts systematically stand off the bed.
+
+### Candidate 1, the shadow offset: falsified
+
+The near cascade runs 20 mm depth bias and 5 mm normal bias, and the code already
+states the cost - "every centimetre of it is a centimetre of shadow deleted from
+the base of whatever casts it". About 25 mm total, roughly 8 px at near-field
+scale, which matches the observed 3-9 px gap well enough to be the prime suspect.
+Cut 3.3x to 6 mm and 1.5 mm and re-rendered: **77 to 76 instances, identical gap
+distribution.** Not the cause.
+
+### Candidate 2, the stone not where the census says: real, large, and separate
+
+This one is a genuine bug and it is worth its own entry. terrain.js opens by
+stating that heightAt is the single source of truth, that the mesh is that
+function sampled on a grid, and that the two therefore cannot disagree. The first
+half is true and **the conclusion does not follow**. A mesh is that function
+sampled *at the grid points* and linearly interpolated everywhere else, and a
+chord is not its arc.
+
+`_meshsag.mjs` measures the gap on the near-field cells (0.20 x 0.42 m):
+
+| | disagreement |
+|---|---|
+| mean | -0.1 mm |
+| p90 | **15.5 mm** |
+| p99 | **48.2 mm** |
+| worst | **124.9 mm** |
+| drawn ground *below* the seat | **46.8% of locations** |
+
+That is larger than the shadow bias it was competing with. Clasts, collars and
+scour wedges are all seated by calling heightAt at their own centre, so wherever
+the drawn bed falls below the sampled bed the stone stands off it by the
+difference - five pixels at p90, sixteen at p99. Burial cannot reach it, because
+burial is measured down from a surface the renderer never draws. (`applyScour`
+displaces mesh vertices by scourAt with no matching term in the seat, a second
+disagreement on top of this one; terrain._scour is not populated offline so its
+size is **unmeasured**, not zero.)
+
+**Fixed, verified, and reverted.** A drawnHeightAt matching the index buffer's
+quad split exactly, used at all three seat sites. Gate passed, tone held (plate
+grad/L 0.0621 to 0.0620, luminance 0.495 to 0.492, floor R/G 1.738 against
+1.736). It did **not** move the reported defect: 0.33% to 0.33%, same gap
+distribution. And it cost pale-clast coverage in the near half **11.42% to
+10.87%, 4.8% relative**.
+
+### Why zero-mean was the wrong guard, which is the law again
+
+I argued the correction was safe because the disagreement is a curvature residual
+with mean -0.1 mm, so it could not move a burial statistic. That is true of
+*height* and false of what the camera integrates. **Visible area is clipped at
+zero**: a stone raised 15 mm gains a sliver of area, a stone lowered 15 mm that
+stood 10 mm proud loses all of it. A zero-mean perturbation in height is
+therefore a negative-mean perturbation in coverage, and the response is convex
+exactly where the population is densest.
+
+This is the fifth instance of the law and the first where the offending space was
+*my own justification* rather than an inherited statistic - I guarded the mean of
+the quantity I was changing instead of the quantity the viewer sees. Whole hull
+rather than visible cap, whole population rather than the stones covering pixels,
+exact normals rather than perceived ones, bounding extents rather than projected
+area, and now **mean height rather than clipped area**.
+
+Reverted rather than landed because it does not fix what was asked, it moves
+10-30% of frame pixels, and 4.8% of clast coverage is the verified proud-fraction
+census. It may well be that the corrected geometry is right and the census was
+tuned against a wrong render - but that is a decision to take deliberately with a
+re-verified burial pass, not to slip in during a fix for something else.
+`_meshsag.mjs` reproduces the whole finding in one command.
+
+### Candidate 3, the contact darkening, is where I would look next
+
+Two mechanisms are eliminated with numbers and the signature is only 0.33% of
+rims, which together say the read is probably not a geometric gap at all but the
+absence of a cue: the bed at a stone's foot is not darker than the open bed, so
+nothing tells the eye the two are in contact and the boundary reads as a cut-out.
+That is coupled to this morning's finding that the contact term *is* the bedding
+cue and that lifting it to cure black undersides removes the thing that seats
+them. Not attempted here.
+
+### The detail normal is reaching the lighting
+
+Checkable from the source rather than by experiment, so it cost nothing: the
+mid-scale tap writes to `normal` and to nothing else. There is no path from it to
+diffuseColor - cTone and cCav are the grain layer's tone and cavity terms and
+predate it. The transform is a world-to-view direction with w = 0, applied to
+`normal` before the lighting chunks read it, so the perturbation is lit and not
+painted. The critic's "reads like albedo" is a fair description of the *result*
+at RMS 0.24 under a 15 degree sun with this much ambient, but it is not what the
+code does: the amplitude was chosen deliberately low because the
+terminator-crossing column is the guardrail that agreed with the eye, and buying
+more directional bite means spending against it. That is a trade to take
+knowingly, not a bug to fix.
+
+### The quilt population, passed on
+
+Recorded from the critic rather than measured here: a 9 px high-pass finds a
+dominant 6-8 px banded periodicity on **every** surface tested, peak-to-median
+17x to 51x, including open wash floor and cliff face, identical in the ungraded
+control, and visible unamplified across roughly 600x350 px of open floor in
+sun_gap. The five eliminated hypotheses were all clast-surface hypotheses. If it
+is on the cliff face and the open floor it was never a clast defect, and the
+population was misidentified before the first hypothesis was written.
