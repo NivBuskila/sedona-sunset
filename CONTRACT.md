@@ -470,6 +470,56 @@ Residual risk worth knowing: convergence stops checking once it is satisfied, so
 resource landing at frame 200 is still not caught. The 180-frame warmup is what covers
 that, and it is the knob to raise if a first-view capture is ever suspected.
 
+## far_320: the amphitheatre is built, and the player is standing 20 m short of its rim
+
+Measured with `tools/_headlook.mjs`, which marches the ground along the view ray from a
+station and reports each sample's elevation angle above the eye. No render. The critic
+read the arrival as "a low rounded gravel mound, not a canyon head", and the three
+candidate explanations were that the camera is not looking at the head, that the
+sun-bearing col lowered it into a mound, or that something is still in front of it. **It
+is the third**, and the numbers say so unambiguously.
+
+From station 320 the eye is at z −307.7, y 7.96. Along the view bearing:
+
+| range | ground | above eye | elevation |
+|---|---|---|---|
+| 20 m | 12.81 | +4.85 | **13.6°** ← the frame is this |
+| 55 m | 9.67 | +1.71 | 1.8° |
+| 130 m | 36.58 | +28.62 | 12.4° |
+| 180 m | 40.80 | +32.84 | 10.3° |
+
+So the profile is a **lip at 20 m**, the pour-off notch cut down behind it at 55 m, and the
+real headwall climbing to 40 m beyond 115 m. The headwall is genuinely there and genuinely
+24 m of relief — and every bit of it is hidden behind a 6.4 m apron crest twenty metres in
+front of the camera, which fills 27% of frame height on its own. The gravel mound the
+critic describes is a real object, correctly rendered; it is simply the wrong object.
+
+**Why the lip is there.** `_headRise` ramps the colluvial apron over `smoothstep(-274, -336, z)`
+and cuts the pour-off notch over `smoothstep(-332, -374, z)`. Those two ranges barely
+overlap, so the apron reaches its crest at about z −328 and the notch only begins to bite
+past −332. The channel therefore does not connect: the incision starts on the far side of
+the crest it is supposed to have cut. That is not just a composition problem, it is
+unphysical — the water that cut the pour-off had to leave through the apron, so the apron
+must be breached on the axis.
+
+**The fix, specified and not landed.** Pull the notch's onset upstream so the incision runs
+through the apron rather than beginning behind it, and check that the lip drops below the
+sight line to the bowl. Arithmetic before anyone spends a render on it: moving the onset to
+−306 only takes the lip from 13.87 to about 11.6 m, still 3.6 m above the eye and still
+blocking at 10°, so **the onset alone is not enough** and the notch wants depth as well as
+reach. Not landed because it is delivery morning, captures are running nine minutes under
+contention, and this is iterative landform tuning against a frame that also has to keep
+`far_270` — currently the strongest frame in the set at 93.3 median — untouched, and
+`far_270`'s station at z ≈ −258 is only fifty metres upstream of any change here.
+
+**A symmetry worth keeping.** The col was deliberately cut on the sun's bearing rather than
+the axis, and the note above it says why: "an axial notch misses the sight line by fourteen
+metres at the far end." That was right, and it fixed the light. The mirror image is what
+bites here — the sun-bearing col is nine degrees off the *view* axis, so light gets into
+the bowl and the player's line of sight does not. Checked directly: along the −9° sun
+bearing the near rise is 16.4°, higher still. **A landform can be open to the sun and closed
+to the eye, and one measurement does not stand in for the other.**
+
 ## RULE: a tool that measures nothing must not print a number
 
 Four instances now, so it is a rule rather than an observation. `grad.mjs` turned an
