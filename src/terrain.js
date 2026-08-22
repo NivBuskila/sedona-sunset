@@ -1705,7 +1705,25 @@ float lin = 0.44 * bsin(dot(wxz, vec2(0.9990, 0.0447)) / 0.055 + linW * 5.0)
 float rakeW = 0.88 * smoothstep(0.35, 0.10, slope);
 float rake = 0.0;
 if (rakeW * grainF > 0.002) {
-  vec2 ddx = dFdx(d1), ddy = dFdy(d1);
+  /* ---- march the map at the mip everything else reads it at ----
+     These gradients used to be the raw dFdx/dFdy of d1, which is up to three
+     mip levels blurrier than the read of this very same map thirty lines up:
+     dirtA and dirtM both take aniso as an LOD bias, worth -3 on a floor seen
+     down its length, and dirtN is sharp. So the relief that draws the pebbles
+     was being sampled at mip 0-ish and the relief that shadows them at mip 3,
+     where a 25 mm grain field has been averaged most of the way to its mean.
+     That is the whole defect: the bumps were visible and their shadows were
+     being marched across a surface that had been smoothed flat before the
+     march started, so the term returned a sprinkle of 25 mm specks instead of
+     a bed of raking shadows. Scaling the gradients by exp2(aniso) is exactly
+     the same LOD the biased fetches get — a bias of b is a gradient scale of
+     2^b — expressed the only way texture2DGradEXT will take it.
+     Note this is a *sharpening*, so it cannot reach further than the data: on
+     an isotropic footprint aniso is 0, the scale is 1.0 and the march is
+     bit-identical to what it was. It only bites where the footprint is
+     elongated, which is every floor seen down the wash. */
+  float lodK = exp2(aniso);
+  vec2 ddx = dFdx(d1) * lodK, ddy = dFdy(d1) * lodK;
   float dirtH = texture2DGradEXT(uDirtM, d1, ddx, ddy).b;
   for (int k = 1; k <= 8; k++) {
     float t = float(k) * 0.011;                      // metres along the sun azimuth
@@ -2666,7 +2684,47 @@ export function makeTerrainMaterial(tex) {
       .replace('#include <normal_fragment_maps>',
         'normal = normalize((viewMatrix * vec4(tNrmW, 0.0)).xyz);')
       .replace('#include <aomap_fragment>', /* glsl */`
-      reflectedLight.indirectDiffuse *= tAO;
+      /* ---- occlusion tints toward the albedo, it does not go to black ----
+       * This was reflectedLight.indirectDiffuse *= tAO, and a geometric
+       * occlusion term multiplying indirect light toward zero is not a physical
+       * quantity. tAO answers "how much of the sky can this point see", and
+       * scaling the sky term by it is right as far as it goes — but a crevice
+       * that cannot see the sky is not dark, it is lit by its own walls, and for
+       * red sandstone every one of those bounces is warm. Driving it to zero
+       * throws away the part of the light that is *most* strongly coloured by
+       * the rock.
+       *
+       * What that cost, measured by System 4: 40.8% of wall_shade had its
+       * minimum channel under ten code values and 6.0% was black on every
+       * channel. Shaded sandstone is hue 4.5 at saturation 0.47, which needs
+       * blue near twenty code values to exist at all, and it had six. The
+       * chroma was never wrong — there was nowhere to put it.
+       *
+       * The replacement is the Jimenez multi-bounce fit: a cubic in visibility
+       * whose coefficients are a function of albedo, so occlusion approaches the
+       * surface's own colour instead of black. Two properties make it the right
+       * shape here rather than merely a brighter one:
+       *
+       *   - at v = 1 the cubic evaluates to 1 and the clamp pins it there, so an
+       *     unoccluded surface is *exactly* unchanged. Open sunlit ground cannot
+       *     move, which is the guardrail this had to meet.
+       *   - it is clamped below by v, so it can never darken anything. The only
+       *     pixels it can reach are the ones being crushed.
+       *
+       * Note this is deliberately the *same* expression System 2 is putting at
+       * rock.js's matching line, so the two surfaces do not diverge in approach.
+       * If you change one, change both.
+       *
+       * Why a mean-based gate could never have caught this: lifting every pixel
+       * whose max channel is under 10 cv moves the region mean by 1.3% and the
+       * shadow ratio from 0.211 to 0.214, still mid-band. A ratio of means says
+       * nothing about the bottom of a distribution. */
+      vec3 aoA = material.diffuseColor;
+      vec3 aoC1 =  2.0404 * aoA - 0.3324;
+      vec3 aoC2 = -4.7951 * aoA + 0.6417;
+      vec3 aoC3 =  2.7552 * aoA + 0.6903;
+      reflectedLight.indirectDiffuse *=
+        clamp(tAO * (aoC1 * tAO * tAO + aoC2 * tAO + aoC3), vec3(tAO), vec3(1.0));
 
       /* ---- there used to be an additive shadow airlight here; System 4 ----
          System 1 added it, and its reasoning was sound at the time: measured on
