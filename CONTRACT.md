@@ -277,7 +277,50 @@ and was never live at the artefact. Both changes were reverted; the footprint ba
 limit is written up in place because the reasoning behind it is sound and reusable
 even though it fixed nothing here — see the process note below.
 
-**Where it is not, second pass.** Three more renders, each checked for liveness by
+**FOUND — it is the bank lamination `bumpFrom`**, `src/terrain.js`, in the
+`bankW > 0.004` block:
+
+```
+gWN = bumpFrom((coarse - 0.5) * inBed * bankW, gWN, 0.022 * platF);
+```
+
+Commenting out that single line clears the artefact **completely**, at 46.9% of pixels
+differing so the ablation is unambiguously live. Everything below is the trail that got
+there and, more importantly, why the obvious fix does not work.
+
+**The obvious fix does not work, and this is measured.** The scalar being
+differentiated is periodic in world height with period `1.0/th` where
+`th = 4.0 + 9.0 * mac.b`, i.e. **7.7 to 25 cm** — and the dots measure about 24 cm,
+the thick end of that range. That looks conclusive: a screen-space derivative of a
+periodic function, aliasing past half a period. The term even has a footprint fade
+already, `platF`, which is calibrated to the *sand* map's quarter-metre ripple train
+and is deliberately slow, so it is far too generous for an 0.077 m feature and cannot
+know about `th` at all. Every part of that story is true and it is still not the
+mechanism: gating the strength on `1.0 - smoothstep(0.28, 0.55, foot * th)` is **live at
+43.5% of pixels and leaves the lattice untouched**. Do not re-derive it.
+
+**What the mechanism actually appears to be.** `bumpFrom` ends with
+
+```
+float det = dot(pdx, r1);            // r1 = cross(pdy, N)
+return normalize(abs(det) * N - scale * grad);
+```
+
+`det` is the pixel footprint's area projected onto the surface normal, so it collapses
+toward zero at grazing incidence. As it does, the `abs(det) * N` term shrinks out of the
+expression and the perturbation dominates the result **without bound, regardless of
+`scale`**. On a grazing bank the bump is therefore effectively unclamped, which is why
+no amplitude fade in front of it helps and why the artefact is a lens-shaped patch: the
+patch is where the bank is most grazing. The regularity comes from `hdx`/`hdy` of the
+periodic bed function on top of that.
+
+So the fix wants to bound the perturbation against `abs(det)` inside `bumpFrom` rather
+than scale it from outside — cap `length(scale * grad)` at some fraction of `abs(det)`.
+**Not landed**, for two reasons: no render budget remained to verify it, and `bumpFrom`
+is shared with the desiccation cracks and others, so it has a blast radius well beyond
+this artefact and must be measured against the near field before it goes in.
+
+**Where it is not, second pass.** Three renders, each checked for liveness by
 diffing against the unablated frame — because one of them was not live and would
 otherwise have been read as an exclusion:
 
@@ -296,7 +339,9 @@ otherwise have been read as an exclusion:
   train at a quarter of a metre" and the dots measure ~24 cm; the match was exact and
   meant nothing.
 
-**Still open**, now narrowed to two things inside `gWN`:
+Both of the candidates the previous pass was left with — `dirtN`'s missing LOD bias and
+the `bumpFrom` pair — are now resolved: it is the second, specifically the bank
+lamination one. `dirtN` is exonerated. The narrowing that got there:
 
 1. **`dirtN`** — the base ground normal, `mix` of a 2.6 m and a 4.3 m tile rotated 0.83
    rad apart. Two tilings blended is the same interference argument that made the
@@ -310,6 +355,41 @@ otherwise have been read as an exclusion:
 
 Not chased further; the budget for a far-field artefact at 270 m was three renders and
 they are spent.
+
+## RULE: a negative result is only evidence if the thing you removed was doing something
+
+**Diff for liveness before believing an ablation.** Render the ablated frame against the
+unablated one and quote the percentage of differing pixels and the mean delta. If the
+change is near zero, you have not excluded your candidate — you have discovered that
+your ablation did nothing, which is a different and much less useful fact.
+
+This is the single most transferable lesson on the project and it has now cost renders
+in three separate systems, in three different disguises:
+
+1. **The anisotropy gate (System 1).** A gate added to fade the grit where the footprint
+   ratio exceeds ten. The re-render was byte-identical. Read as "the fix did not help";
+   it was actually "the gate never fired", which additionally proved the ratio never
+   exceeds ten in these framings.
+2. **The `-shadow` bench column (System 7).** A performance ablation that turned out to
+   be a no-op because `shadowMap.enabled` is a compile-time define, so the column
+   measured the same shader twice.
+3. **The wall-rock branch (System 1, this artefact).** Substituting `gWN` for
+   `mix(gWN, rockWN, rockW)` moved **1.98%** of pixels at a mean of 0.05. It looked like
+   a clean negative and was not one: `rockW` is `wallM * (...)`, `wallM` is
+   `smoothstep(0.06, 0.42, vWall)`, and that is ~0 on the bank in question, so the branch
+   was already inert and the ablation could not have changed anything. A candidate would
+   have been crossed off having never been tested.
+
+The corollary, which caught the actual cause here: an ablation that *is* live and still
+leaves the artefact is a real exclusion, and a strong one. Of the five live ablations run
+against this lattice, four excluded a candidate and the fifth found it.
+
+**A coincidence that survives arithmetic is still a coincidence.** The sand map's relief
+is documented as "a ripple train at a quarter of a metre" and the lattice dots measure
+about 24 cm. That match is exact, it is the kind of agreement that normally settles a
+question, and it was worth a render — which came back live at 22.1% with the lattice
+completely unmoved. The bed spacing later turned out to be 7.7–25 cm, so the *same* 24 cm
+matched the true cause as well. Two different mechanisms can predict one number.
 
 ## Three process notes from chasing it
 
@@ -358,6 +438,31 @@ statement in the middle of the `footShadow` comment block because the file had s
 under it, and the same edit left the normal ablation in place — so an entire render was
 spent measuring a frame that still had the ablation in it, and it looked like a
 successful fix. Exact-text replacement only.
+
+## For the performance agent: which terrain branches are actually live, per framing
+
+Offered because reconstructing this from outside took a purpose-built tool
+(`fillcost.mjs`), and because every existing ablation hides a *mesh* rather than a
+shader. This is the inside view of `terrain.js`'s branches. All of it was established
+while chasing the far_270 lattice, with liveness diffs quoted, so it is measured rather
+than read off the source.
+
+| branch | gate | live where |
+|---|---|---|
+| `rockW > 0.002` — 9 fetches, 3 triplanar reconstructs | `wallM = smoothstep(0.06, 0.42, vWall)` | **Wall ramp only.** Measured ~0 on the far_270 bank: substituting past the whole branch moved 1.98% of pixels at mean 0.05. It is identically zero on the entire wash floor, the terraces and most of the foreground of the low views. Already branched. |
+| `steep > 0.006` — 6 fetches (`uDirtA`/`uDirtM`/`uDirtN` × 2 planar projections) | `steep = smoothstep(0.14, 0.40, slope)` | **Every bank in frame**, which is most far framings. Ablating just its normal moved 31.9% of pixels at mean 2.59. This is the one that is quietly always on. |
+| `bedW > 0.004` — the bedform comb, no fetches, ~6 sines + 4 `fwidth` | `floorB` × `(1.0 - smoothstep(0.06, 0.20, slope))` × footprint ramp | **Floor only, and only at midground range.** Off on banks. |
+| `bankW > 0.004` — lamination, no fetches, one `bumpFrom` | slope, `(1 - wallM)`, `(1 - sandW)`, `(1 - headM)`, macro noise | **Banks, off the wall ramp, off the wash head.** Live at 46.9% of pixels in far_270. |
+| sand normal path | `sandW` | Ablating it moved 22.1% of pixels at mean 1.17, so materially live in the far framings. |
+
+Two notes that may be worth more than the table. The `steep` branch is the one to look
+at first: it is six fetches, it is not cheap, and unlike the rock branch it is live in
+almost every framing that contains a bank. And the four `fwidth` calls in the bedform
+comb are not just a cost — they are measuring the wrong quantity (see the aliasing note
+below), so if that block is being touched for cost anyway, the footprint form written in
+the comment beside them is both cheaper and more correct.
+
+Happy to walk any of this in more detail — that request outranks anything else I have.
 
 ## Landed: the mesh grid is a value now, not a number in a comment
 
@@ -3040,6 +3145,15 @@ Measured in the render, same build, paired session:
 
 Guardrails held: lit rock 0.620 to **0.616** saturation at hue **21.0** unchanged, gate 0.211
 to **0.213**, floor L 0.370 to 0.369.
+
+That 0.616 sits a thousandth off the bottom of the band, which is too close to an edge to leave
+attributed to whichever change happened to be in flight. `tools/_litguard.mjs` settles it on the
+CPU without a capture, because the doorway is reachable through `computeAtmosphere`'s override
+argument — setting the astern window to the flank skyline reproduces the old single-doorway model
+exactly rather than approximately. On a face square to the sun the fill is **4.5% of the light**,
+and the doorway moves that face's saturation by **+0.0002** with its hue unchanged to a tenth.
+**The 0.004 of drift is not the fill's**, and it should be read against the six commits that
+landed between the two captures rather than against this one.
 
 ### Two hypotheses measured and declined, so they are not retried
 

@@ -1944,6 +1944,12 @@ if (bankW > 0.004) {
      step at every contact turns a bank into a flight of stairs. */
   gA *= mix(vec3(1.0), mix(vec3(0.88, 0.83, 0.80), vec3(1.13, 1.05, 0.93), coarse), bw * 0.34);
   gM.g = mix(gM.g, mix(0.99, 0.88, coarse), bw * 0.4);
+  /* This line is the far_270 diamond lattice. Commenting it out clears the
+     artefact completely, at 46.9% of pixels differing so the ablation is
+     unambiguously live. Left in place because the cause is understood and the
+     cure is not: see "the far_270 lattice" in CONTRACT.md before touching it,
+     and in particular do not reach for a footprint fade — that was tried, it
+     is live at 43% of pixels, and the lattice is untouched by it. */
   gWN = bumpFrom((coarse - 0.5) * inBed * bankW, gWN, 0.022 * platF);
 }
 
