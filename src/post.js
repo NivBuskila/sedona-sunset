@@ -163,7 +163,11 @@ export const POST_DEFAULTS = {
      the frame like the circle of confusion and the grain do, rather than being a
      contrast threshold that must not — see CONTRACT.md on which post terms scale
      and which do not, which was got wrong once already on the silhouette gate. */
-  shadowLiftRadius: 24,
+  shadowLiftRadius: 48,
+  /* How hard a distant tap is discounted, in sqrt-luminance per unit radius. 0 is
+     the unweighted max that hollowed the facet; large values shrink the effective
+     reach back toward the pixel itself. */
+  shadowLiftFall: 0.22,
   shadowLiftMask: [0.10, 0.30],
   /* Chroma-preserving, and applied after the sRGB encode with the pivot at
      encoded middle grey. See the shader for why both of those are corrections
@@ -639,6 +643,7 @@ export function createPost({ renderer, camera, atmo, sun }) {
   P.shadowLift = num('lift', P.shadowLift);
   P.shadowLiftKnee = num('liftknee', P.shadowLiftKnee);
   P.shadowLiftRadius = num('liftr', P.shadowLiftRadius);
+  P.shadowLiftFall = num('liftfall', P.shadowLiftFall);
   P.toeTop = num('toe', P.toeTop);
   P.toeSlope = num('toes', P.toeSlope);
   P.shoulderTop = num('sh', P.shoulderTop);
@@ -996,6 +1001,7 @@ ${GHOSTS.map(([t, r, tr, tg, tb, gi]) => `    {
       uVibrance: { value: P.vibrance },
       uLift: { value: new THREE.Vector2(P.shadowLift, P.shadowLiftKnee) },
       uLiftR: { value: P.shadowLiftRadius },
+      uLiftFall: { value: P.shadowLiftFall },
       uLiftMask: { value: new THREE.Vector2(...P.shadowLiftMask) },
       uContrast: { value: P.contrast },
       uContrastPivot: { value: P.contrastPivot },
@@ -1034,6 +1040,7 @@ uniform float uContrast;
 uniform float uContrastPivot;
 uniform vec2 uLift;
 uniform float uLiftR;
+uniform float uLiftFall;
 uniform vec2 uLiftMask;
 uniform vec2 uToe;
 uniform vec2 uShoulder;
@@ -1205,12 +1212,31 @@ void main() {
        instruction and the thresholds were swept in the same space. */
     float s0 = sqrt(ly);
     float mx = s0;
+    /* Taps are penalised by distance, and that is a correctness fix rather than a
+       refinement. An unweighted max hollows out any dark region wider than twice
+       the radius: near the edge a tap reaches lit ground and the pixel lifts, past
+       the radius no tap does and it stays put, and because eight taps make the
+       mask a staircase in distance the change happens over a few pixels. On a
+       clast side face 123x30 px across that took the border from rgb(12,3,4) to
+       rgb(40,21,20) while leaving the centre at rgb(11,2,3) — it *manufactured* a
+       hard-edged black rectangle, which is the exact artefact this term exists to
+       remove.
+       A second wider ring closes the hollow and cannot be used: the wall's own
+       shadow bands are tens of pixels across, so a 96px ring finds lit rock nearly
+       everywhere in them and 17% of wall_lit washes out into fill light. There is
+       no radius that fills a 30px facet and excludes those bands, because in this
+       scene the two scales overlap.
+       Subtracting a distance term instead makes the mask decay smoothly with how
+       far the nearest lit pixel is, so a facet fills as a gradient rather than a
+       cliff, and a wide shadow's interior is reached only weakly. It is the same
+       eight taps. */
     for (int i = 0; i < 8; i++) {
       float fi = float(i) + 0.5;
       float a = fi * 2.39996323;
-      float rr = uLiftR * sqrt(fi / 8.0);
-      vec2 off = vec2(cos(a), sin(a)) * rr / uRes;
-      mx = max(mx, sqrt(max(luma(sane(texture2D(tScene, vUv + off).rgb)), 0.0)));
+      float t = sqrt(fi / 8.0);
+      vec2 off = vec2(cos(a), sin(a)) * (uLiftR * t) / uRes;
+      float tapped = sqrt(max(luma(sane(texture2D(tScene, vUv + off).rgb)), 0.0));
+      mx = max(mx, tapped - uLiftFall * t);
     }
     float mask = smoothstep(uLiftMask.x, uLiftMask.y, mx - s0);
     c *= 1.0 + (uLift.x - 1.0) * wl * wl * mask * uGrade;
@@ -1782,6 +1808,7 @@ void main() {
     fu.uVibrance.value = P.vibrance;
     fu.uLift.value.set(P.shadowLift, P.shadowLiftKnee);
     fu.uLiftMask.value.set(P.shadowLiftMask[0], P.shadowLiftMask[1]);
+    fu.uLiftFall.value = P.shadowLiftFall;
     fu.uContrast.value = P.contrast;
     fu.uContrastPivot.value = P.contrastPivot;
     fu.uToe.value.set(P.toeTop, P.toeSlope);
