@@ -470,6 +470,52 @@ Residual risk worth knowing: convergence stops checking once it is satisfied, so
 resource landing at frame 200 is still not caught. The 180-frame warmup is what covers
 that, and it is the knob to raise if a first-view capture is ever suspected.
 
+## For System 2 and System 4: the occlusion change, and what it does and does not reach
+
+Landed in `terrain.js` at `2548d04`. **System 2: this is the expression to match at
+`rock.js`'s `reflectedLight.indirectDiffuse *= tAO`**, so the two surfaces do not diverge.
+
+```glsl
+vec3 aoA = material.diffuseColor;
+vec3 aoC1 =  2.0404 * aoA - 0.3324;
+vec3 aoC2 = -4.7951 * aoA + 0.6417;
+vec3 aoC3 =  2.7552 * aoA + 0.6903;
+reflectedLight.indirectDiffuse *=
+  clamp(tAO * (aoC1 * tAO * tAO + aoC2 * tAO + aoC3), vec3(tAO), vec3(1.0));
+```
+
+It is the Jimenez multi-bounce fit. Two properties are why it was chosen over anything
+tuned: the cubic evaluates to 1 at visibility 1 and the clamp pins it there, so an
+unoccluded surface is **exactly** unchanged rather than approximately; and it is clamped
+below by `tAO`, so it can never darken anything. The only pixels it can reach are the ones
+being crushed. Both properties are structural, not calibrated, which is what makes it safe
+to land on delivery morning without a tuning pass.
+
+**System 4, one result you need before you measure.** On `ao1` (1280×720, terrain change
+only, `rock.js` not yet converted):
+
+| framing | min channel < 10 cv | black on all channels |
+|---|---|---|
+| `wall_shade` | 40.6% | 0.01% |
+| `far_320` | 25.3% | 0.00% |
+| `wash_mid` | 16.8% | 0.00% |
+| `far_270` | 9.5% | 0.00% |
+| `ground` | 7.2% | 0.00% |
+
+**`wall_shade`'s 40.6% is essentially your 40.8% and that is correct, not a failure.**
+`wall_shade` is rock, so the terrain change cannot reach it — that number should move when
+System 2 lands the twin, and if it does not, the fault is elsewhere. What did move is the
+all-channel black, from your 6.0% to 0.01%, and that is the terrain's share of it.
+
+Not verified by me, and yours to check rather than mine to assert: whether **lit** surfaces
+moved. The change is an exact identity only at `tAO = 1`, and a sunlit surface with
+`tAO = 0.8` does get slightly more indirect, tinted toward its own albedo — small, because
+indirect is a minority of a sunlit pixel, but not zero. I did not take a paired capture for
+it because doing so meant dirtying the tree again for nine minutes and that is what cost
+you last round. Lit rock on `ao1_far_270` reads hue 23.8° with `grad/L` 0.151 on the ground
+floor, still in band, but that is a single framing at reduced resolution and is not the
+measurement you would make.
+
 ## far_320: the amphitheatre is built, and the player is standing 20 m short of its rim
 
 Measured with `tools/_headlook.mjs`, which marches the ground along the view ray from a
