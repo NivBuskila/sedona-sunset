@@ -2192,8 +2192,13 @@ albedo *= 1.0 + jLip * 0.13 * sTerm;
    System 7 is holding at 0.618 and 20.9 degrees. Kept to nine per cent, which is
    about a stop and a half less than the bedding contrast it sits beside — a block
    read wants to be at the threshold of noticing, and the failure mode on the other
-   side of it is a chequerboard. */
-albedo *= 1.0 + blkR * 0.09 * jFace * jVert;
+   side of it is a chequerboard.
+   One-sided upward for the same reason bedBlk above is one-sided: the two-sided
+   form was part of a 0.012 saturation excursion on lit rock and of a worsened
+   crush on shaded rock. A block that still stands proud catching the low sun is
+   the half of the read that has to be an addition anyway; the recessed half is
+   already carried by its bed traces going quiet. */
+albedo *= 1.0 + max(blkR, 0.0) * 0.11 * jFace * jVert;
 /* ---- and the joint is an aperture, not a scribed line ----
    Darkening the albedo along a crack gives a dark pen line of constant width on a
    flat face, which is what these were. A joint is an *opening*: it has width, it
@@ -2471,8 +2476,19 @@ float sbLip = smoothstep(0.80, 1.0, sbT) * smoothstep(0.54, 0.74, sbUp);
    wobble into it is a failure this file has already made once — but they are no
    longer the same line for four hundred metres. Ranges 0.35 to 1.55 of the old
    strength, so the strongest traces are stronger than before and a minority of
-   blocks lose theirs altogether. */
-float bedBlk = clamp(1.0 + blkR * 0.62, 0.35, 1.55);
+   blocks lose theirs altogether.
+   One-sided, and that is a correction rather than a preference. The first form
+   ranged to 1.55 and so *deepened* the bed shading on half the blocks, which cost
+   0.012 of lit saturation — 0.618 out to 0.630, outside a defended band — and
+   took wall_shade's min-channel-under-20 share from 66.2 to 68.4 per cent, making
+   the very crush the occlusion fix above exists to relieve slightly worse. The
+   same discipline System 1 applied to the multi-bounce curve applies here: a term
+   added for structure should not be able to darken anything, because then its
+   effect on the measured population is a calibration rather than an identity.
+   Capped at 1.0, it can only lighten a bed trace, so continuity is still broken —
+   a trace that dies on one slab and survives on the next is exactly as legible as
+   one that deepens — and no pixel anywhere goes down. */
+float bedBlk = clamp(1.0 + blkR * 0.62, 0.35, 1.0);
 tAO = clamp(rkAO * (0.72 + 0.34 * (1.0 - cav)) - ledgeShade * 0.5 * bedBlk
             - sbLip * 0.30 * bedBlk
             - joint * 0.42 - ironBase * 0.22, 0.18, 1.0);
