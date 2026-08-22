@@ -6629,3 +6629,36 @@ shading rather than geometry before any ablation is run, and which I ranked
 below two comments that happened to use the word converging. Rank the
 observation that discriminates between categories above the one that matches
 vocabulary.
+
+### And the normal field is smooth, which inverts the problem
+
+One further render, painting `gWN`. The upper slopes come back **glassy** —
+broad, soft, long-wavelength undulation and no fine detail anywhere on them —
+while the near floor in the same frame is visibly stippled with pebble relief.
+The streak-shaped tonal bands *are* present in the normal field, but only as
+gentle lobes; at a 15 degree sun grazing that slope, a small normal deviation
+produces a large luminance swing, which is the amplifier turning soft undulation
+into hard-looking streaks.
+
+**So the defect is an absence, not a presence.** There is no streak-making term
+to find and remove. What the frame shows is the generic appearance of *any*
+smooth undulation lit at grazing incidence with no detail normal on top of it —
+and that is precisely why both height-field ablations came back innocent. `rill`
+and `gully` each change which undulations exist; neither changes the fact that
+nothing finer is shading them. Remove one and the others read identically.
+
+The critic's phrasing turns out to be literally accurate rather than
+metaphorical: *"There is no rock inside them."* There is no detail normal inside
+them. `0.16 + 0.84 * grainF` with `grainF` at zero removes 84% of it, and the
+grit layer that is supposed to stand in past that fade is gated off on slope by
+`floorB`/`floorM` — the gate whose widening was measured safe earlier tonight
+and reverted as worthless *on its own*. It may not be worthless in combination
+with a fade change; that pairing is untested and is the obvious thing to try.
+
+**Restated for whoever takes it:** do not hunt for the term drawing the streaks.
+Put detail back on far, steep, granular surfaces. The two knobs are the `grainF`
+fade inside the triplanar branch and the slope gate on the grit layer, and the
+one-render test for any candidate is the `gWN` paint — if the upper slopes stop
+being glassy, it is working. This is the same 30 m detail cliff already
+documented as the mid-distance floor limit, arriving as a far-field defect on a
+steep surface, where it costs far more because the slope faces the light.
