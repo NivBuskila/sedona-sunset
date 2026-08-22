@@ -9710,3 +9710,79 @@ at (104, 88, 66) sit at or below it. The midtone-share deltas were taken with th
 same mask on both arms, so the *direction* of those results should survive; the
 absolute figures should not be quoted as populations of "the plant" until the
 mask is fixed and re-run.
+
+# The crown's transmission tint: the physical argument was sound and my conclusion from it was backwards
+
+The crown's transmission shipped with the near-field tiers' tint, (1.35, 1.12,
+0.58) — a dry cream grass straw at hue 42, inherited because it is the default.
+It cost 1.6 degrees of up-hue in `juniper` and 2.7 in `wash_mid`, toward the
+chartreuse a critic has already complained of.
+
+The fix looked obvious. Transmitted light is filtered by the pigment it passes
+through, so a grass blade and a juniper's blue-green scale foliage should not
+share a tint, and the crown's should be greener. Swept at amt 0.35 and rim 0.70,
+every greener tint made it **worse**:
+
+| uTrans | hue shift, fixed population | crown p90/p10 |
+|---|---|---|
+| (1.35, 1.12, 0.58) straw | +1.6 | 14.96 |
+| (1.25, 1.20, 0.58) | +2.3 | 14.97 |
+| (1.15, 1.25, 0.58) | +2.9 | 14.97 |
+| (1.05, 1.25, 0.52) | +3.3 | 14.97 |
+| **(1.60, 1.00, 0.50) landed** | **0.0** | **14.96** |
+
+Note the second column: the tint moves hue and nothing else. Contrast is
+identical to two decimal places across every arm, so this was never a trade.
+
+**The reason the direction inverts is that this uniform is not the transmitted
+colour.** The shader multiplies it by albedo, so it is the transmitted colour
+*over* the albedo — and the albedo is already yellow-green at hue 64. A green
+tint counts the leaf's pigment twice. Physically, a leaf's transmittance and
+reflectance spectra are not the same shape, and correcting for the difference is
+the only reason the uniform exists; using albedo as a stand-in for transmittance
+and then tinting it green is double-counting, not modelling.
+
+Landed at (1.60, 1.00, 0.50) in `afe4bea`. Fixed-population hue 42.9 in `juniper`
+against a no-transmission baseline of 42.9, and 40.9 in `wash_mid` against 40.3.
+A 1.6 degree cost taken to zero and a 2.7 to 0.6, contrast unchanged at 14.96 and
+9.71 against 14.96 and 9.66, midtone share within 0.5 of a point, control
+population outside the mask unmoved, zero clipped pixels. It costs 0.003 more
+saturation than the straw did, on a figure that is not defended for this crown;
+the defended one is lit rock, which is outside the mask. At 3x the shaded sprays
+read very slightly less chartreuse and nothing else changes.
+
+# The mask fault, re-run: corrected near-field populations
+
+`tools/vegval.mjs` is fixed and re-run at 2560x1440. **These supersede every
+`plant` figure previously quoted from it**, which were taken over the brighter
+part of the population rather than over the population its header named.
+
+| view | plant n | p10 | p50 | p90 | p99 | max | at 254+ |
+|---|---|---|---|---|---|---|---|
+| `wash_low` | 241024 | 0.012 | 0.187 | 0.587 | 0.773 | 0.922 | 2 px, 0.00% |
+| `wash_mid` | 85030 | 0.062 | 0.237 | 0.501 | 0.669 | 0.916 | 0 |
+| `bend` | 62404 | 0.004 | 0.032 | 0.186 | 0.586 | 0.914 | 0 |
+
+The distribution claim is now measured over the right population and it holds.
+`wash_low`'s histogram in tenths of its own p99 runs 27/18/14/12/9/5/4/4/4/4 and
+`wash_mid`'s 11/15/14/16/15/9/6/6/4/3 — mass across the whole range, which is the
+opposite of the two-tone population that was complained about. **Clipping is
+0.00% in every framing**, so "clipped to pure white" is measurably gone.
+
+Two honest caveats.
+
+**The magnitude of the old bias is not stated and should not be.** Quantifying it
+needs both masks in one page load; the previously published figures came from a
+build that has since moved, so differencing them would be two afters rather than
+a before and an after. The corrected absolutes above are what to quote. The
+*deltas* previously reported were taken with the same mask on both arms, so their
+direction survives.
+
+**One figure did not improve: `plant p99 / floor p50` is 1.60x in `wash_low`,
+1.31x in `wash_mid`, 1.72x in `bend`**, against the tool's own note that foliage
+reflectance is well under sand's so under 1 is the only defensible side. The mask
+fix could not have helped this one — it adds dark pixels, which moves p10 and p50
+and leaves p99 where the bright pixels already were. It is a top-1%-against-median
+comparison across two differently-defined populations, so it is weaker evidence
+than the clip fraction, but it is a properly-measured figure now rather than a
+biased one and it is flagged rather than buried.

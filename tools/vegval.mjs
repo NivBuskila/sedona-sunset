@@ -155,10 +155,33 @@ const PAGE = /* js */`
           saved.push({ o, vis: o.visible, mat: o.material });
           if (!isPlant(o.name || '', pre)) { o.visible = false; return; }
           const src = Array.isArray(o.material) ? o.material[0] : o.material;
-          o.material = new THREE.MeshBasicMaterial({
+          /* The map stays bound because the alpha test is the cutout and the
+             cutout is the coverage. But a MeshBasicMaterial carrying a map
+             outputs that map's *colour*, not the material's, so this override was
+             rendering the atlas and its threshold was discarding the atlas's
+             darkest texels — the outer, darker pass of every blade and leaf, and
+             the scrub stems. Every plant figure taken before this was therefore
+             over the brighter part of the population rather than over the
+             population named in the header. Caught on the hero crown, whose
+             atlas is dark enough that the same code undercounted it 94-fold,
+             1176 px against 110368; see tools/herotrans.mjs. So the RGB is forced
+             after the map is sampled, alpha is left exactly as it was, and tone
+             mapping is off so white arrives as white. */
+          const mm = new THREE.MeshBasicMaterial({
             color: 0xffffff, map: src.map || null,
             alphaTest: src.alphaTest || 0, side: THREE.DoubleSide, fog: false,
+            toneMapped: false,
           });
+          mm.onBeforeCompile = (sh) => {
+            const MARK = '#include <map_fragment>';
+            if (sh.fragmentShader.indexOf(MARK) < 0)
+              throw new Error('vegval: no map_fragment in MeshBasicMaterial; '
+                + 'the coverage mask needs rewriting');
+            sh.fragmentShader = sh.fragmentShader.replace(MARK,
+              MARK + '\\n\\tdiffuseColor.rgb = vec3( 1.0 );');
+          };
+          mm.customProgramCacheKey = () => 'vegval-mask';
+          o.material = mm;
         });
         const prevBg = g._scene.background, prevFog = g._scene.fog;
         g._scene.background = new THREE.Color(0x000000);
