@@ -5,6 +5,7 @@
  *   node tools/bench.mjs --w 2560 --h 1440    at your real desktop resolution
  *   node tools/bench.mjs --cpu                SwiftShader, for comparison only
  *   node tools/bench.mjs --json               machine-readable, for pasting back
+ *   node tools/bench.mjs --hash hardshadow    extra location.hash, for compile-time ablations
  *
  * ── why this file has to exist ─────────────────────────────────────────────
  *
@@ -110,8 +111,16 @@ const srv = serve();
 await new Promise(r => srv.listen(0, r));
 /* #noadapt, not a pinned tier: the ladder has to be walked explicitly below, and
    a governor quietly adapting downward during the four-second settle would make
-   every figure a measurement of a different setting. */
-const url = `http://localhost:${srv.address().port}/#noadapt`;
+   every figure a measurement of a different setting.
+
+   --hash appends more, because some of the things worth pricing are compile-time
+   and cannot be reached from a runtime ablation. The penumbra is the case in
+   point: `#hardshadow` selects between System 4's blocker-search disc and three's
+   fixed kernel at shader-build time, so the only honest way to price it is two
+   page loads. Runtime toggling of a define is exactly the trap the -shadow column
+   below documents. */
+const EXTRA = getf('hash', '');
+const url = `http://localhost:${srv.address().port}/#noadapt` + (EXTRA ? '&' + EXTRA : '');
 
 const browser = await chromium.launch({ headless: true, args: LAUNCH_ARGS });
 const out = { w: W, h: H, backend: CPU ? 'swiftshader' : 'gpu', views: {} };
