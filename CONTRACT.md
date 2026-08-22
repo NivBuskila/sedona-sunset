@@ -9786,3 +9786,67 @@ and leaves p99 where the bright pixels already were. It is a top-1%-against-medi
 comparison across two differently-defined populations, so it is weaker evidence
 than the clip fraction, but it is a properly-measured figure now rather than a
 biased one and it is flagged rather than buried.
+
+---
+
+## The delivery record: `sys7deliver` / `sys7deliverpx`
+
+The last capture of the project. Nine views × two arms at each of two buffers, 36
+frames, **every manifest logs 0 entries**, frame-convergence settle at 180 frames,
+one resolution per tag, tags cleared first. Control arm is `#nopost`: the scene with
+no post chain at all. Tree clean at `3e74f84`.
+
+**2560×1440 — the shipped buffer.**
+
+| figure | ungraded | **graded, ships** | band | vs previous set |
+| --- | --- | --- | --- | --- |
+| worst facets ≤7cv, `ground` | 4.3 cv | **19.8 cv (4.6×)** | — | 19.0 |
+| dark facets ≤14cv, `ground` | 6.7 cv | **22.5 cv (3.4×)** | — | 21.5 |
+| **shadow gate** | 0.242 | **0.212** | 0.15–0.25 | 0.213 |
+| lit rock saturation | 0.613 | **0.615** | 0.42–0.65 | 0.614 |
+| lit rock hue | 20.7° | **20.5°** | +15.6–31° | 20.5° |
+| lit rock V | 0.694 | **0.687** | 0.59–0.73 | 0.685 |
+| **floor shade**, sat / hue / V | 0.662 / 6.7° / 0.152 | **0.644 / 4.4° / 0.134** | paired | 0.641 |
+| **floor lit**, sat / hue / V | 0.625 / 21.5° / 0.639 | **0.624 / 21.2° / 0.635** | paired | 0.623 |
+| midwall hf/lf | 0.53 | **0.53** | — | 0.53 |
+| upper wall hf/lf | 0.62 | **0.62** | — | 0.62 |
+| wash wall / floor hf/lf | 0.60 / 0.49 | **0.61 / 0.49** | — | 0.62 / 0.49 |
+| banding `sun_gap`, run / step / flat | 42 / 0.125 / 94% | **8 / 0.651 / 42%** | — | 8 / 0.651 |
+| banding `wash_mid`, run / step / flat | 36 / 0.171 / 92% | **7 / 0.670 / 43%** | — | 7 / 0.670 |
+| clipped ≥250 / ≥254, `wall_lit` | 0.05% / 0.00% | **0.45% / 0.04%** | — | 0.44% / 0.04% |
+| clipped, `ground` | 0.00% | **0.00%** | — | 0.00% |
+| black 0,0,0 / within 2, `wall_shade` | 0.07% / 1.38% | **0.14% / 1.46%** | — | 0.07% / 1.28% |
+
+**1997×1123 — the second buffer, for the pixel-scale figures.**
+
+| figure | value |
+| --- | --- |
+| lit rock sat / hue / V | 0.615 / 20.5° / 0.685 — colour resolution-invariant, again |
+| shadow gate | **0.211**, and terrain measured 0.211 on their own build |
+| floor shade / lit, sat | 0.644 / 0.625 — within 0.001 of 1440p |
+| worst facets ≤7cv | 4.3 → 18.6 cv (4.3×) |
+| banding `sun_gap` | 8 / 0.711 / 42% against ungraded 33 / 0.185 / 93% |
+| midwall / upper / wash floor hf/lf | 0.52 / 0.66 / 0.52 — **resolution-dependent, as recorded** |
+| black 0,0,0 / within 2 | 0.13% / 1.44% against ungraded 0.07% / 1.35% |
+
+### The one figure that moved, attributed
+
+**Pure black on `wall_shade` went 0.07% → 0.14%.** Located rather than guessed at:
+94% of those pixels sit in two horizontal bands mid-frame, and marking them on the
+frame shows **every one inside a shrub silhouette, none on rock.** The rise is
+upstream — the ungraded control's own pure black went 0.01% → 0.07%, a sevenfold
+rise from the vegetation work — while **the chain's own multiplier fell from 7× to
+2×.** Deep-shade vegetation interiors reaching black is what a photograph does.
+
+### Two residuals carried into delivery
+
+1. **A facet inside an already-shaded field stays near code 11**, identical in both
+   arms, because the mask correctly finds no lit neighbour. Reaching it needs the
+   luminance-keyed family that takes the gate to 0.418. Blocked, not deferred.
+2. **The near-field clasts are rectangular boxes** — the detail normal now gives
+   their tops real relief rather than a flat lid, which is a clear improvement, but
+   the silhouette is still a box with 90° edges. Geometry, not grade.
+
+Also noted and *not* a regression: the dark mottled banding on pale plate tops is
+present identically in the previous build, so it is albedo and predates the detail
+normal. Checked by a paired full-resolution crop rather than assumed.
