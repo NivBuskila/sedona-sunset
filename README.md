@@ -250,3 +250,15 @@ they are output, not input.
 Three.js 0.180 · plain ES modules with an importmap · no build step · about
 26,000 lines across 19 files in `src/` · Playwright for the capture and
 measurement harness in `tools/`. No asset pipeline, because there are no assets.
+
+## Credits
+
+Technique and discipline follow two earlier procedural-scene projects. The
+adaptive quality governor in `src/perf.js` is
+[nightdrive](https://github.com/StarKnightt/nightdrive)'s structure — resolution
+and quality as two ladders interleaved into one degradation order — with
+[jungle-trail](https://github.com/StarKnightt/jungle-trail)'s hysteresis on top
+of it. The habit that matters most came from jungle-trail too: quote a frame time
+in milliseconds measured on the real card, and author the quality ladder against
+those numbers rather than against a guess. Both are written up, with what was
+taken and what was declined, in [`PERF.md`](PERF.md).
