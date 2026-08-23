@@ -15,6 +15,9 @@ seconds before the shutter.*
 **Walk it: https://starknightt.github.io/sedona-sunset/** — desktop, keyboard and
 mouse.
 
+**Read the brief it was built from: [PROMPT.md](PROMPT.md).** One page, and the
+build/critique loop at the end of it is most of why this looks the way it does.
+
 **It takes under a minute to start, and the page will not respond while it
 works.** That is not a download and it is not broken. A dark screen comes up
 within milliseconds and names each stage as it goes: the wash floor, the
