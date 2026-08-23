@@ -12,10 +12,14 @@ sky, the haze and the low sun are written as mathematics and drawn into memory
 the moment you open the page. So is the wind, the grit skittering along the
 ground, your own footsteps changing with the surface under them, the canyon wren,
 the raven and the echo off the walls — none of it is a sample. The page's only
-dependency is Three.js, served from `node_modules`.
+dependency is Three.js, one file, pinned.
 
 There is nothing to do and nothing to collect. There is no crosshair, no HUD and
 no menu, on purpose.
+
+**Walk it: https://starknightt.github.io/sedona-sunset/** — desktop, keyboard and
+mouse. It takes about forty seconds to build the canyon before it lets you in,
+and it says so while it works.
 
 ---
 
