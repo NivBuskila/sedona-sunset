@@ -4,22 +4,40 @@ A first-person walk up a dirt wash between red rock buttes in Sedona, Arizona, a
 golden hour. You start at the mouth of the wash with the sun low in the gap ahead
 of you and walk about 330 m up the channel to where it heads into a box canyon.
 
+![Up the wash toward the sun gap: the layered walls, the juniper's shadow raking
+the floor, the far butte through the notch](media/01-sun-gap.webp)
+
+*Straight out of the deployed build in a GPU-backed Chromium, once generation had
+finished. Nothing in it is composited and nothing is retouched — every pixel of
+it, the rock, the gravel, the sky and the haze, was computed in the GPU a few
+seconds before the shutter.*
+
+**Walk it: https://starknightt.github.io/sedona-sunset/** — desktop, keyboard and
+mouse.
+
+**It takes under a minute to start, and the page will not respond while it
+works.** That is not a download and it is not broken. A dark screen comes up
+within milliseconds and names each stage as it goes: the wash floor, the
+sandstone, cutting the wash, raising the canyon walls, scattering the stones, the
+juniper, the sky. Two of those stages take twelve to fourteen seconds on their
+own, so the message sits still for a while and the tab ignores a click while it
+does. That is the work happening. Reloading starts the wait over from the
+beginning, so it is worth sitting through.
+
 **Every mesh, texture, material and sound in this project is generated
-procedurally in code.** There are no image files, no models, no HDRIs and no audio
-recordings, and nothing is fetched at runtime. The red rock, the layered cliff
-faces, the gravel underfoot, the sand ripples, the juniper and its shadow, the
-sky, the haze and the low sun are written as mathematics and drawn into memory
-the moment you open the page. So is the wind, the grit skittering along the
-ground, your own footsteps changing with the surface under them, the canyon wren,
-the raven and the echo off the walls — none of it is a sample. The page's only
-dependency is Three.js, one file, pinned.
+procedurally in code.** There are no image files, no models, no HDRIs and no
+audio recordings anywhere in the repository, and nothing is loaded at runtime.
+The red rock, the layered cliff faces, the gravel underfoot, the sand ripples,
+the juniper and its shadow, the sky, the haze and the low sun are written as
+mathematics and drawn into memory the moment you open the page. So is the wind,
+the grit skittering along the ground, your own footsteps changing with the
+surface under them, the canyon wren, the raven and the echo off the walls — none
+of it is a sample, and all of it is synthesised live in the Web Audio API. It is
+genuinely quiet, because a desert wash at dusk is quiet, so you may want more
+volume than you expect.
 
 There is nothing to do and nothing to collect. There is no crosshair, no HUD and
 no menu, on purpose.
-
-**Walk it: https://starknightt.github.io/sedona-sunset/** — desktop, keyboard and
-mouse. It takes about forty seconds to build the canyon before it lets you in,
-and it says so while it works.
 
 ---
 
@@ -33,19 +51,8 @@ pnpm install
 pnpm dev
 ```
 
-Then open <http://localhost:8099/> in Chrome or Edge.
-
-**The first load takes under a minute** on a desktop GPU, and it tells you so. A
-dark screen comes up within milliseconds and names each stage as it goes: the
-wash floor, the sandstone, cutting the wash, raising the canyon walls, scattering
-the stones, the juniper, the sky. Two of those stages take twelve to fourteen
-seconds on their own, so the message sits still for a while and the tab ignores a
-click while it does. That is the work happening, not a hang. Reloading starts the
-wait over from the beginning.
-
-Click the canvas to capture the pointer. That same click starts the sound, which
-is worth having — it is deliberately quiet, because a desert wash at dusk is
-quiet, so give it more volume than you would expect.
+Then open <http://localhost:8099/> in Chrome or Edge. Click the canvas to capture
+the pointer; that same click starts the sound.
 
 | control | does |
 | --- | --- |
@@ -65,7 +72,7 @@ a real walking pace, and runs about three and a half minutes end to end; the
 number keys are for going back to something.
 
 The jump is a person's jump and not a game's — 45 cm and just over half a second
-in the air, enough to hop a rill or get up onto a bank, and not enough to get
+in the air, enough to hop a rill or get up onto a bank, and not enough to reach
 anywhere the walk could not take you. You keep the speed you left the ground
 with, so there is no steering in mid-air.
 
@@ -74,15 +81,38 @@ cliff and the ground stops giving over the last stride or so rather than stoppin
 you dead against something invisible, and the same happens at the head of the
 wash and a little way behind the start. The limit sits seven to eighteen metres
 either side of the channel depending on its width, which is far enough out that
-wandering five or six metres off the line never touches it.
+wandering five or six metres off the line never touches it — 4.2 minutes of
+driven wandering, 5.8 m off the centreline, never touched a frame of it.
 
----
+![The juniper on its bank, with the litter and the shadow it throws down the
+wash](media/02-juniper.webp)
+
+## What is in it
+
+- About 26,000 lines of hand-written code across 19 files in `src/`, and roughly
+  two hundred measurement tools in `tools/`.
+- Seven systems, built and critiqued in order: terrain and the wash, the buttes,
+  the juniper, lighting and sun, atmosphere, sound, and post.
+- A 330 m walk, with nine fixed capture stations along it and four more that
+  cover the outer half nothing used to photograph.
+- 3.97 M triangles in the delivered frame, 2.25 M of them clast instances, in 55
+  to 70 draw calls depending on where you stand.
+- Exactly one juniper tree. It is the only significant vegetation in the project,
+  which is a constraint rather than an omission.
+- Every texture written texel by texel into a `DataTexture` or a canvas at load,
+  which is what the boot buys.
+
+![The lit midwall: bedding, jointing and the arrises that make this the best
+surface in the project](media/03-wall.webp)
 
 ## Performance
 
 **About 60 fps at native 2560×1440 on an RTX 4060**, measured while walking,
 which is the expensive case — standing still is cheaper, because the sun's shadow
-maps only have to be redrawn when you move.
+maps only have to be redrawn when you move. Measured on a machine verified idle
+by SM clock; every worse figure this project recorded during the day turned out
+to be a contended card rather than the frame, and a fourteen-commit bisect says
+the frame itself was flat to 0.83 ms throughout.
 
 The renderer watches how long frames are taking and can render into a smaller
 picture and let the display scale it back up. On this card it mostly does not
@@ -114,6 +144,13 @@ GPU's work happen one after the other, where in normal play the two overlap.
 Timing a real running frame instead gives about 60 at full resolution rather than
 the 55 in the table. Every row is a floor.
 
+The frame is fill-bound, not geometry-bound, which is worth knowing before
+optimising anything: removing the far ridgelines entirely is worth 0.02 ms of a
+30 ms frame. One measurement in that account is **unexplained and is recorded as
+unexplained** — the same cell read 16.80 ms in one tool and 23.06 in another on
+the same commit, and neither code growth nor machine contention accounts for it.
+Two confident causal stories died there in one morning; neither is quoted here.
+
 Two URL hashes override the governor, and both are read once at startup, so they
 have to be loaded fresh — typing one onto the end of an open page does nothing:
 
@@ -128,7 +165,85 @@ the machine and quietly drop quality to hold the frame rate, then climb back on
 its own when that work finishes — it tries a step up every so often and keeps the
 one that fits — so nothing is lost permanently and you should not need to reload.
 
----
+## What is not good enough yet
+
+An honest list, because the alternative is that you find these yourself and
+wonder what else is being oversold. Each one has been measured rather than
+guessed at, and several are recorded as bounded and explained rather than as
+things nobody got round to.
+
+**A quilted cross-hatch on near-field rock, and pale flat angular slabs.** The
+slabs are the largest visual item still open — a playthrough ranked them the most
+attention-breaking thing on the route, and they read as untextured placeholder
+geometry. The quilt is worse than unfixed, it is *unattributed*: its strongest
+suspect, the clast grain layer, has been eliminated on three separate properties
+plus a fourth proposed later, and the tiling it was suspected of cannot be
+visible because the map's energy below k = 3 is 0.15 per cent of total, about one
+code value through the shader that reads it. Both are identical in the ungraded
+arm, so neither belongs to the colour grade. The instructive part is that the
+metric could not see it at all: the floor carrying a plainly visible cross-hatch
+measures a perfectly respectable 0.45 on high-to-low band ratio, on both arms.
+
+**The slabs' side faces read as pure black, and the whole available range is
+inside the ACES toe.** Nothing upstream is broken — deleting the entire clast
+occlusion chain moves the worst pixel from rgb(6,3,3) to rgb(13,9,7). The
+textbook fix fails for a reason worth recording: the worst facet sits 1.27 stops
+below the shaded floor, so no operation keyed on level can separate them, and
+every gain setting that stays inside the shadow gate's band moves the worst facet
+from code 6 to at most code 9.
+
+**Warm shade in the corridor, where the brief imagined blue.** This is physically
+correct rather than a defect: on a shaded lateral face the fill decomposes as
+47.8 per cent sky, 25.1 per cent escarpment bounce and 27.2 per cent ground
+bounce, and the cool term is already the largest by luminance while losing the
+chroma fight because the warm terms are three times its saturation. What is left
+is bounded by crush rather than by transport. **Every request to brighten shaded
+rock in this scene has landed 1.6× beyond the light available to deliver it**,
+and that factor has now arrived three times from unrelated premises — from
+radiometry, from the project's own photograph-referenced band, and from a single
+facet's measured fill budget. The `shade_far` station at 160 m is where the scene
+does produce cool shade, and it produces it honestly.
+
+**Cliff jointing is weaker than real Sedona sandstone.** The vertical joint
+system exists and was measured before anything was added to it: ablating all four
+sets moves the lit midwall's vertical-to-horizontal line ratio only from 0.77 to
+0.75. The walls still read more horizontally banded than a real Supai or Coconino
+face, and wind-scoured alcoves are not built at all — a gap in the surface
+vocabulary rather than a defect in what is there.
+
+**The juniper leans across a wind that nothing else in the scene blows along.**
+The tree leans and piles its litter on one heading; the dust, the saltation
+ribbons and the bed drift run off another. They are 76° apart. It is nobody's
+mistake in particular, and reconciling the two vectors is a real piece of work
+rather than a one-line fix.
+
+**The sun disc is deliberately not visible**, which is a knowing deviation from a
+brief that asks for it three times. The disc is already geometrically unoccluded
+from the lower wash and measures 2.6 per cent contrast against the sky around it;
+a defined disc needs roughly a 2 km visual range, which is exactly the air that
+flattens the receding ridgelines. The disc and the depth ladder compete for one
+dial, and the ridgelines won.
+
+**Nobody in this pipeline has heard the sound.** Every judgement made about it is
+from spectrograms and offline DSP measurements. It is complete, it is measured,
+and it has never been listened to by the thing that built it.
+
+![The cool half of the walk, 160 m out: shaded floor against sunlit stratified
+wall](media/04-shade-far.webp)
+
+## A note on dependencies
+
+`package.json` lists one runtime dependency, but this is not a page that loads
+nothing over the network: Three.js 0.180 is fetched from a jsDelivr CDN at
+runtime through an importmap in `index.html`, so that the same tree serves both
+locally and from GitHub Pages. Three.js and nothing else. `pnpm install` is what
+the Playwright capture and measurement harness in `tools/` needs.
+
+The zero-asset claim is a separate one, and it is airtight. There is no
+`TextureLoader`, `GLTFLoader`, `RGBELoader`, `AudioLoader`, `FileLoader`,
+`fetch`, `XMLHttpRequest`, `new Image` or `createImageBitmap` anywhere in `src/`.
+The only binaries in the repository are the four screenshots on this page, and
+they are output, not input.
 
 ## Stack
 
