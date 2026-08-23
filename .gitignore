@@ -10,3 +10,6 @@ shots/
 pairsrc/
 index.pair.html
 .renderlock.d/
+
+# scratch: capture pairs, probe output, throwaway scripts
+tmp/
