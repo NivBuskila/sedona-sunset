@@ -262,3 +262,7 @@ of it. The habit that matters most came from jungle-trail too: quote a frame tim
 in milliseconds measured on the real card, and author the quality ladder against
 those numbers rather than against a guess. Both are written up, with what was
 taken and what was declined, in [`PERF.md`](PERF.md).
+
+## Licence
+
+MIT — see [`LICENSE`](LICENSE).
