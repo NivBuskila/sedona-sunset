@@ -50,13 +50,13 @@
  */
 import * as THREE from 'three';
 import { aerialCoeffs } from './aerial.js';
+import { TONIGHT_HEADING } from './wind.js';
 
-/* Straight from audio.js, and it must stay in step with it: the heading the
-   wind blows *toward*, 0 meaning +Z, which is down-wash and away from the sun.
-   So the wind is in your face as you walk up the wash, the sand streams past
-   you toward the mouth, and grains pile on the up-wash faces of clasts — which
-   is the side System 1 already drew them piled on. */
-const WIND_HEADING = 0.12;
+/* Tonight's wind, now imported rather than declared. This used to be its own
+   `0.12` with a comment saying it "must stay in step with" audio.js's identical
+   literal — two constants and a request. See wind.js for why that could not
+   hold. The local alias keeps every use below unchanged. */
+const WIND_HEADING = TONIGHT_HEADING;
 
 const EYE = 1.65;
 

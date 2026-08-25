@@ -39,6 +39,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rng, fbm, clamp, smoothstep, mix } from './noise.js';
 import { SUN_DIR } from './sky.js';
 import { barkTex, deadTex, foliageTex, grassTex } from './plantex.js';
+import { PREVAILING_HEADING, headingToVec } from './wind.js';
 
 const TAU = Math.PI * 2;
 
@@ -50,19 +51,16 @@ const TAU = Math.PI * 2;
    crown is rim-lit and partly translucent rather than flatly front-lit. */
 export const JUNIPER_XZ = { x: 6.74, z: -65.65 };
 
-/* Prevailing wind, as a direction the wind blows *toward*. Chosen across the
-   wash rather than along it so the tree's lean reads as a lean in the hero
-   framing instead of foreshortening to nothing.
-   Named `PREVAILING` rather than `WIND` because the bare name invited exactly
-   the confusion it was meant to prevent: `terrain.js`'s `uWind` uniform is
-   commented "the shared WIND" and is not this at all — it starts from
-   `TONIGHT_FALLBACK` and is then driven live off the audio wind, which runs on
-   `WIND_HEADING = 0.12` in `atmosphere.js` and `audio.js`. That heading points
-   about seventy-six degrees away from this vector, and nothing imports this one,
-   so the "should agree with this; it is exported for that" this comment used to
-   claim was never true. It is the juniper's own lean direction and no more than
-   that until somebody reconciles the two. */
-export const PREVAILING = new THREE.Vector2(0.94, 0.34).normalize();
+/* Prevailing wind, as a direction the wind blows *toward*, and it is no longer
+   this file's private opinion: it is derived from the one shared heading in
+   wind.js, which is the reconciliation this comment used to say was owed.
+   It was `(0.94, 0.34)` — a heading of 70.2° against tonight's 6.9°, so 63.3°
+   apart (the "about seventy-six degrees" this comment claimed is corrected in
+   wind.js). Still deliberately off tonight's axis rather than folded onto it,
+   because the lean was aimed across the wash so it reads as a lean in the hero
+   framing instead of foreshortening to nothing; `PREVAILING_OFFSET` is that
+   concession, named and in one place. The residual is 35.5°. */
+export const PREVAILING = new THREE.Vector2(...headingToVec(PREVAILING_HEADING));
 
 const BARK_TILE = 0.55;   // metres per bark texture tile
 

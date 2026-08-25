@@ -35,6 +35,10 @@
  * The gait is a lateral-sequence four-beat walk — left hind, left fore, right
  * hind, right fore — which is what a walking donkey actually does and is why the
  * legs here take a phase offset each rather than the biped's simple antiphase.
+ * It only genuinely became that sequence once the touchdowns were made audible;
+ * see the note on the offsets being the inverse of the order, above `legs`. Each
+ * touchdown is reported through the `onHoof` callback, which is what drives the
+ * footstep voice in audio.js.
  *
  * What is deliberately *not* here: no foot IK, so a planted hoof slips against
  * the ground rather than being pinned to it. At this camera distance, with the
@@ -191,7 +195,7 @@ function mat(tex, roughness) {
  *   and without the fill its camera-facing side reads as a silhouette, so a
  *   caller that forgot it should hear about it instead of getting that quietly.
  */
-export function buildDonkey(sun) {
+export function buildDonkey(sun, { onHoof } = {}) {
   if (!sun) throw new Error('buildDonkey(sun): the fill term needs the beam');
   const root = new THREE.Group();
 
@@ -512,13 +516,27 @@ export function buildDonkey(sun) {
     hind: { a: 0.55, b: -0.85, c: 0.35 },
   };
 
+  /* Lateral-sequence walk: left hind, left fore, right hind, right fore.
+   *
+   * The offsets are the INVERSE of the touchdown order, and that is the trap.
+   * Contact is at local phase 0 (see poseLeg), and poseLeg is handed
+   * `phase + ph·TAU`, so a leg with offset `ph` touches down when the *global*
+   * phase reaches (1 − ph)·TAU — not at ph·TAU. Writing the offsets as though
+   * they were the touchdown times put the fore pair at 0.25/0.75 and produced the
+   * order left hind, RIGHT fore, right hind, LEFT fore: alternating sides, which
+   * is a diagonal-sequence walk, not the lateral one this file's header promises
+   * and a donkey actually uses. It went unseen because a silent gait at four
+   * metres reads as "legs moving"; it stops being invisible the moment each
+   * touchdown makes a sound. The fore pair is swapped to fix it, and `contact` is
+   * derived from `ph` rather than written down a second time, so the two can no
+   * longer drift apart.
+   */
   const legs = [
-    /* lateral-sequence walk: left hind, left fore, right hind, right fore */
-    { L: hindLeg(-1), ph: 0.00 },
-    { L: foreLeg(-1), ph: 0.25 },
-    { L: hindLeg(1), ph: 0.50 },
-    { L: foreLeg(1), ph: 0.75 },
-  ];
+    { L: hindLeg(-1), ph: 0.00, fore: false, side: -1 },   // left hind,  lands 0/4
+    { L: foreLeg(-1), ph: 0.75, fore: true, side: -1 },    // left fore,  lands 1/4
+    { L: hindLeg(1), ph: 0.50, fore: false, side: 1 },     // right hind, lands 2/4
+    { L: foreLeg(1), ph: 0.25, fore: true, side: 1 },      // right fore, lands 3/4
+  ].map(e => ({ ...e, contact: ((1 - e.ph) % 1) * TAU }));
 
   /* ── the gait ──────────────────────────────────────────────────────────
    *
@@ -533,6 +551,11 @@ export function buildDonkey(sun) {
   const STRIDE = (speed) => clamp(1.05 + speed * 0.14, 1.05, 2.10);
 
   let phase = 0;
+
+  let beats = 0;
+
+  /** Did the advancing phase sweep past `c` this frame? `a`→`b` may wrap TAU. */
+  const swept = (a, b, c) => (a <= b) ? (c > a && c <= b) : (c > a || c <= b);
 
   /** Protraction/retraction plus joint flexion for one limb at a phase.
       Positive rotation.x swings a limb forward (see REST), so protraction takes
@@ -596,6 +619,12 @@ export function buildDonkey(sun) {
   return {
     group: root,
 
+    /* The gait phase and the touchdown count, so a probe can ask whether the
+       four-beat sequence is actually running instead of inferring it from the
+       sound — which cannot be heard in a headless browser, where the audio
+       context never leaves `suspended`. */
+    _gait: () => ({ phase, beats }),
+
     /**
      * Place the animal on the ground and drive the gait.
      * @param {number} x,y,z world position of the hooves
@@ -615,9 +644,23 @@ export function buildDonkey(sun) {
       /* amplitude grows with speed and then saturates: past a jog the limbs stop
          opening further and the animal is simply taking the same steps faster */
       const amp = clamp(0.72 + speed * 0.22, 0.72, 1.30);
+      const prevPhase = phase;
       phase = (phase + dt * (TAU * speed / STRIDE(speed))) % TAU;
 
       for (const { L, ph } of legs) poseLeg(L, (phase + ph * TAU) % TAU, amp);
+
+      /* Hoof-fall events, so the sound can be the animal on screen rather than a
+         cadence of its own. The gait already knows exactly when each hoof lands,
+         which is the whole reason to emit from here: the alternative — audio
+         re-deriving a cadence from speed — is what produced two bipedal boots
+         under a four-legged animal in the first place. Emitted for the real
+         touchdown of a named limb, so the listener gets the side for the pan and
+         fore/hind for the weight. */
+      if (onHoof) {
+        for (const e of legs) {
+          if (swept(prevPhase, phase, e.contact)) { beats++; onHoof(e.side, e.fore, speed); }
+        }
+      }
 
       /* The trunk. A four-beat walk has two support peaks per cycle, so the rise
          and fall runs at twice the phase; the roll and yaw run at once, because

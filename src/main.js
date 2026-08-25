@@ -333,7 +333,13 @@ const corridor = buildCorridor(path, terrain);
 /* The donkey the third-person camera follows. Every map on it is written at boot
    like the rest of the scene's textures; see donkeytex.js. */
 setDonkeyAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
-const donkey = buildDonkey(sun);
+/* The gait drives the footstep voice: four hooves, in the order they actually
+   land, instead of the two self-clocked boots audio.js was written for when this
+   was a first-person walk. audio.api is a working stub when there is no
+   AudioContext, so this needs no guard. */
+const donkey = buildDonkey(sun, {
+  onHoof: (side, fore) => audio.api.hoof(side, fore),
+});
 scene.add(donkey.group);
 
 const player = {
@@ -1037,6 +1043,12 @@ const api = {
      head bob as a 1.6 s hop because the bob is bigger than the threshold. The
      state is not a proxy and cannot be fooled by either. */
   _player: player,
+  /* The donkey, so a probe can drive `update()` at a chosen dt and check the
+     gait directly. It cannot be checked through the frame loop: software
+     rasterising this scene runs near one frame a second, which is longer than a
+     whole stride cycle, so every hoof-fall but one is skipped and the sequence
+     never appears. Reaching the gait is the only way to measure it. */
+  _donkey: donkey,
   _scene: scene, _camera: camera, _terrain: terrain, _path: path, _atmo: atmo,
   _post: post,
   /* When the loading message reached the screen, how long each generation phase
@@ -1044,6 +1056,7 @@ const api = {
      in the contract surface does. */
   _boot: loading.log,
   _corridor: corridor,
+  _donkey: donkey,
   _instances: clasts.reduce((n, m) => n + m.count, 0),
 };
 

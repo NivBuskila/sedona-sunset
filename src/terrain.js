@@ -33,6 +33,7 @@ import * as THREE from 'three';
 import { fbm, ridged, clamp, smoothstep, mix } from './noise.js';
 import { SUN_DIR, SUN_EL } from './sky.js';
 import { DIRT_RELIEF_K } from './textures.js';
+import { TONIGHT_HEADING } from './wind.js';
 
 /* The grain bed's depth, from the one place it is stated. 25 mm per height unit
    times K. Both the sun's climb through the height field and the geometric
@@ -74,7 +75,8 @@ const CHAN_W = 9.5;
    on nothing, which is what a first pass at 9.5 did. */
 const BREACH_W = 11.0;
 
-const TONIGHT_FALLBACK = 0.12;
+/* The fourth and last copy of the 0.12 literal, now imported like the rest. */
+const TONIGHT_FALLBACK = TONIGHT_HEADING;
 
 /* Scour hollow geometry. SC_IN is where the stone's own footing ends and the pit
    begins, SC_OUT where the pit dies, both in radii of the stone. SC_CELL is the
@@ -1249,7 +1251,8 @@ uniform vec3  uSilt;
 uniform vec3  uStone;
 uniform vec2  uSunStep;   // dirt-tile UV travelled per metre along the sun azimuth
 uniform float uSunRise;   // grain-height units gained per metre along it
-uniform vec2  uWind;      // the shared WIND, the direction the wind blows toward
+uniform vec2  uWind;      // TONIGHT's wind (not the juniper's prevailing lean),
+                          // the direction it blows toward; see syncWind + wind.js
 uniform float uBedT;
 varying vec3 vWPos;
 varying vec3 vWNrm;
