@@ -1,6 +1,6 @@
 /* Sedona Sunset — System 1: terrain and the wash path.
  *
- * Boots the scene, wires first-person walking, and exposes the `window.__game`
+ * Boots the scene, wires third-person walking, and exposes the `window.__game`
  * capture surface that CONTRACT.md specifies.
  *
  * Determinism note, because it is the thing that is easy to break: the render
@@ -33,7 +33,6 @@ import { createPost } from './post.js';
 import { buildCharacter } from './character.js';
 import { setCharAnisotropy } from './chartex.js';
 
-const EYE = 1.65;
 const DEG = Math.PI / 180;
 
 /* ── the loading screen ────────────────────────────────────────────────────
@@ -377,22 +376,60 @@ function placeAt(d) {
   lifted = 0;
 }
 
-/* Diablo-style top-down camera: sits above and behind the player along the
-   current yaw, looking down at them. Clamped above the terrain so bends in
-   the corridor cannot bury it inside a cliff. */
-const CAM_HEIGHT = 16;
-const CAM_BACK = 9;
+/* Over-the-shoulder third-person camera: sits a little above and behind the
+   walker along the current yaw and looks at their upper back, with the aim
+   point pushed ahead of them so the figure sits low and off-centre in frame and
+   the wash ahead gets the rest of it.
+ *
+ * The distance is the whole decision. The previous rig sat sixteen metres up,
+ * which put the figure at forty-odd pixels and made the scene read as a map;
+ * a shoulder camera at four metres is close enough that the walker is a body
+ * with a gait, while still showing enough corridor ahead to walk by. The
+ * shoulder offset is what keeps the head from sitting dead centre and occluding
+ * the path the player is steering into.
+ *
+ * Clamped above the terrain so bends in the corridor cannot bury it inside a
+ * cliff — the same guard the top-down rig needed, and more important here,
+ * because at four metres the camera is inside the canyon rather than above it. */
+const CAM_DIST = 4.20;     // metres from the aim point to the lens
+const CAM_SIDE = 0.55;     // right-shoulder offset, across the view
+const CAM_LOOK_Y = 1.45;   // aim at the shoulders, not the eyes
+const CAM_PITCH = 0.14;    // radians of downtilt added to the player's own pitch
 let charDt = 0.016; // last frame's dt, for the walker's gait swing
 function syncCamera() {
+  /* The feet, and `settle` is subtracted for the same reason the eye used to
+     take it: the landing dip is the knees giving, so the body goes down with
+     the view rather than the view sinking through a rigid figure. */
   character.update(player.x, player.y - player.settle, player.z, player.yaw,
                    Math.hypot(player.vx, player.vz), charDt);
-  const cx = player.x - Math.sin(player.yaw) * CAM_BACK;
-  const cz = player.z + Math.cos(player.yaw) * CAM_BACK;
-  let cy = player.y + CAM_HEIGHT;
+
+  /* The aim point rides the shoulders, offset to the right so the figure sits
+     off-centre and leaves the corridor ahead unoccluded. */
+  const s = Math.sin(player.yaw), c = Math.cos(player.yaw);
+  const tx = player.x + c * CAM_SIDE;
+  const ty = player.y + CAM_LOOK_Y - player.settle;
+  const tz = player.z + s * CAM_SIDE;
+
+  /* Orbit the aim point along the *view* direction, so pitch stays a single
+     quantity shared with the first-person build: the mouse, `lookAt` and the
+     arrival lift all still write `player.pitch` and all still mean the same
+     thing by it. The top-down rig this replaces ignored pitch outright, which
+     silently disabled mouse-Y, every `lookAt` pitch the harness passes, and the
+     whole arrival lift. */
+  const pitch = Math.max(-1.45, Math.min(1.45, player.pitch - CAM_PITCH));
+  const cp = Math.cos(pitch);
+  const fx = s * cp, fy = Math.sin(pitch), fz = -c * cp;
+
+  let cx = tx - fx * CAM_DIST;
+  let cy = ty - fy * CAM_DIST;
+  let cz = tz - fz * CAM_DIST;
+  /* Clamped above the terrain, as the old rig was and for the same reason —
+     more pressing here, because at four metres the lens is down inside the
+     canyon rather than above it, and a bend can otherwise put it in a cliff. */
   const g = groundAt(cx, cz);
-  if (cy < g + 2) cy = g + 2;
+  if (cy < g + 0.55) cy = g + 0.55;
   camera.position.set(cx, cy, cz);
-  camera.lookAt(player.x, player.y + EYE, player.z);
+  camera.lookAt(tx, ty, tz);
 }
 
 /* Both cascade cameras ride with the player, each quantised to its own texel
