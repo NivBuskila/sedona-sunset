@@ -115,13 +115,19 @@ function coatHeight(size, seed) {
    at 0.95, so a warm-brown animal sinks into it. A grey dun donkey — genuinely
    the commonest colour — is the one cool, desaturated mass in the frame, which
    is exactly what makes it legible against sandstone. */
-/* Reflectances, and they are measured quantities rather than picked ones: a grey
-   dun coat sits at 0.20-0.26 diffuse reflectance, which is darker than it looks
-   to the eye. The first pass used 0.37 and under this scene's direct sun that
-   tone mapped to nearly white — a plaster donkey. */
-const DUN = [0.255, 0.240, 0.232];    // body grey, faintly warm
-const DARK = [0.098, 0.086, 0.082];   // stripes, mane, tail tuft, lower legs
-const PALE = [0.580, 0.550, 0.508];   // muzzle, belly, eye rings
+/* Reflectances. These have now been wrong in both directions, so the reasoning is
+   worth keeping rather than the number alone.
+   0.37 was the first pass and tone mapped to nearly white under this scene's
+   direct sun — a plaster donkey. 0.255 was the correction, taken from the low end
+   of a grey dun's real 0.20-0.32 range, and it overshot: with the sun at 15° in
+   FRONT of the animal the follow camera sees mostly its shaded side, and at 0.255
+   that side fell to a luminance of 20-37 against 147 for sunlit ground, which
+   reads as a silhouette rather than an animal.
+   0.315 is the light end of the same real range, which is the honest place to sit
+   for an animal that is backlit for most of the traverse. */
+const DUN = [0.315, 0.298, 0.288];    // body grey, faintly warm
+const DARK = [0.108, 0.096, 0.092];   // stripes, mane, tail tuft, lower legs
+const PALE = [0.620, 0.590, 0.545];   // muzzle, belly, eye rings
 
 function coatAlbedo(size, h, base, seed, marks) {
   return albedo(size, (x, y, c) => {
