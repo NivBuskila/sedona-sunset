@@ -30,8 +30,8 @@ import { installAerial } from './aerial.js';
 import { buildAtmosphere } from './atmosphere.js';
 import { createPerf } from './perf.js';
 import { createPost } from './post.js';
-import { buildCharacter } from './character.js';
-import { setCharAnisotropy } from './chartex.js';
+import { buildDonkey } from './donkey.js';
+import { setDonkeyAnisotropy } from './donkeytex.js';
 
 const DEG = Math.PI / 180;
 
@@ -330,11 +330,11 @@ syncWind(terrainMesh.material, audio.api);
    cross-section instead of being a number somebody chose. */
 const corridor = buildCorridor(path, terrain);
 
-/* The visible walker for the top-down view. Every map on it is written at boot
-   like the rest of the scene's textures; see chartex.js. */
-setCharAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
-const character = buildCharacter();
-scene.add(character.group);
+/* The donkey the third-person camera follows. Every map on it is written at boot
+   like the rest of the scene's textures; see donkeytex.js. */
+setDonkeyAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
+const donkey = buildDonkey();
+scene.add(donkey.group);
 
 const player = {
   x: 0, y: 0, z: 0,
@@ -391,19 +391,26 @@ function placeAt(d) {
  * Clamped above the terrain so bends in the corridor cannot bury it inside a
  * cliff — the same guard the top-down rig needed, and more important here,
  * because at four metres the camera is inside the canyon rather than above it. */
-const CAM_DIST = 4.20;     // metres from the aim point to the lens
-const CAM_SIDE = 0.55;     // right-shoulder offset, across the view
-const CAM_LOOK_Y = 1.45;   // aim at the shoulders, not the eyes
-const CAM_PITCH = 0.14;    // radians of downtilt added to the player's own pitch
-let charDt = 0.016; // last frame's dt, for the walker's gait swing
+/* Set out for a 1.26 m animal that is 1.9 m long, rather than for the 1.74 m
+   figure this followed before: a quadruped needs more distance to sit in frame
+   and a lower aim point, because its mass is a horizontal barrel at back height
+   and not a head on top of a column. */
+const CAM_DIST = 5.40;     // metres from the aim point to the lens
+const CAM_SIDE = 0.60;     // offset across the view, so the animal sits off-centre
+const CAM_LOOK_Y = 1.08;   // aim at the back, a little behind the withers
+const CAM_PITCH = 0.16;    // radians of downtilt added to the player's own pitch
+/* Last frame's dt, so the gait advances in real time. Assigned in `frame`; the
+   initialiser is what a directly-driven `renderOnce` (the capture harness, which
+   never starts the loop) gets, and at rest the gait ignores it entirely. */
+let gaitDt = 0.016;
 function syncCamera() {
-  /* The feet, and `settle` is subtracted for the same reason the eye used to
-     take it: the landing dip is the knees giving, so the body goes down with
-     the view rather than the view sinking through a rigid figure. */
-  character.update(player.x, player.y - player.settle, player.z, player.yaw,
-                   Math.hypot(player.vx, player.vz), charDt);
+  /* The hooves, and `settle` is subtracted for the same reason the eye used to
+     take it: the landing dip is the legs giving, so the animal goes down with
+     the view rather than the view sinking through a rigid body. */
+  donkey.update(player.x, player.y - player.settle, player.z, player.yaw,
+                Math.hypot(player.vx, player.vz), gaitDt);
 
-  /* The aim point rides the shoulders, offset to the right so the figure sits
+  /* The aim point rides the back, offset to one side so the animal sits
      off-centre and leaves the corridor ahead unoccluded. */
   const s = Math.sin(player.yaw), c = Math.cos(player.yaw);
   const tx = player.x + c * CAM_SIDE;
@@ -923,6 +930,7 @@ function frame(t) {
   if (paused) { last = t; return; }
   const dt = Math.min(0.05, (t - last) / 1000 || 0.016);
   last = t;
+  gaitDt = dt;   // syncCamera drives the donkey's gait with it, from renderOnce
   /* The governor owns the frame cap, the GPU timer bracket and the adaptive
      tier. It returns false only when an explicit #fps cap says this rAF tick is
      not owed a frame — uncapped, which is the default, it is always true, so
