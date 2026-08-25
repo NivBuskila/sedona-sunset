@@ -369,9 +369,19 @@ function placeAt(d) {
   lifted = 0;
 }
 
+/* Diablo-style top-down camera: sits above and behind the player along the
+   current yaw, looking down at them. Clamped above the terrain so bends in
+   the corridor cannot bury it inside a cliff. */
+const CAM_HEIGHT = 16;
+const CAM_BACK = 9;
 function syncCamera() {
-  camera.position.set(player.x, player.y + EYE + player.bob - player.settle, player.z);
-  camera.rotation.set(player.pitch, -player.yaw, 0, 'YXZ');
+  const cx = player.x - Math.sin(player.yaw) * CAM_BACK;
+  const cz = player.z + Math.cos(player.yaw) * CAM_BACK;
+  let cy = player.y + CAM_HEIGHT;
+  const g = groundAt(cx, cz);
+  if (cy < g + 2) cy = g + 2;
+  camera.position.set(cx, cy, cz);
+  camera.lookAt(player.x, player.y + EYE, player.z);
 }
 
 /* Both cascade cameras ride with the player, each quantised to its own texel
