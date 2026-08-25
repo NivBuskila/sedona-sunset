@@ -31,6 +31,7 @@ import { buildAtmosphere } from './atmosphere.js';
 import { createPerf } from './perf.js';
 import { createPost } from './post.js';
 import { buildCharacter } from './character.js';
+import { setCharAnisotropy } from './chartex.js';
 
 const EYE = 1.65;
 const DEG = Math.PI / 180;
@@ -330,7 +331,9 @@ syncWind(terrainMesh.material, audio.api);
    cross-section instead of being a number somebody chose. */
 const corridor = buildCorridor(path, terrain);
 
-/* The visible walker for the top-down view — procedural primitives, no assets. */
+/* The visible walker for the top-down view. Every map on it is written at boot
+   like the rest of the scene's textures; see chartex.js. */
+setCharAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
 const character = buildCharacter();
 scene.add(character.group);
 
