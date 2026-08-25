@@ -51,6 +51,7 @@
 import * as THREE from 'three';
 import { clamp, mix, smoothstep } from './noise.js';
 import { hideTex, barrelTex, paleTex, darkTex, hoofTex, maneTex } from './donkeytex.js';
+import { installDonkeyFill } from './donkeyfill.js';
 
 const TAU = Math.PI * 2;
 
@@ -137,14 +138,44 @@ function sweep(len, profile, along = 12, radial = 14, vRepeat = 1) {
 
 /** Round-sectioned linear taper with both ends closed off, so nothing in the
     animal terminates in a flat disc. */
+/* The dome factor every closer here shares: a circular falloff to zero over
+   `cap` of the length, so an end closes as a rounded dome rather than an open
+   rim. taper() and the barrel each inlined their own copy of this. */
+function dome(t, cap0, cap1) {
+  const e0 = cap0 > 0 ? Math.min(1, t / cap0) : 1;
+  const e1 = cap1 > 0 ? Math.min(1, (1 - t) / cap1) : 1;
+  return Math.sqrt(Math.max(0, 1 - (1 - e0) * (1 - e0))) *
+         Math.sqrt(Math.max(0, 1 - (1 - e1) * (1 - e1)));
+}
+
 function taper(r0, r1, cap = 0.12) {
   return (t, out) => {
-    const r = mix(r0, r1, t);
-    const e0 = cap > 0 ? Math.min(1, t / cap) : 1;
-    const e1 = cap > 0 ? Math.min(1, (1 - t) / cap) : 1;
-    const s = Math.sqrt(Math.max(0, 1 - (1 - e0) * (1 - e0))) *
-              Math.sqrt(Math.max(0, 1 - (1 - e1) * (1 - e1)));
-    out[0] = r * s; out[1] = r * s; out[2] = r * s;
+    const r = mix(r0, r1, t) * dome(t, cap, cap);
+    out[0] = r; out[1] = r; out[2] = r;
+  };
+}
+
+/** Closes an existing profile's ends.
+ *
+ * Every sweep in this file that did not go through taper() was an open tube. The
+ * neck, head, forearm, femur, gaskin, hooves, mane and tail tuft all ended in a
+ * bare rim, and since three culls back faces you did not see a rim — you saw
+ * straight through it into the far inside wall of the tube, which reads as a
+ * hard-edged dark crescent sitting in the middle of the animal. The neck's was
+ * the worst: its open base stands proud of the closed chest, so the withers had
+ * a hole in them, and that hole was mistaken for a shading fault twice.
+ *
+ * @param {(t: number, out: number[]) => void} profile  the profile to close
+ * @param {number} cap0  dome length at t=0, as a fraction of the sweep
+ * @param {number} cap1  dome length at t=1; 0 leaves that end open on purpose
+ */
+function domed(profile, cap0 = 0.10, cap1 = 0.10) {
+  return (t, out) => {
+    profile(t, out);
+    /* NaN in out[2] is how a profile tells sweep() "no separate bottom radius";
+       NaN survives the multiply, so that signal still reaches it. */
+    const s = dome(t, cap0, cap1);
+    out[0] *= s; out[1] *= s; out[2] *= s;
   };
 }
 
@@ -154,7 +185,14 @@ function mat(tex, roughness) {
   });
 }
 
-export function buildDonkey() {
+/**
+ * @param {THREE.DirectionalLight} sun  the beam, for the fill term's direction.
+ *   Required rather than optional: the animal is backlit for most of the traverse
+ *   and without the fill its camera-facing side reads as a silhouette, so a
+ *   caller that forgot it should hear about it instead of getting that quietly.
+ */
+export function buildDonkey(sun) {
+  if (!sun) throw new Error('buildDonkey(sun): the fill term needs the beam');
   const root = new THREE.Group();
 
   const hide = mat(hideTex(), 0.88);
@@ -163,6 +201,8 @@ export function buildDonkey() {
   const dark = mat(darkTex(), 0.84);
   const hoof = mat(hoofTex(), 0.52);
   const mane = mat(maneTex(), 0.90);
+  /* See src/donkeyfill.js: a bounce term on this animal and nothing else. */
+  const fill = installDonkeyFill([hide, barrelM, pale, dark, hoof, mane], sun);
 
   const add = (parent, geo, material, x = 0, y = 0, z = 0) => {
     const m = new THREE.Mesh(geo, material);
@@ -171,6 +211,42 @@ export function buildDonkey() {
     m.receiveShadow = true;
     parent.add(m);
     return m;
+  };
+
+  /* A joint ball, and it wants to be almost invisible.
+   *
+   * WHAT IT IS FOR, narrowly. Where two domed segments meet at an *angle* their
+   * end caps are not parallel, so the outside of the bend opens a wedge notch.
+   * That is a real defect and a ball fills it. It is the only defect a ball
+   * fixes.
+   *
+   * WHAT IT IS NOT FOR, learned by doing it wrong. The first pass put a ball at
+   * every joint sized to the segment's *thickest* radius — 134 mm at the hip, 190
+   * mm at the neck root — and turned the animal into a balloon animal, which was
+   * far worse than the gaps it set out to fix. Two things were wrong. The size
+   * came from the wrong place: a ball sits where the segment has already domed to
+   * nothing, so what it has to match is the radius *at the joint*, not the belly
+   * of the muscle 100 mm away. And a sphere is round in every axis while these
+   * limbs are elliptical — the femur's half-width is 0.82 of its depth — so a
+   * sphere matched even to the correct radius still bulges sideways by a fifth.
+   * Hence `sx`, and hence radii deliberately set just *under* the thinner of the
+   * two segments meeting there: a ball that hides inside the limb still fills the
+   * notch, and one that peeks out is a lump on the skin.
+   *
+   * Straight joints get no ball at all. Whether a joint even has a waist is
+   * decided by the ratio of its dome's length to its radius: at the hip that is
+   * 18 mm over 132 mm = 0.14, a nearly flat cap with no waist to fill. Those
+   * caps are also buried — the hip, shoulder and neck root all sit inside the
+   * barrel's own radius, so their end discs cannot be seen from outside.
+   *
+   * @param {number} r   just under the thinner segment radius at the joint
+   * @param {number} sx  squash across the limb, to match its elliptical section
+   * @param {number} sy  stretch along the limb; the hock is a bony prominence
+   */
+  const ball = (parent, r, material, sx = 1.0, sy = 1.0) => {
+    const s = add(parent, new THREE.SphereGeometry(r, 10, 8), material);
+    s.scale.set(sx, sy, 1.0);
+    return s;
   };
 
   /* ── the barrel ───────────────────────────────────────────────────────── */
@@ -190,9 +266,7 @@ export function buildDonkey() {
     o[2] = mix(0.250, 0.300, smoothstep(0.05, 0.45, t)) *
            mix(1.0, 0.46, smoothstep(0.52, 0.95, t));          // belly, then flank tuck
     /* close both ends */
-    const e0 = Math.min(1, t / 0.10), e1 = Math.min(1, (1 - t) / 0.07);
-    const s = Math.sqrt(Math.max(0, 1 - (1 - e0) * (1 - e0))) *
-              Math.sqrt(Math.max(0, 1 - (1 - e1) * (1 - e1)));
+    const s = dome(t, 0.10, 0.07);
     o[0] *= s; o[1] *= s; o[2] *= s;
   }, 20, 22, 1);
   const barrel = add(body, barrelGeo, barrelM, 0, 0, M.barrelZ);
@@ -211,21 +285,26 @@ export function buildDonkey() {
      0.41 m deep at the base, and deeper on the crest side (−Z) than the throat,
      which is where a donkey carries its bulk. A neck any thinner than this reads
      as a plank when the camera is behind it. */
-  add(neck, sweep(M.neckLen, (t, o) => {
+  add(neck, sweep(M.neckLen, domed((t, o) => {
     o[0] = mix(0.150, 0.095, smoothstep(0, 1, t));
     o[1] = mix(0.175, 0.100, smoothstep(0, 1, t));   // throat
     o[2] = mix(0.240, 0.112, smoothstep(0, 1, t));   // crest
-  }, 8, 14, 1), hide);
+  }, 0.09, 0.09), 8, 14, 1), hide);
+  /* No ball at the neck root. Closing the neck is what fixed the hole in the
+     withers; the 190 mm ball that was briefly here fixed nothing and was the
+     single worst lump on the animal. The neck's base sits 0.08 m off the barrel
+     axis where the barrel's own radius is 0.225 m, so its end cap is inside the
+     chest and cannot be seen. */
 
   /* The upright mane, along the crest. Short and brush-like, which is a donkey;
      a long falling mane is a horse.
      The neck's local −Z is the crest and its +Z is the throat, so the height goes
      in o[2] (the section's −Z radius). The first pass put it in o[1] and grew the
      mane down the *underside* of the neck as a dewlap. */
-  const maneGeo = sweep(M.neckLen * 0.90, (t, o) => {
+  const maneGeo = sweep(M.neckLen * 0.90, domed((t, o) => {
     const h = Math.sin(Math.min(1, t * 1.15) * Math.PI) * 0.055 + 0.014;
     o[0] = 0.024; o[1] = h * 0.10; o[2] = h;
-  }, 10, 8, 1);
+  }, 0.06, 0.06), 10, 8, 1);
   add(neck, maneGeo, mane, 0, -0.02, -0.010);
 
   /* The poll, with the neck's tilt cancelled so the head and ears are posed in
@@ -235,18 +314,25 @@ export function buildDonkey() {
   poll.position.y = -M.neckLen;
   poll.rotation.x = -M.neckTilt;
   neck.add(poll);
+  /* The poll does need one: the head is tilted 0.62 rad out of the neck's axis, so
+     this is a bent joint and the two caps leave a notch at the throat. Sized under
+     the neck's top (112 mm) rather than the head's cheek, and squashed across. */
+  ball(poll, 0.090, hide, 0.88);
 
   const head = new THREE.Group();
   head.rotation.x = M.headTilt;
   poll.add(head);
   /* Big, and deep through the jaw at the top end where the cheekbone is, then
      long and narrow down the nasal bone to the muzzle. */
-  add(head, sweep(M.headLen, (t, o) => {
+  /* Domed at the poll end only. The muzzle sphere below is centred 26 mm short of
+     the far end with a 76 mm radius, so it already encloses that rim completely —
+     doming it too would pull the nose in behind the sphere and flatten the face. */
+  add(head, sweep(M.headLen, domed((t, o) => {
     const jaw = Math.exp(-Math.pow((t - 0.18) / 0.24, 2));
     o[0] = mix(0.108, 0.062, smoothstep(0.05, 0.9, t)) + jaw * 0.020;
     o[1] = mix(0.125, 0.070, smoothstep(0.05, 0.9, t)) + jaw * 0.012;
     o[2] = mix(0.130, 0.078, smoothstep(0.05, 0.9, t)) + jaw * 0.030;
-  }, 12, 16, 1), hide);
+  }, 0.08, 0), 12, 16, 1), hide);
   /* the pale muzzle — half of the dun pattern, and it sits right at the front of
      the silhouette where it does the most work */
   const muzzle = add(head, new THREE.SphereGeometry(0.076, 14, 10), pale, 0, -M.headLen + 0.026, 0);
@@ -297,10 +383,12 @@ export function buildDonkey() {
   add(tail, sweep(M.tailLen, taper(0.038, 0.016, 0.10), 8, 10, 1), hide);
   /* the tuft — a donkey's tail is a thin switch with a brush on the end, not a
      fall of hair down its whole length */
-  const tuft = add(tail, sweep(0.19, (t, o) => {
+  const tuft = add(tail, sweep(0.19, domed((t, o) => {
     const w = Math.sin(Math.min(1, 0.10 + t * 0.95) * Math.PI) * 0.048 + 0.010;
     o[0] = w; o[1] = w; o[2] = w;
-  }, 8, 10, 1), mane, 0, -M.tailLen + 0.02, 0);
+  }, 0.08, 0.08), 8, 10, 1), mane, 0, -M.tailLen + 0.02, 0);
+  /* the dock, where the tail leaves the rump; under the tail's own 38 mm root */
+  ball(tail, 0.035, hide);
 
   /* ── the limbs ────────────────────────────────────────────────────────── */
 
@@ -311,24 +399,35 @@ export function buildDonkey() {
     shoulder.position.set(side * M.foreX, M.foreY, M.foreZ);
     body.add(shoulder);
     /* thick with muscle at the top, thin and tendinous by the carpus */
-    add(shoulder, sweep(M.forearm, (t, o) => {
+    add(shoulder, sweep(M.forearm, domed((t, o) => {
       const r = mix(0.098, 0.040, smoothstep(0.0, 0.85, t));
       o[0] = r * 0.86; o[1] = r; o[2] = r;
-    }, 8, 12, 1), hide);
+    }, 0.07, 0.07), 8, 12, 1), hide);
+    /* No ball at the shoulder: it is a straight joint with a flat cap (31 mm of
+       dome over 98 mm of radius) and it sits at x=0.150 inside the barrel's
+       0.171 m half-width there, so the cap is enclosed already. */
 
     const carpus = new THREE.Group();
     carpus.position.y = -M.forearm;
     shoulder.add(carpus);
     /* the cannon: the thinnest part of the animal, and dark — the dun points */
     add(carpus, sweep(M.foreCannon, taper(0.038, 0.032, 0.10), 6, 10, 1), dark);
+    /* The knee is where a ball earns its place: the forearm's 31 mm dome over a
+       40 mm radius is near hemispherical, and the cannon's is too, so without one
+       the two round tips meet in an hourglass pinch. Under both radii, squashed. */
+    ball(carpus, 0.037, hide, 0.88);
 
     const fetlock = new THREE.Group();
     fetlock.position.y = -M.foreCannon;
     carpus.add(fetlock);
-    add(fetlock, sweep(M.hoof, (t, o) => {
+    /* Hoof: domed hard at the top, barely at the bottom. The bottom wants to stay
+       a flat wall — a hoof is cut off square — but it still has to be closed, or
+       a camera below the animal looks up inside the foot. */
+    add(fetlock, sweep(M.hoof, domed((t, o) => {
       const r = mix(0.044, 0.052, smoothstep(0, 1, t));   // hooves flare downward
       o[0] = r; o[1] = r; o[2] = r * 1.08;
-    }, 5, 12, 1), hoof);
+    }, 0.16, 0.05), 5, 12, 1), hoof);
+    ball(fetlock, 0.033, dark, 0.94);          // the fetlock joint
 
     return { a: shoulder, b: carpus, c: null, fetlock, fore: true };
   };
@@ -340,33 +439,45 @@ export function buildDonkey() {
     hip.position.set(side * M.hindX, M.hindY, M.hindZ);
     body.add(hip);
     /* the thigh is the heaviest mass on the animal */
-    add(hip, sweep(M.femur, (t, o) => {
+    add(hip, sweep(M.femur, domed((t, o) => {
       const r = mix(0.132, 0.062, smoothstep(0.1, 0.95, t));
       o[0] = r * 0.82; o[1] = r; o[2] = r * 1.06;
-    }, 8, 12, 1), hide);
+    }, 0.06, 0.06), 8, 12, 1), hide);
+    /* No ball at the hip. Its dome is 18 mm over a 132 mm radius — ratio 0.14, a
+       flat cap with no waist — and at x=0.160 it is inside the barrel's 0.182 m
+       half-width. The 134 mm sphere that was here read as a hip joint the size of
+       the animal's own gut. */
 
     const stifle = new THREE.Group();
     stifle.position.y = -M.femur;
     hip.add(stifle);
     /* the gaskin: a muscle belly high up, necking hard into the hock */
-    add(stifle, sweep(M.tibia, (t, o) => {
+    add(stifle, sweep(M.tibia, domed((t, o) => {
       const belly = Math.exp(-Math.pow((t - 0.25) / 0.30, 2)) * 0.022;
       const r = mix(0.072, 0.034, smoothstep(0.05, 1.0, t)) + belly;
       o[0] = r * 0.88; o[1] = r; o[2] = r;
-    }, 8, 12, 1), hide);
+    }, 0.06, 0.06), 8, 12, 1), hide);
+    /* The stifle stays, because the hind leg zigzags hard here — rest angles swing
+       0.55 to −0.85 rad across this joint — and a bend that sharp opens a real
+       wedge notch on the outside of it. Under the femur's 62 mm end. */
+    ball(stifle, 0.057, hide, 0.86);
 
     const hock = new THREE.Group();
     hock.position.y = -M.tibia;
     stifle.add(hock);
     add(hock, sweep(M.hindCannon, taper(0.036, 0.031, 0.10), 6, 10, 1), dark);
+    /* the hock, stretched along the limb because the point of it is a bony
+       prominence rather than a round knuckle */
+    ball(hock, 0.033, dark, 0.90, 1.15);
 
     const fetlock = new THREE.Group();
     fetlock.position.y = -M.hindCannon;
     hock.add(fetlock);
-    add(fetlock, sweep(M.hoof, (t, o) => {
+    add(fetlock, sweep(M.hoof, domed((t, o) => {
       const r = mix(0.042, 0.050, smoothstep(0, 1, t));
       o[0] = r; o[1] = r; o[2] = r * 1.08;
-    }, 5, 12, 1), hoof);
+    }, 0.16, 0.05), 5, 12, 1), hoof);
+    ball(fetlock, 0.031, dark, 0.94);
 
     return { a: hip, b: stifle, c: hock, fetlock, fore: false };
   };
@@ -483,6 +594,9 @@ export function buildDonkey() {
     update(x, y, z, yaw, speed, dt) {
       root.position.set(x, y, z);
       root.rotation.y = -yaw;
+      /* Before the standing-still return below, because a standing animal is lit
+         by the same sun as a walking one. */
+      fill.update();
 
       if (speed <= 0.05) { phase = 0; poseRest(); return; }
 

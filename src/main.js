@@ -333,7 +333,7 @@ const corridor = buildCorridor(path, terrain);
 /* The donkey the third-person camera follows. Every map on it is written at boot
    like the rest of the scene's textures; see donkeytex.js. */
 setDonkeyAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
-const donkey = buildDonkey();
+const donkey = buildDonkey(sun);
 scene.add(donkey.group);
 
 const player = {
