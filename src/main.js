@@ -329,6 +329,10 @@ syncWind(terrainMesh.material, audio.api);
    cross-section instead of being a number somebody chose. */
 const corridor = buildCorridor(path, terrain);
 
+/* The visible walker for the top-down view — procedural primitives, no assets. */
+const character = buildCharacter();
+scene.add(character.group);
+
 const player = {
   x: 0, y: 0, z: 0,
   vx: 0, vz: 0,
@@ -374,7 +378,10 @@ function placeAt(d) {
    the corridor cannot bury it inside a cliff. */
 const CAM_HEIGHT = 16;
 const CAM_BACK = 9;
+let charDt = 0.016; // last frame's dt, for the walker's gait swing
 function syncCamera() {
+  character.update(player.x, player.y - player.settle, player.z, player.yaw,
+                   Math.hypot(player.vx, player.vz), charDt);
   const cx = player.x - Math.sin(player.yaw) * CAM_BACK;
   const cz = player.z + Math.cos(player.yaw) * CAM_BACK;
   let cy = player.y + CAM_HEIGHT;
