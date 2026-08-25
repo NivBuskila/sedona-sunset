@@ -30,6 +30,7 @@ import { installAerial } from './aerial.js';
 import { buildAtmosphere } from './atmosphere.js';
 import { createPerf } from './perf.js';
 import { createPost } from './post.js';
+import { buildCharacter } from './character.js';
 
 const EYE = 1.65;
 const DEG = Math.PI / 180;
