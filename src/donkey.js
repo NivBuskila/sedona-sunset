@@ -229,9 +229,14 @@ export function buildDonkey(sun) {
    * of the muscle 100 mm away. And a sphere is round in every axis while these
    * limbs are elliptical — the femur's half-width is 0.82 of its depth — so a
    * sphere matched even to the correct radius still bulges sideways by a fifth.
-   * Hence `sx`, and hence radii deliberately set just *under* the thinner of the
-   * two segments meeting there: a ball that hides inside the limb still fills the
-   * notch, and one that peeks out is a lump on the skin.
+   * Hence `sx`. And hence the sizing rule, which took two wrong tries to land:
+   * match the *larger* of the two end radii, then squash across with `sx` to the
+   * limb's own half-width. Under-sizing is not the safe direction it looks like —
+   * the second pass set every ball to 0.92 of the *thinner* end and traded the
+   * lumps for a visible groove and a hard step at every joint down the leg, since
+   * a ball narrower than the limb leaves the segment's cap rim standing proud of
+   * it. Flush is the target: at a knee that is 40 mm with sx 0.86, giving exactly
+   * the forearm's 34 mm half-width, so the rim is covered and nothing bulges.
    *
    * Straight joints get no ball at all. Whether a joint even has a waist is
    * decided by the ratio of its dome's length to its radius: at the hip that is
@@ -316,8 +321,8 @@ export function buildDonkey(sun) {
   neck.add(poll);
   /* The poll does need one: the head is tilted 0.62 rad out of the neck's axis, so
      this is a bent joint and the two caps leave a notch at the throat. Sized under
-     the neck's top (112 mm) rather than the head's cheek, and squashed across. */
-  ball(poll, 0.090, hide, 0.88);
+     the neck's top (112 mm), squashed across so it does not widen the throat. */
+  ball(poll, 0.105, hide, 0.88);
 
   const head = new THREE.Group();
   head.rotation.x = M.headTilt;
@@ -383,12 +388,16 @@ export function buildDonkey(sun) {
   add(tail, sweep(M.tailLen, taper(0.038, 0.016, 0.10), 8, 10, 1), hide);
   /* the tuft — a donkey's tail is a thin switch with a brush on the end, not a
      fall of hair down its whole length */
-  const tuft = add(tail, sweep(0.19, domed((t, o) => {
-    const w = Math.sin(Math.min(1, 0.10 + t * 0.95) * Math.PI) * 0.048 + 0.010;
+  /* Longer and much slimmer than the first pass, which peaked at a 58 mm radius —
+     116 mm across on a 420 mm tail, and it read as a leaf hanging off the rump
+     rather than hair. A donkey's switch is a narrow brush. */
+  const tuft = add(tail, sweep(0.22, domed((t, o) => {
+    const w = Math.sin(Math.min(1, 0.10 + t * 0.95) * Math.PI) * 0.026 + 0.008;
     o[0] = w; o[1] = w; o[2] = w;
   }, 0.08, 0.08), 8, 10, 1), mane, 0, -M.tailLen + 0.02, 0);
-  /* the dock, where the tail leaves the rump; under the tail's own 38 mm root */
-  ball(tail, 0.035, hide);
+  /* the dock, where the tail leaves the rump; flush with the tail's own 38 mm root,
+     and it is load-bearing — the tail root sits 1 mm proud of the barrel there */
+  ball(tail, 0.038, hide);
 
   /* ── the limbs ────────────────────────────────────────────────────────── */
 
@@ -414,8 +423,8 @@ export function buildDonkey(sun) {
     add(carpus, sweep(M.foreCannon, taper(0.038, 0.032, 0.10), 6, 10, 1), dark);
     /* The knee is where a ball earns its place: the forearm's 31 mm dome over a
        40 mm radius is near hemispherical, and the cannon's is too, so without one
-       the two round tips meet in an hourglass pinch. Under both radii, squashed. */
-    ball(carpus, 0.037, hide, 0.88);
+       the two round tips meet in an hourglass pinch. Flush with the forearm's end. */
+    ball(carpus, 0.040, hide, 0.86);
 
     const fetlock = new THREE.Group();
     fetlock.position.y = -M.foreCannon;
@@ -427,7 +436,10 @@ export function buildDonkey(sun) {
       const r = mix(0.044, 0.052, smoothstep(0, 1, t));   // hooves flare downward
       o[0] = r; o[1] = r; o[2] = r * 1.08;
     }, 0.16, 0.05), 5, 12, 1), hoof);
-    ball(fetlock, 0.033, dark, 0.94);          // the fetlock joint
+    /* Flush with the hoof's 44 mm top, not the cannon's 32 mm: the hoof is the
+       wider of the two, and it was its rim that read as a separate pale cylinder
+       stepped onto the bottom of the leg. */
+    ball(fetlock, 0.042, dark, 0.95);
 
     return { a: shoulder, b: carpus, c: null, fetlock, fore: true };
   };
@@ -459,8 +471,8 @@ export function buildDonkey(sun) {
     }, 0.06, 0.06), 8, 12, 1), hide);
     /* The stifle stays, because the hind leg zigzags hard here — rest angles swing
        0.55 to −0.85 rad across this joint — and a bend that sharp opens a real
-       wedge notch on the outside of it. Under the femur's 62 mm end. */
-    ball(stifle, 0.057, hide, 0.86);
+       wedge notch on the outside of it. Flush with the gaskin's 72 mm top. */
+    ball(stifle, 0.070, hide, 0.88);
 
     const hock = new THREE.Group();
     hock.position.y = -M.tibia;
@@ -468,7 +480,7 @@ export function buildDonkey(sun) {
     add(hock, sweep(M.hindCannon, taper(0.036, 0.031, 0.10), 6, 10, 1), dark);
     /* the hock, stretched along the limb because the point of it is a bony
        prominence rather than a round knuckle */
-    ball(hock, 0.033, dark, 0.90, 1.15);
+    ball(hock, 0.036, dark, 0.90, 1.15);
 
     const fetlock = new THREE.Group();
     fetlock.position.y = -M.hindCannon;
@@ -477,7 +489,7 @@ export function buildDonkey(sun) {
       const r = mix(0.042, 0.050, smoothstep(0, 1, t));
       o[0] = r; o[1] = r; o[2] = r * 1.08;
     }, 0.16, 0.05), 5, 12, 1), hoof);
-    ball(fetlock, 0.031, dark, 0.94);
+    ball(fetlock, 0.040, dark, 0.95);          // flush with the hind hoof's 42 mm top
 
     return { a: hip, b: stifle, c: hock, fetlock, fore: false };
   };
