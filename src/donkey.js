@@ -60,28 +60,33 @@ const M = {
   withers: 1.26,
   axis: 0.98,          // height of the barrel's sweep axis
   barrelZ: -0.55,      // where the chest starts; the sweep runs back from here
-  barrelLen: 1.15,
+  barrelLen: 1.26,
   /* front limb: a near-vertical column */
   foreY: -0.100,       // shoulder joint, relative to the barrel axis
-  foreZ: -0.300,
+  foreZ: -0.320,
   foreX: 0.150,
   forearm: 0.44,
   foreCannon: 0.30,
   /* hind limb: femur forward, tibia back, cannon down */
   hindY: -0.045,
-  hindZ: 0.420,
+  hindZ: 0.460,
   hindX: 0.160,
   femur: 0.30,
   tibia: 0.30,
   hindCannon: 0.25,
   hoof: 0.140,
-  /* neck and head */
-  neckY: 0.220,
-  neckZ: -0.500,
-  neckLen: 0.52,
-  neckTilt: Math.PI - 0.90,   // up and forward
-  headLen: 0.44,
-  headTilt: 1.10,             // absolute, forward and down
+  /* Neck and head. The neck leaves the chest *low* — a neck rooted up at the
+     withers reads as a periscope bolted to the back, which is what the first
+     pass looked like. And the head hangs at 35° off vertical, not 63°: carried
+     any flatter than this the muzzle ends up at withers height and the animal
+     reads as a llama. These two constants place the muzzle at 1.11 m and 0.57 m
+     ahead of the chest, which is a donkey standing at ease. */
+  neckY: 0.080,
+  neckZ: -0.480,
+  neckLen: 0.56,
+  neckTilt: Math.PI - 0.72,   // up and forward
+  headLen: 0.46,
+  headTilt: 0.62,             // absolute, forward and down
   earLen: 0.245,
   tailLen: 0.42,
 };
@@ -178,8 +183,8 @@ export function buildDonkey() {
      — a level back is the donkey silhouette — while the bottom radius swells
      through the middle for the hanging gut and tucks up hard at the flank. */
   const barrelGeo = sweep(M.barrelLen, (t, o) => {
-    o[0] = mix(0.150, 0.248, smoothstep(0.0, 0.40, t)) *
-           mix(1.0, 0.52, smoothstep(0.58, 1.0, t));
+    o[0] = mix(0.140, 0.225, smoothstep(0.0, 0.40, t)) *
+           mix(1.0, 0.56, smoothstep(0.62, 1.0, t));
     o[1] = mix(0.255, 0.268, smoothstep(0.0, 0.30, t)) *
            mix(1.0, 0.72, smoothstep(0.62, 1.0, t));           // the topline
     o[2] = mix(0.250, 0.300, smoothstep(0.05, 0.45, t)) *
@@ -202,21 +207,26 @@ export function buildDonkey() {
   neck.position.set(0, M.neckY, M.neckZ);
   neck.rotation.x = M.neckTilt;
   body.add(neck);
-  /* short, thick, and barely tapered — a donkey's neck is a wedge, not a curve */
+  /* Short, thick and barely tapered — a donkey's neck is a wedge, not a curve.
+     0.41 m deep at the base, and deeper on the crest side (−Z) than the throat,
+     which is where a donkey carries its bulk. A neck any thinner than this reads
+     as a plank when the camera is behind it. */
   add(neck, sweep(M.neckLen, (t, o) => {
-    o[0] = mix(0.150, 0.098, smoothstep(0, 1, t));
-    o[1] = mix(0.190, 0.108, smoothstep(0, 1, t));
-    o[2] = mix(0.175, 0.100, smoothstep(0, 1, t));
+    o[0] = mix(0.150, 0.095, smoothstep(0, 1, t));
+    o[1] = mix(0.175, 0.100, smoothstep(0, 1, t));   // throat
+    o[2] = mix(0.240, 0.112, smoothstep(0, 1, t));   // crest
   }, 8, 14, 1), hide);
 
-  /* the upright mane, along the crest. Short and brush-like, which is a donkey;
-     a long falling mane is a horse. */
-  const maneGeo = sweep(M.neckLen * 0.86, (t, o) => {
-    const h = Math.sin(Math.min(1, t * 1.15) * Math.PI) * 0.052 + 0.014;
-    o[0] = 0.022; o[1] = h; o[2] = h * 0.15;
+  /* The upright mane, along the crest. Short and brush-like, which is a donkey;
+     a long falling mane is a horse.
+     The neck's local −Z is the crest and its +Z is the throat, so the height goes
+     in o[2] (the section's −Z radius). The first pass put it in o[1] and grew the
+     mane down the *underside* of the neck as a dewlap. */
+  const maneGeo = sweep(M.neckLen * 0.90, (t, o) => {
+    const h = Math.sin(Math.min(1, t * 1.15) * Math.PI) * 0.055 + 0.014;
+    o[0] = 0.024; o[1] = h * 0.10; o[2] = h;
   }, 10, 8, 1);
-  const maneMesh = add(neck, maneGeo, mane, 0, -0.02, 0);
-  maneMesh.rotation.y = Math.PI / 2;   // the crest runs along the neck's top
+  add(neck, maneGeo, mane, 0, -0.02, -0.010);
 
   /* The poll, with the neck's tilt cancelled so the head and ears are posed in
      the body's frame rather than in the neck's. Keeps the two tilt constants
@@ -266,10 +276,14 @@ export function buildDonkey() {
     const ear = new THREE.Group();
     ear.position.set(side * 0.072, 0.030, 0.048);
     poll.add(ear);
-    const m = add(ear, earGeo, hide);
-    m.rotation.x = Math.PI;   // the sweep hangs down; the ear stands up
-    /* dark tips, the last of the dun points */
-    const tip = add(ear, new THREE.SphereGeometry(0.030, 8, 6), dark, 0, M.earLen * 0.94, 0);
+    /* No rotation on the mesh: the ear *group* is already turned through π by
+       poseRest, which is what stands the sweep up. Turning the mesh through π as
+       well — which the first pass did — composes to 2π and lays the ear straight
+       back down inside the head, where it is invisible. */
+    add(ear, earGeo, hide);
+    /* dark tips, the last of the dun points. At −Y, which is the far end of a
+       sweep that hangs along −Y. */
+    const tip = add(ear, new THREE.SphereGeometry(0.030, 8, 6), dark, 0, -M.earLen * 0.94, 0);
     tip.scale.set(1.0, 0.55, 0.42);
     ears.push({ g: ear, side });
   }
@@ -359,10 +373,20 @@ export function buildDonkey() {
 
   /* Rest angles, and they are the geometry: the chain has to reach the ground.
      Front sums to a 0.740 m drop from a 0.880 m shoulder; hind sums to 0.792 m
-     from a 0.935 m hip. Change a length and these have to be re-derived. */
+     from a 0.935 m hip. Change a length and these have to be re-derived — the
+     drops are cosines, so flipping a sign leaves them alone, which is exactly
+     how the inverted hind leg below survived its first check.
+
+     **The sign convention, which was wrong here and is the whole bug.** A
+     segment hangs along −Y and `rotation.x = θ` sends its far end to
+     z = −len·sin θ. Local forward is −Z, so a *positive* θ swings the limb
+     FORWARD and a negative one swings it back. The first pass had it backwards
+     and built the hind leg as its own mirror image: femur back, tibia forward,
+     cannon back, so the hock pointed forward like a bird's. That is what read as
+     broken. Hind is femur forward, tibia back, cannon near-vertical. */
   const REST = {
-    fore: { a: -0.04, b: 0.06, c: 0 },
-    hind: { a: -0.55, b: 0.85, c: -0.35 },
+    fore: { a: 0.04, b: -0.06, c: 0 },
+    hind: { a: 0.55, b: -0.85, c: 0.35 },
   };
 
   const legs = [
@@ -388,26 +412,28 @@ export function buildDonkey() {
   let phase = 0;
 
   /** Protraction/retraction plus joint flexion for one limb at a phase.
-      Local forward is −Z, so a forward swing is a negative rotation and joint
-      flexion (which folds the limb backward) is positive. */
+      Positive rotation.x swings a limb forward (see REST), so protraction takes
+      +cos(ph) — the limb is fully forward at ph = 0, which is ground contact —
+      and joint flexion, which always folds a limb *backward*, is negative. */
   function poseLeg(L, ph, amp) {
     const rest = L.fore ? REST.fore : REST.hind;
     /* the swing: 0 at ground contact, 1 at mid-swing */
     const swing = (1 - Math.cos(ph)) * 0.5;
-    L.a.rotation.x = rest.a - Math.cos(ph) * (L.fore ? 0.30 : 0.26) * amp;
+    L.a.rotation.x = rest.a + Math.cos(ph) * (L.fore ? 0.30 : 0.26) * amp;
     if (L.fore) {
       /* the carpus folds hard to lift the hoof over the ground, and is straight
          at contact — a front leg that lands bent is the classic wrong walk */
-      L.b.rotation.x = rest.b + Math.pow(swing, 1.8) * 1.05 * amp;
-      L.fetlock.rotation.x = -0.10 * Math.sin(ph + 0.6) * amp;
+      L.b.rotation.x = rest.b - Math.pow(swing, 1.8) * 1.05 * amp;
+      L.fetlock.rotation.x = 0.10 * Math.sin(ph + 0.6) * amp;
     } else {
-      /* the hind pair works as a linkage: the stifle and hock close together on
-         the swing and open together to push off, which is why both take the same
-         driver with opposite sign */
+      /* the hind pair works as a linkage: on the swing the stifle closes (the
+         tibia swings further back) and the hock closes with it (the cannon
+         swings forward), which together pick the hoof up and carry it through.
+         Opposite signs because the two joints bend opposite ways. */
       const flex = Math.pow(swing, 1.6) * amp;
-      L.b.rotation.x = rest.b + flex * 0.62;
-      L.c.rotation.x = rest.c - flex * 0.46;
-      L.fetlock.rotation.x = -0.12 * Math.sin(ph + 0.4) * amp;
+      L.b.rotation.x = rest.b - flex * 0.62;
+      L.c.rotation.x = rest.c + flex * 0.46;
+      L.fetlock.rotation.x = 0.12 * Math.sin(ph + 0.4) * amp;
     }
   }
 
