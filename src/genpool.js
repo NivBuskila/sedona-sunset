@@ -83,6 +83,12 @@ export const genLog = { worker: 0, local: 0, ms: 0, why: available ? null : 'no-
  */
 const SIZE = Math.min(4, Math.max(2, navigator.hardwareConcurrency || 2));
 
+/* Read by callers that split one stage into pieces, so the number of pieces
+   matches the number of threads that can hold them: more pieces than workers just
+   queues, fewer leaves a worker idle. Exported as the pool's width, not as a core
+   count — the cap and the floor above are part of the answer. */
+export const poolWidth = SIZE;
+
 let seq = 0;
 const queue = [];   /* jobs waiting for a worker */
 const pool = [];    /* every worker that exists right now */
@@ -177,22 +183,24 @@ function dispatch(h, job) {
   job.id = ++seq;
   job.t0 = performance.now();
   h.job = job;
-  h.w.postMessage({ id: job.id, stage: job.stage });
+  h.w.postMessage({ id: job.id, stage: job.stage, arg: job.arg });
 }
 
 /**
  * Compute one named stage in a worker.
  *
  * @param {string} stage a key in genworker.js's STAGES
+ * @param {object|null} arg structured-cloneable parameters for the stage, for the
+ *   stages that come in pieces — a band of terrain rows, say. Most take none.
  * @returns {Promise<object|null>} the stage's typed arrays, or null if it could
  *   not run off-thread for any reason at all, in which case the caller computes
  *   it locally. Callers may hold many of these at once; that is how the boot gets
  *   its wall-clock win.
  */
-export async function runStage(stage) {
+export async function runStage(stage, arg = null) {
   if (!available || broken) { genLog.local++; return null; }
   return new Promise((resolve) => {
-    queue.push({ stage, resolve });
+    queue.push({ stage, arg, resolve });
     pump();
   });
 }

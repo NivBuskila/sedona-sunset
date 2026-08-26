@@ -35,7 +35,7 @@ import { SUN_DIR, SUN_EL } from './sky.js';
 import { DIRT_RELIEF_K } from './textures.js';
 import { TONIGHT_HEADING } from './wind.js';
 import { bake } from './bake.js';
-import { runStage } from './genpool.js';
+import { runStage, poolWidth } from './genpool.js';
 
 /* The grain bed's depth, from the one place it is stated. 25 mm per height unit
    times K. Both the sun's climb through the height field and the geometric
@@ -1159,10 +1159,24 @@ function axis(segments, outMin, outMax, growth) {
  * than by being told, and there is no second copy of the axes to fall out of step
  * with `assertBandLimits`.
  */
-export function terrainMeshArrays(terrain) {
+/**
+ * The per-vertex arrays for a band of rows, `[j0, j1)`.
+ *
+ * The band is the unit of work rather than the whole grid because this sampling is
+ * the largest single stage in the boot and it parallelises exactly: a row depends
+ * on nothing but its own z. `path.atZ` is a pure query, `heightAtQ` is analytic
+ * over seeded noise, and no row reads another's output. So N bands sampled on N
+ * threads and laid end to end are the same bytes as one pass over the grid — see
+ * genTerrainMesh, which is where they are laid.
+ *
+ * The band's arrays are its rows only, indexed from zero. Row-major layout is what
+ * makes the concatenation trivial: a band's rows are already contiguous in the
+ * full array, so joining is a copy at an offset and never a re-index.
+ */
+export function terrainMeshBand(terrain, j0, j1) {
   const xs = X_AXIS, zs = Z_AXIS;
-  const nx = xs.length, nz = zs.length;
-  const count = nx * nz;
+  const nx = xs.length;
+  const count = nx * (j1 - j0);
 
   const pos = new Float32Array(count * 3);
   const ref = new Float32Array(count);
@@ -1172,10 +1186,10 @@ export function terrainMeshArrays(terrain) {
   const flow = new Float32Array(count);
   const q = {};
 
-  for (let j = 0; j < nz; j++) {
+  for (let j = j0; j < j1; j++) {
     const z = zs[j];
     terrain.path.atZ(z, q);
-    const row = j * nx;
+    const row = (j - j0) * nx;
     for (let i = 0; i < nx; i++) {
       const x = xs[i];
       const k = row + i;
@@ -1190,7 +1204,14 @@ export function terrainMeshArrays(terrain) {
       flow[k] = terrain.oFlow;
     }
   }
+  return { pos, ref, pan, wall, sheet, flow };
+}
 
+/* The triangle list. Pure index arithmetic over the grid — no sampling, tens of
+   milliseconds — so it is built wherever the mesh is assembled rather than split
+   into bands or shipped across a thread boundary. */
+export function terrainIndices() {
+  const nx = X_AXIS.length, nz = Z_AXIS.length;
   const idx = new Uint32Array((nx - 1) * (nz - 1) * 6);
   let p = 0;
   for (let j = 0; j < nz - 1; j++) {
@@ -1200,16 +1221,57 @@ export function terrainMeshArrays(terrain) {
       idx[p++] = b; idx[p++] = c; idx[p++] = d;
     }
   }
-  return { pos, ref, pan, wall, sheet, flow, idx };
+  return idx;
 }
 
-/* The arrays, from a worker when the browser has one and from this thread when it
-   does not. Both arms are the same `terrainMeshArrays` over the same seeded
-   generators, so which one ran is a question about the machine and never about
-   the valley; see genpool.js for why the fallback is unconditional. */
+/* The whole grid in one pass, for the single-threaded path. */
+export function terrainMeshArrays(terrain) {
+  return { ...terrainMeshBand(terrain, 0, Z_AXIS.length), idx: terrainIndices() };
+}
+
+/* The arrays, sampled as one band per worker and laid end to end.
+ *
+ * This was the largest single stage in the boot — 13.7 s of one thread — and
+ * unlike the stones it divides without changing anything, because a row of
+ * vertices is a function of its own z and nothing else. Split `poolWidth` ways it
+ * costs the same CPU and a quarter of the wait.
+ *
+ * The fallback is per band rather than for the whole stage: a band the pool could
+ * not take is sampled here, next to the ones it did, instead of throwing away good
+ * bands to redo the grid locally. A machine with no workers at all takes this path
+ * for every band and has simply run `terrainMeshArrays` in pieces — the same rows
+ * in the same order, which is the property that makes any mix of the two arms
+ * produce identical bytes.
+ *
+ * Bands are cut on row boundaries and joined at a vertex offset, never re-indexed,
+ * so no seam exists to get wrong: the triangle list is built once here, over the
+ * full grid, and never travels. */
 async function genTerrainMesh(terrain) {
-  const off = await runStage('terrain-mesh');
-  return off || terrainMeshArrays(terrain);
+  const nz = Z_AXIS.length;
+  const cuts = [];
+  for (let b = 0; b < poolWidth; b++) {
+    cuts.push([Math.floor((b * nz) / poolWidth), Math.floor(((b + 1) * nz) / poolWidth)]);
+  }
+  const bands = await Promise.all(cuts.map(async ([j0, j1]) =>
+    (await runStage('terrain-band', { j0, j1 })) || terrainMeshBand(terrain, j0, j1)));
+
+  const nx = X_AXIS.length;
+  const count = nx * nz;
+  const out = {
+    pos: new Float32Array(count * 3),
+    ref: new Float32Array(count),
+    pan: new Float32Array(count),
+    wall: new Float32Array(count),
+    sheet: new Float32Array(count),
+    flow: new Float32Array(count),
+    idx: terrainIndices(),
+  };
+  cuts.forEach(([j0], b) => {
+    const at = j0 * nx;
+    out.pos.set(bands[b].pos, at * 3);
+    for (const k of ['ref', 'pan', 'wall', 'sheet', 'flow']) out[k].set(bands[b][k], at);
+  });
+  return out;
 }
 
 export async function buildTerrainMesh(terrain, material) {

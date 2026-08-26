@@ -32,7 +32,7 @@
  */
 
 import { WashPath } from './path.js';
-import { Terrain, terrainMeshArrays } from './terrain.js';
+import { Terrain, terrainMeshBand } from './terrain.js';
 import { wallPair } from './rock.js';
 import { scatterPlan } from './scatter.js';
 import { packGeometries } from './bake.js';
@@ -41,11 +41,15 @@ import {
   makeMacro, makeVariance, makeCracks, packTextures,
 } from './textures.js';
 
-/* Stages by name. Each returns an object of typed arrays and nothing else — the
-   keys become the transfer list below, so anything in here that is not a buffer
-   is a bug rather than a slow path. */
+/* Stages by name. Each takes the caller's `arg` (most ignore it) and returns an
+   object of typed arrays and nothing else — the keys become the transfer list
+   below, so anything in here that is not a buffer is a bug rather than a slow
+   path. */
 const STAGES = {
-  'terrain-mesh': () => terrainMeshArrays(scene().terrain),
+  /* A band of rows, not the whole grid: the boot asks for one per worker and lays
+     them end to end. The index buffer is not here — it is arithmetic, and shipping
+     it per band would be shipping the same numbers several times over. */
+  'terrain-band': (a) => terrainMeshBand(scene().terrain, a.j0, a.j1),
   /* The curtain and its apron, packed here: geometry is typed arrays until a
      renderer uploads it, and there is no renderer on this thread. */
   'wallL': () => { const s = scene(); return packGeometries(wallPair(s.path, s.terrain, -1)); },
@@ -94,14 +98,14 @@ function scene() {
 }
 
 self.onmessage = (e) => {
-  const { id, stage } = e.data;
+  const { id, stage, arg } = e.data;
   const run = STAGES[stage];
   if (!run) {
     self.postMessage({ id, error: `unknown stage: ${stage}` });
     return;
   }
   try {
-    const out = run();
+    const out = run(arg);
     /* Transferred rather than copied: these are tens of megabytes, and a
        structured clone of them would hand back a fraction of the time the worker
        just saved. The worker's own references die with the message, which is
