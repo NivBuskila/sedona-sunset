@@ -23,7 +23,7 @@
  * quantity. A model that cannot be inspected outside the renderer is a model
  * that gets believed when it is wrong.
  */
-import * as THREE from 'three';
+import * as THREE from './three.js';
 
 /* ── the site and the hour ─────────────────────────────────────────────── */
 

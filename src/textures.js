@@ -14,7 +14,7 @@
  * agreeing with each other. Authoring a normal map independently is the usual
  * reason procedural dirt reads as a flat photograph of noise.
  */
-import * as THREE from 'three';
+import * as THREE from './three.js';
 import { bake } from './bake.js';
 import { pnoise, pfbm, pridged, pworley, hash2, clamp, smoothstep, mix } from './noise.js';
 

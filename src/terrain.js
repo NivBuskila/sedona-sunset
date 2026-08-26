@@ -29,12 +29,13 @@
  *           needs to know it, and a wash floor combed at one pitch from bank to
  *           bank is the corduroy this has twice been criticised for.
  */
-import * as THREE from 'three';
+import * as THREE from './three.js';
 import { fbm, ridged, clamp, smoothstep, mix } from './noise.js';
 import { SUN_DIR, SUN_EL } from './sky.js';
 import { DIRT_RELIEF_K } from './textures.js';
 import { TONIGHT_HEADING } from './wind.js';
 import { bake } from './bake.js';
+import { runStage } from './genpool.js';
 
 /* The grain bed's depth, from the one place it is stated. 25 mm per height unit
    times K. Both the sun's climb through the height field and the geometric
@@ -1138,6 +1139,79 @@ function axis(segments, outMin, outMax, growth) {
 
 /* ── mesh ──────────────────────────────────────────────────────────────── */
 
+/* ── the mesh arrays, as a pure function ──────────────────────────────────
+ *
+ * Lifted out of `buildTerrainMesh` so that something other than the main thread
+ * can run it: this is the `Cutting the wash` phase, 13.7 s and a fifth of the
+ * cold boot, and it is the largest piece of the wait that touches no GPU object
+ * at all — one `heightAtQ` per vertex, in and out through plain typed arrays.
+ *
+ * Being a free function of `terrain` rather than a closure is the whole point.
+ * Everything it reads is either an argument or a module constant, and every
+ * number in it comes from `hash2`, which is stateless, or from `rng(seed)`, which
+ * takes its seed explicitly — so a fresh `new Terrain(new WashPath())` built
+ * anywhere computes bit for bit what this one does. That is what makes it safe to
+ * hand to a worker (see genworker.js) and what makes the worker's output and the
+ * main thread's interchangeable rather than merely similar.
+ *
+ * The grid is deliberately *not* an argument. `X_AXIS` and `Z_AXIS` are module
+ * constants, so the worker gets the same sampling by importing this file rather
+ * than by being told, and there is no second copy of the axes to fall out of step
+ * with `assertBandLimits`.
+ */
+export function terrainMeshArrays(terrain) {
+  const xs = X_AXIS, zs = Z_AXIS;
+  const nx = xs.length, nz = zs.length;
+  const count = nx * nz;
+
+  const pos = new Float32Array(count * 3);
+  const ref = new Float32Array(count);
+  const pan = new Float32Array(count);
+  const wall = new Float32Array(count);
+  const sheet = new Float32Array(count);
+  const flow = new Float32Array(count);
+  const q = {};
+
+  for (let j = 0; j < nz; j++) {
+    const z = zs[j];
+    terrain.path.atZ(z, q);
+    const row = j * nx;
+    for (let i = 0; i < nx; i++) {
+      const x = xs[i];
+      const k = row + i;
+      const o = k * 3;
+      pos[o] = x;
+      pos[o + 1] = terrain.heightAtQ(x, z, q);
+      pos[o + 2] = z;
+      ref[k] = terrain.oRef;
+      pan[k] = terrain.oPan;
+      wall[k] = terrain.oWall;
+      sheet[k] = terrain.oSheet;
+      flow[k] = terrain.oFlow;
+    }
+  }
+
+  const idx = new Uint32Array((nx - 1) * (nz - 1) * 6);
+  let p = 0;
+  for (let j = 0; j < nz - 1; j++) {
+    for (let i = 0; i < nx - 1; i++) {
+      const a = j * nx + i, b = a + 1, c = a + nx, d = c + 1;
+      idx[p++] = a; idx[p++] = c; idx[p++] = b;
+      idx[p++] = b; idx[p++] = c; idx[p++] = d;
+    }
+  }
+  return { pos, ref, pan, wall, sheet, flow, idx };
+}
+
+/* The arrays, from a worker when the browser has one and from this thread when it
+   does not. Both arms are the same `terrainMeshArrays` over the same seeded
+   generators, so which one ran is a question about the machine and never about
+   the valley; see genpool.js for why the fallback is unconditional. */
+async function genTerrainMesh(terrain) {
+  const off = await runStage('terrain-mesh');
+  return off || terrainMeshArrays(terrain);
+}
+
 export async function buildTerrainMesh(terrain, material) {
   /* Graded in several steps rather than two. A step size that jumps from 0.20 to
      0.34 at a single column leaves a crease along that column — a dead straight
@@ -1172,45 +1246,8 @@ export async function buildTerrainMesh(terrain, material) {
      generated it, and for why a cache failure costs nothing but the wait.
      `assertBandLimits` stays outside, above: it is a guard on the sampling grid
      rather than a producer, and it has to fire on a cache hit too. */
-  const { pos, ref, pan, wall, sheet, flow, idx } = await bake('terrain-mesh', () => {
-    const pos = new Float32Array(count * 3);
-    const ref = new Float32Array(count);
-    const pan = new Float32Array(count);
-    const wall = new Float32Array(count);
-    const sheet = new Float32Array(count);
-    const flow = new Float32Array(count);
-    const q = {};
-
-    for (let j = 0; j < nz; j++) {
-      const z = zs[j];
-      terrain.path.atZ(z, q);
-      const row = j * nx;
-      for (let i = 0; i < nx; i++) {
-        const x = xs[i];
-        const k = row + i;
-        const o = k * 3;
-        pos[o] = x;
-        pos[o + 1] = terrain.heightAtQ(x, z, q);
-        pos[o + 2] = z;
-        ref[k] = terrain.oRef;
-        pan[k] = terrain.oPan;
-        wall[k] = terrain.oWall;
-        sheet[k] = terrain.oSheet;
-        flow[k] = terrain.oFlow;
-      }
-    }
-
-    const idx = new Uint32Array((nx - 1) * (nz - 1) * 6);
-    let p = 0;
-    for (let j = 0; j < nz - 1; j++) {
-      for (let i = 0; i < nx - 1; i++) {
-        const a = j * nx + i, b = a + 1, c = a + nx, d = c + 1;
-        idx[p++] = a; idx[p++] = c; idx[p++] = b;
-        idx[p++] = b; idx[p++] = c; idx[p++] = d;
-      }
-    }
-    return { pos, ref, pan, wall, sheet, flow, idx };
-  });
+  const { pos, ref, pan, wall, sheet, flow, idx } =
+    await bake('terrain-mesh', () => genTerrainMesh(terrain));
 
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));

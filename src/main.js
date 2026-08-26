@@ -20,6 +20,7 @@ import { buildFarRidges } from './farridge.js';
 import { buildSky, buildLights, makeShadowRig, FOG, EXPOSURE } from './sky.js';
 import { buildJuniper, JUNIPER_XZ } from './juniper.js';
 import { bakeLog, clearBake } from './bake.js';
+import { genLog } from './genpool.js';
 import { buildVegetation } from './vegetation.js';
 import { setPlantAnisotropy, primePlantTextures } from './plantex.js';
 import {
@@ -1081,6 +1082,9 @@ const api = {
      in the contract surface does. */
   _boot: loading.log,
   _bake: bakeLog,
+  /* Whether the heavy stages actually ran off-thread; see genpool.js. A stage
+     that silently fell back to the main thread is invisible without this. */
+  _gen: genLog,
   _clearBake: clearBake,
   /* The generated texture set, so a probe can hash the actual texels a cold and
      a warm load produced. That comparison is the only evidence the bake store is

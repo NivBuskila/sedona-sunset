@@ -23,7 +23,7 @@
  *             light, so the rig is two lights lighter than the one it replaces
  *             despite gaining a shadow cascade.
  */
-import * as THREE from 'three';
+import * as THREE from './three.js';
 import {
   computeAtmosphere, SUN_DIR as ATMOS_SUN_DIR, SUN_AZ as ATMOS_SUN_AZ,
   SUN_EL as ATMOS_SUN_EL, MIE_G, MIE_G_NARROW, MIE_W_NARROW,
