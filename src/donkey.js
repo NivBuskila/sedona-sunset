@@ -56,6 +56,7 @@ import * as THREE from 'three';
 import { clamp, mix, smoothstep } from './noise.js';
 import { hideTex, barrelTex, paleTex, darkTex, hoofTex, maneTex } from './donkeytex.js';
 import { installDonkeyFill } from './donkeyfill.js';
+import { createMind } from './donkeymind.js';
 
 const TAU = Math.PI * 2;
 
@@ -195,7 +196,7 @@ function mat(tex, roughness) {
  *   and without the fill its camera-facing side reads as a silhouette, so a
  *   caller that forgot it should hear about it instead of getting that quietly.
  */
-export function buildDonkey(sun, { onHoof } = {}) {
+export function buildDonkey(sun, { onHoof, interest = [] } = {}) {
   if (!sun) throw new Error('buildDonkey(sun): the fill term needs the beam');
   const root = new THREE.Group();
 
@@ -606,12 +607,37 @@ export function buildDonkey(sun, { onHoof } = {}) {
      the capture harness, so this is driven from the *gait phase* and not from a
      clock, and it therefore stops dead when the animal does. Two irrational
      multipliers so the two ears never sync up. */
-  function poseEars(amp) {
+  /* `alert` is what the animal's attention does to its ears, and on a donkey that
+     is not a detail: the ears are a quarter of a metre long, they are most of what
+     the over-the-shoulder camera can see of the head, and an animal that has
+     noticed something swings them onto it and stops fidgeting with them. So
+     alertness both rotates them forward and *damps the flicks* — idle movement is
+     what an unoccupied animal does, and suppressing it is most of the read. */
+  function poseEars(amp, alert = 0) {
+    const idle = 1 - alert * 0.75;
     for (const e of ears) {
       const k = e.side < 0 ? 0.7321 : 1.2361;
-      e.g.rotation.x = Math.PI + 0.20 + Math.sin(phase * k) * 0.10 * amp;
-      e.g.rotation.z = e.side * (0.34 + Math.sin(phase * k * 1.7 + 1.1) * 0.07 * amp);
+      e.g.rotation.x = Math.PI + 0.20 - alert * 0.16
+                     + Math.sin(phase * k) * 0.10 * amp * idle;
+      e.g.rotation.z = e.side * (0.34 - alert * 0.10
+                     + Math.sin(phase * k * 1.7 + 1.1) * 0.07 * amp * idle);
     }
+  }
+
+  /* What it is looking at; see src/donkeymind.js. Built here rather than in
+     main.js because it is part of the animal, but the *points* come from the
+     caller — donkey.js has no business knowing where the scene put a juniper. */
+  const mind = createMind(interest);
+
+  /* Applies a look to the rig. `poll` is the right node for it and the only one:
+     its constructor cancels the neck's tilt, so it is the frame the head and ears
+     are already posed in, and both ear groups hang off it — so one yaw here turns
+     the head and the ears together, which is what an animal does. The neck is left
+     alone deliberately: swinging the neck would move the shoulders, and the
+     shoulders belong to the player's steering. */
+  function poseLook(look) {
+    poll.rotation.y = look.yaw;
+    poll.rotation.x = -M.neckTilt + look.pitch;
   }
 
   poseRest();
@@ -624,6 +650,10 @@ export function buildDonkey(sun, { onHoof } = {}) {
        sound — which cannot be heard in a headless browser, where the audio
        context never leaves `suspended`. */
     _gait: () => ({ phase, beats }),
+
+    /* What it is attending to, for the same reason `_gait` is exposed: a
+       screenshot cannot tell you what the animal chose to look at. */
+    _look: mind._look,
 
     /**
      * Place the animal on the ground and drive the gait.
@@ -639,7 +669,18 @@ export function buildDonkey(sun, { onHoof } = {}) {
          by the same sun as a walking one. */
       fill.update();
 
-      if (speed <= 0.05) { phase = 0; poseRest(); return; }
+      if (speed <= 0.05) {
+        phase = 0;
+        poseRest();
+        /* A stopped animal keeps watching whatever it was watching. Eased with a
+           zero phase increment, so the held look is *exactly* held — nothing
+           advances while the player stands, which is the fixed point the capture
+           harness needs; see donkeymind.js. */
+        const look = mind.aim(x, z, yaw, phase, 0);
+        poseLook(look);
+        poseEars(0, look.alert);
+        return;
+      }
 
       /* amplitude grows with speed and then saturates: past a jog the limbs stop
          opening further and the animal is simply taking the same steps faster */
@@ -681,7 +722,15 @@ export function buildDonkey(sun, { onHoof } = {}) {
       tail.rotation.z = Math.sin(phase * 0.5 + 0.8) * 0.16 * amp;
       tail.rotation.x = -0.28 + Math.sin(phase) * 0.05 * amp;
 
-      poseEars(amp);
+      /* After the nod, because the nod is the neck and this is the poll: they
+         compose rather than compete. */
+      /* `phase` is taken modulo TAU, so the raw difference goes sharply negative on
+         the tick the cycle wraps; +TAU before the modulo is what makes the easing
+         rate a distance rather than an occasional negative spike. */
+      const dPhase = (phase - prevPhase + TAU) % TAU;
+      const look = mind.aim(x, z, yaw, phase, dPhase);
+      poseLook(look);
+      poseEars(amp, look.alert);
     },
   };
 }

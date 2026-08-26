@@ -18,7 +18,7 @@ import { buildScatter } from './scatter.js';
 import { buildWalls, buildDistantButtes, buildTalus, makeRockMaterial } from './rock.js';
 import { buildFarRidges } from './farridge.js';
 import { buildSky, buildLights, makeShadowRig, FOG, EXPOSURE } from './sky.js';
-import { buildJuniper } from './juniper.js';
+import { buildJuniper, JUNIPER_XZ } from './juniper.js';
 import { bakeLog, clearBake } from './bake.js';
 import { buildVegetation } from './vegetation.js';
 import { setPlantAnisotropy, primePlantTextures } from './plantex.js';
@@ -342,8 +342,28 @@ setDonkeyAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
    land, instead of the two self-clocked boots audio.js was written for when this
    was a first-person walk. audio.api is a working stub when there is no
    AudioContext, so this needs no guard. */
+/* What the animal notices on the way up, in world coordinates. The list lives
+   here because this is the only file that knows where the scene put anything —
+   donkey.js gets the points and knows nothing about junipers. Two landmarks and
+   no more: attention that lands on everything is attention that reads as a scan,
+   and each of these is something a critic could stand next to and check.
+     · The hero juniper — the one object on the route with a trunk, and the thing a
+       real animal in a dry wash would actually check.
+     · The headwall at the top, which is the arrival. The walk already eases the
+       *view* up twelve degrees over the last forty-five metres; the animal looking
+       into the box canyon before the player's eye gets there is the same beat,
+       told by the character instead of by the camera.
+   `y` is a height above the hooves, so the glance at the tree is level and the one
+   at the headwall is upward. */
+const interest = [
+  { label: 'juniper', x: JUNIPER_XZ.x, z: JUNIPER_XZ.z, y: 3.4, r: 26, hold: 34 },
+  { label: 'headwall', ...(() => { const p = path.posAt(path.length - 6); return { x: p.x, z: p.z }; })(),
+    y: 12, r: 42, hold: 52 },
+];
+
 const donkey = buildDonkey(sun, {
   onHoof: (side, fore) => audio.api.hoof(side, fore),
+  interest,
 });
 scene.add(donkey.group);
 
