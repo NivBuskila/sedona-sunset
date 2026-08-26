@@ -21,7 +21,7 @@ import { buildSky, buildLights, makeShadowRig, FOG, EXPOSURE } from './sky.js';
 import { buildJuniper } from './juniper.js';
 import { bakeLog, clearBake } from './bake.js';
 import { buildVegetation } from './vegetation.js';
-import { setPlantAnisotropy } from './plantex.js';
+import { setPlantAnisotropy, primePlantTextures } from './plantex.js';
 import {
   makeDirt, makeSand, makeRock, makeGrit, makeClastSurface, makeMacro, makeVariance,
   makeCracks, setAnisotropy, bakeTexture,
@@ -289,6 +289,10 @@ for (const m of clasts) scene.add(m);
 await loading.note('Growing the juniper…');
 
 setPlantAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
+/* Bark, foliage, grass, scrub and succulent maps, from the bake store. After this
+   the plantex accessors are synchronous map reads, so the two builders below are
+   untouched. Ordered after setPlantAnisotropy, which is constructor policy. */
+await primePlantTextures();
 for (const m of buildJuniper(terrain, tex)) scene.add(m);
 for (const m of buildVegetation(path, terrain, rocks)) scene.add(m);
 
