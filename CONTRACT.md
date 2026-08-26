@@ -872,14 +872,14 @@ commit:
 | phase | cold | warm |
 |---|---|---|
 | the seven texture stages (`wash floor` → `Weathering it`) | 6,353 ms | **155 ms** |
-| `Cutting the wash` (terrain mesh) | 13,898 ms | **198 ms** |
-| `Raising the canyon walls` (curtains, aprons, buttes, talus) | 19,054 ms | **96 ms** |
-| `Scattering the stones` | 18,036 ms | 18,546 ms — *not cached, on purpose* |
-| `Growing the juniper` | 2,480 ms | 2,342 ms — not cached |
-| `Lighting the sky` | 2,508 ms | 2,451 ms — not cached |
-| **total boot** | **66,300 ms** | **27,381 ms** |
+| `Cutting the wash` (terrain mesh) | 14,039 ms | **187 ms** |
+| `Raising the canyon walls` (curtains, aprons, buttes, talus) | 19,857 ms | **109 ms** |
+| `Scattering the stones` | 18,221 ms | **219 ms** |
+| `Growing the juniper` | 2,335 ms | 2,520 ms — not cached |
+| `Lighting the sky` | 2,574 ms | 2,573 ms — not cached |
+| **total boot** | **68,547 ms** | **10,035 ms** |
 
-Fourteen entries, 90.7 MB, read back in 285 ms.
+Fifteen entries, 97.8 MB, read back in 328 ms.
 
 **A correction to the paragraph above, which this measurement earned.** "Every texture in the
 scene is written texel by texel in JavaScript before the first frame" is true and was
@@ -921,18 +921,38 @@ Three things about the design are load-bearing and should not be quietly simplif
    have meant that changing anisotropy in one place left cached textures silently unlike
    fresh ones.
 
-**Why the clast scatter is excluded, and what it would take.** It is the largest phase left
-and it is the one phase whose generation is not pure: as it places clasts, `buildScatter`
-calls `terrain.addScour` to excavate the hollows the boulders sit in, and the player's feet
-read those hollows through `heightAtQ`. Skipping the loop without replaying the
-registrations would leave the mesh and the footfall describing different ground — which is
-precisely the class of defect this file's Rule 8 exists for, an attribution that stops at
-the mesh instead of reaching what the player stands on. Caching it means recording the
-`addScour` calls as data and replaying them on a hit, *and* restructuring the placement out
-of the `CLASSES.forEach` that currently interleaves it with mesh construction. That is worth
-doing and it is worth doing carefully: 2.25 M of the frame's 3.97 M triangles are clast
-instances, and the population in `wall_lit` and `bend` is a reviewed one that no
-optimisation has any business reshuffling.
+**The clast scatter, which was the exclusion and is not any more.** It was left out of the
+first round because it is the one phase whose generation is not pure: as it places clasts,
+`buildScatter` calls `terrain.addScour` to excavate the hollows the boulders sit in, and the
+player's feet read those hollows through `heightAtQ`. Skipping the loop without replaying the
+registrations would leave the mesh and the footfall describing different ground — precisely
+the class of defect Rule 8 exists for, an attribution that stops at the mesh instead of
+reaching what the player stands on.
+
+It is now cached, 18,221 ms to 219 ms, and the shape of the fix is the interesting part:
+
+- **The scour calls are recorded as data and replayed on both paths.** `planScatter` still
+  calls `addScour` during placement, because it must — a stone has to sit on the bed the
+  stones before it dug — and it also appends the six numbers to a list. `buildScatter` then
+  calls `terrain.resetScour()` and replays that list, on a hit *and on a miss*. Replaying on
+  a miss looks redundant and is the point: it makes one code path instead of two, and it
+  makes a cold load prove the record is complete. A hollow missing from the list is a defect
+  that shows up immediately rather than one that waits for someone to reload.
+- **The placement was separated from the assembly, not merely wrapped.** `planScatter`
+  produces packed typed arrays and nothing else; `clastMaterial` and `clastGeom` build what
+  cannot survive IndexedDB and costs nothing to remake. Geometry is keyed rather than held —
+  `c3:1`, `collar`, `wedge` — so the variant a stone was placed against and the variant it
+  is drawn with are the same argument list by construction, and cannot drift.
+- **What was verified.** All 43 instanced meshes — every instance matrix, colour, `aDust`,
+  `aAO`, count and geometry — hashed identically cold and warm, and so did `scourAt` over a
+  grid across the wash, `heightAtQ` over the walkable corridor, and the post-`applyScour`
+  terrain mesh. The population in `wall_lit` and `bend` is a reviewed one and no
+  optimisation has any business reshuffling it; this one demonstrably does not.
+
+Two numbers in this area are easy to conflate, so both: the scatter draws **84,632
+instances** (`window.__game._instances`), and those instances contribute **2.25 M of the
+frame's 3.97 M triangles**. The first is what the bake store stores and what the bit-identity
+check compares; the second is the vertex cost the resolution argument above turns on.
 
 ## The composition the brief asks for is a geometry constraint, and it can be measured
 

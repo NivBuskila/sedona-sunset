@@ -281,6 +281,17 @@ export class Terrain {
     }
   }
 
+  /**
+   * Drops every registered hollow.
+   *
+   * Exists for the bake store: `buildScatter` registers hollows during placement
+   * because the stones need them, then replays them from its record so that a
+   * warm load — which does no placement — ends with the same height field. This
+   * clears the hash between those two, so the replay is the only thing that ever
+   * populates it and the cold and warm paths cannot drift apart.
+   */
+  resetScour() { this._scour = null; }
+
   /** Signed height delta from every registered hollow. Negative is excavated. */
   scourAt(x, z) {
     if (!this._scour) return 0;

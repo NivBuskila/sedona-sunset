@@ -26,18 +26,18 @@ juniper, the sky. Two of those stages take twelve to fourteen seconds on their
 own, so the message sits still for a while and the tab ignores a click while it
 does. That is the work happening.
 
-**That is the first visit only.** Every texture, the wash floor, the canyon walls
-and the talus blocks are written to IndexedDB once they have been computed, and
-every load after the first reads them back instead of recomputing them: the seven
-texture stages drop from 6.4 seconds to 0.16, the terrain from 13.9 to 0.2, the
-canyon walls from 19.1 to 0.1, and the whole boot from 66 seconds to 27. What
-comes back is bit for bit what went in — every attribute and every texel hashed
-and compared across a cold and a warm load — so this buys time and changes
-nothing you can see. Editing any source file invalidates the whole store on the
-next load, and if it cannot be used at all, a private window or a full disk, the
-page just generates everything again and waits the way it used to. What is left
-of the wait is mostly the gravel, which is deliberately not cached; there is a
-reason, and it is in `CONTRACT.md`.
+**That is the first visit only.** Every texture, the wash floor, the canyon walls,
+the talus blocks and the whole gravel scatter are written to IndexedDB once they
+have been computed, and every load after the first reads them back instead of
+recomputing them: the seven texture stages drop from 6.4 seconds to 0.16, the
+terrain from 14.0 to 0.19, the canyon walls from 19.9 to 0.11, the stones from
+18.2 to 0.22, and the whole boot from 69 seconds to **10**. What comes back is bit
+for bit what went in — every attribute, every texel, every instance matrix, and
+the height field the player's feet read, all hashed and compared across a cold and
+a warm load — so this buys time and changes nothing you can see. Editing any
+source file invalidates the whole store on the next load, and if it cannot be used
+at all, a private window or a full disk, the page just generates everything again
+and waits the way it used to.
 
 **Every mesh, texture, material and sound in this project is generated
 procedurally in code.** There are no image files, no models, no HDRIs and no

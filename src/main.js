@@ -279,7 +279,7 @@ scene.add(farRidges);
 
 await loading.note('Scattering the stones…');
 
-const clasts = buildScatter(terrain, tex);
+const clasts = await buildScatter(terrain, tex);
 /* The boulders dig hollows the mesh was built too early to know about. */
 applyScour(terrainMesh, terrain);
 for (const m of clasts) scene.add(m);
