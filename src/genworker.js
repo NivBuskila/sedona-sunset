@@ -36,6 +36,10 @@ import { Terrain, terrainMeshArrays } from './terrain.js';
 import { wallPair } from './rock.js';
 import { scatterPlan } from './scatter.js';
 import { packGeometries } from './bake.js';
+import {
+  makeDirt, makeSand, makeRock, makeGrit, makeClastSurface,
+  makeMacro, makeVariance, makeCracks, packTextures,
+} from './textures.js';
 
 /* Stages by name. Each returns an object of typed arrays and nothing else — the
    keys become the transfer list below, so anything in here that is not a buffer
@@ -49,6 +53,19 @@ const STAGES = {
   /* Mutates its own terrain as it places; the hollows travel back in `__scours`
      and the main thread replays them. See scatterPlan for why that is sound. */
   'scatter': () => scatterPlan(scene().terrain),
+
+  /* The eight surface maps. Independent of each other and of the terrain — each
+     is a pure function of its size — which makes them the cleanest boundary in
+     the boot: no shared state to reason about, nothing to order. The stage names
+     are the bake ids, so `bakeTexture` finds them without a second table. */
+  'tex-dirt': () => packTextures(makeDirt(1024)),
+  'tex-sand': () => packTextures(makeSand(512)),
+  'tex-rock': () => packTextures(makeRock(1024)),
+  'tex-grit': () => packTextures(makeGrit(256)),
+  'tex-clast': () => packTextures(makeClastSurface(512)),
+  'tex-macro': () => packTextures(makeMacro(512)),
+  'tex-variance': () => packTextures(makeVariance(512)),
+  'tex-crack': () => packTextures(makeCracks(512)),
 };
 
 /* The generator graph, rebuilt once per worker.

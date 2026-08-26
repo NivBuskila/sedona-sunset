@@ -12,11 +12,15 @@
  *
  * It does not make the arithmetic faster. A stage moved here costs the same
  * milliseconds of CPU; what changes is *which* thread spends them, so the loading
- * screen animates and the tab stays alive. The wall-clock win comes later and
- * separately, when independent stages run at the same time — the interface is
- * built for that (each call is its own worker, and callers may hold several
- * promises at once) but the boot still awaits them one at a time, and saying so
- * plainly is better than implying a speed-up that has not been measured.
+ * screen animates and the tab stays alive.
+ *
+ * The wall-clock win is a separate property, and it comes from running
+ * independent stages at the same time: each call is its own worker and callers
+ * may hold several promises at once, so the boot groups the stages that share
+ * nothing — the two wall curtains, the terrain mesh, the stone placement, the
+ * eight surface maps — and waits once instead of in turn. What that cannot do is
+ * reorder anything a later stage reads: see startScatterPlan in scatter.js for
+ * the one case where the computation moves and the application does not.
  *
  * ── every path degrades
  *

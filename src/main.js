@@ -222,32 +222,43 @@ camera.rotation.order = 'YXZ';
  * it buys is a tab that repaints and answers the compositor between phases
  * instead of one that Chrome offers to kill. Nothing about the order changes.
  *
- * Deliberately *not* an attempt to move generation into workers. Every one of
- * these hands back a live THREE object built against this context.
+ * The generation itself now happens in workers where it can (see genpool.js);
+ * what stays here is the part that must, which is every live THREE object built
+ * against this context — materials, meshes, textures. The awaits still mark the
+ * phases, and the order in which the scene is assembled is unchanged.
  */
 
-/* Split one texture per yield rather than built as one object literal, because
-   this block is the longest stall in the boot by a wide margin and an
-   unbroken one is a tab that cannot answer for twenty seconds. The two 1024s
-   are most of it. Same calls, same order, same textures. */
-const tex = {};
-await loading.note('Drawing the wash floor…');
-tex.dirt = await bakeTexture('tex-dirt', () => makeDirt(1024));
-await loading.note('Drawing sand…');
-tex.sand = await bakeTexture('tex-sand', () => makeSand(512));
-await loading.note('Drawing sandstone…');
-tex.rock = await bakeTexture('tex-rock', () => makeRock(1024));
-await loading.note('Drawing grit…');
-/* The footprint-locked detail layer. Small, because it carries no low
-   frequencies — see makeGrit for why that is the property that lets rock.js
-   read it at whatever scale a pixel happens to be. */
-tex.grit = await bakeTexture('tex-grit', () => makeGrit(256));
-await loading.note('Drawing gravel…');
-tex.clast = await bakeTexture('tex-clast', () => makeClastSurface(512));
-await loading.note('Weathering it…');
-tex.macro = await bakeTexture('tex-macro', () => makeMacro(512));
-tex.variance = await bakeTexture('tex-variance', () => makeVariance(512));
-tex.crack = await bakeTexture('tex-crack', () => makeCracks(512));
+/* All eight maps at once.
+ *
+ * They were written one per yield, because the block was the longest stall in the
+ * boot and an unbroken one is a tab that cannot answer. That reason is gone: the
+ * arithmetic is in workers now, so the stall it was breaking up is not on this
+ * thread to break up. And the eight are mutually independent — each a pure
+ * function of a size, sharing no state and needing no order — so what was a
+ * sequence of eight waits is one wait as long as the slowest of them. The two
+ * 1024s (the wash floor and the sandstone) are most of it and now overlap.
+ *
+ * `tex` is assembled from the results rather than field by field, so the object
+ * this hands on is identical to the one the sequence built. The narration below
+ * announces the phase instead of each map, which is what the loading screen can
+ * honestly say about work that is all happening at the same time.
+ *
+ * The footprint-locked grit map stays small on purpose: it carries no low
+ * frequencies, which is what lets rock.js read it at whatever scale a pixel
+ * happens to be. See makeGrit.
+ */
+await loading.note('Drawing the rock and the sand…');
+const [dirt, sand, rock, grit, clast, macro, variance, crack] = await Promise.all([
+  bakeTexture('tex-dirt', () => makeDirt(1024)),
+  bakeTexture('tex-sand', () => makeSand(512)),
+  bakeTexture('tex-rock', () => makeRock(1024)),
+  bakeTexture('tex-grit', () => makeGrit(256)),
+  bakeTexture('tex-clast', () => makeClastSurface(512)),
+  bakeTexture('tex-macro', () => makeMacro(512)),
+  bakeTexture('tex-variance', () => makeVariance(512)),
+  bakeTexture('tex-crack', () => makeCracks(512)),
+]);
+const tex = { dirt, sand, rock, grit, clast, macro, variance, crack };
 
 await loading.note('Cutting the wash…');
 

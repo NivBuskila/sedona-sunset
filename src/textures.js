@@ -16,6 +16,7 @@
  */
 import * as THREE from './three.js';
 import { bake } from './bake.js';
+import { runStage } from './genpool.js';
 import { pnoise, pfbm, pridged, pworley, hash2, clamp, smoothstep, mix } from './noise.js';
 
 /* ── plumbing ──────────────────────────────────────────────────────────── */
@@ -49,20 +50,31 @@ function dataTex(buf, size, srgb) {
  *
  * Handles both maker shapes: `{albedo, normal, arm}` and a bare texture.
  */
+/* The storable form: pixels, sizes, colour-space flags. Exported because the
+   generation worker produces textures on its own thread and has to pack them
+   there — a `DataTexture` is a buffer and two numbers until something uploads it,
+   and nothing on that thread can. A second packer on the far side of the boundary
+   is the drift this file already refuses in `dataTex`. */
+export function packTextures(made) {
+  const bare = made.isTexture === true;
+  const set = bare ? { t: made } : made;
+  const entries = [];
+  const o = {};
+  for (const [k, t] of Object.entries(set)) {
+    o['b' + entries.length] = t.image.data;
+    entries.push([k, t.image.width, t.colorSpace === THREE.SRGBColorSpace]);
+  }
+  o.__meta = JSON.stringify({ bare, entries });
+  return o;
+}
+
 export async function bakeTexture(id, produce) {
-  const packed = await bake(id, () => {
-    const made = produce();
-    const bare = made.isTexture === true;
-    const set = bare ? { t: made } : made;
-    const entries = [];
-    const o = {};
-    for (const [k, t] of Object.entries(set)) {
-      o['b' + entries.length] = t.image.data;
-      entries.push([k, t.image.width, t.colorSpace === THREE.SRGBColorSpace]);
-    }
-    o.__meta = JSON.stringify({ bare, entries });
-    return o;
-  });
+  /* `id` is also the worker's stage name, so every caller of this function gets
+     the off-thread path for free and the fallback is the maker it already passed.
+     Unknown stage, no worker, thrown maker: `runStage` returns null and `produce`
+     runs here exactly as before. */
+  const packed = await bake(id, async () =>
+    (await runStage(id)) || packTextures(produce()));
   /* Both arms rebuild through `dataTex` from the stored buffer, so there is one
      code path and no chance of a warm texture differing from a cold one in a
      field nobody thought to compare. On a miss this does discard the texture
