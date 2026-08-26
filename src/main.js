@@ -260,9 +260,9 @@ await loading.note('Raising the canyon walls…');
    and the coarse talus at the junction between the two. */
 const rockMat = makeRockMaterial(tex);
 const rocks = [
-  ...buildWalls(path, terrain, rockMat),
-  ...buildDistantButtes(terrain, rockMat),
-  ...buildTalus(path, terrain, rockMat),
+  ...await buildWalls(path, terrain, rockMat),
+  ...await buildDistantButtes(terrain, rockMat),
+  ...await buildTalus(path, terrain, rockMat),
 ];
 for (const m of rocks) scene.add(m);
 

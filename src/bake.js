@@ -205,6 +205,68 @@ export async function bake(id, produce) {
   return built;
 }
 
+/* ── geometry ─────────────────────────────────────────────────────────────── */
+
+/* A `BufferGeometry` cannot go into IndexedDB as itself — structured clone would
+   drop every prototype and hand back a plain object with no `setAttribute` — so
+   it travels as its raw arrays plus a note saying which array was which
+   attribute. The arrays themselves need no type tag: structured clone preserves
+   a `Float32Array` as a `Float32Array`, so what comes back is already the right
+   view and only its *name* and item size were ever missing.
+   Deliberately not general. Nothing here carries morph targets, draw groups or
+   `userData` on the geometry — checked, at every call site — and a serialiser
+   that silently drops a field it was never given is worse than one that cannot
+   accept it. If a geometry ever grows one of those, this must grow with it. */
+
+function packGeometries(list) {
+  const meta = [];
+  const out = {};
+  let n = 0;
+  for (const g of list) {
+    const attrs = [];
+    for (const [name, a] of Object.entries(g.attributes)) {
+      const key = 'a' + n++;
+      out[key] = a.array;
+      attrs.push([name, a.itemSize, key]);
+    }
+    let index = null;
+    if (g.index) { index = 'a' + n++; out[index] = g.index.array; }
+    meta.push({ attrs, index });
+  }
+  out.__meta = JSON.stringify(meta);
+  return out;
+}
+
+function unpackGeometries(packed, THREE) {
+  return JSON.parse(packed.__meta).map((m) => {
+    const g = new THREE.BufferGeometry();
+    for (const [name, itemSize, key] of m.attrs)
+      g.setAttribute(name, new THREE.BufferAttribute(packed[key], itemSize));
+    if (m.index) g.setIndex(new THREE.BufferAttribute(packed[m.index], 1));
+    /* Recomputed rather than stored. It is a linear pass over positions against
+       the arithmetic this cache exists to skip, and a bounding sphere read back
+       from disk is one more thing that can be subtly wrong about geometry that
+       is right. */
+    g.computeBoundingSphere();
+    return g;
+  });
+}
+
+/**
+ * `bake` for geometry: `produce()` returns an array of `BufferGeometry`, and so
+ * does this, either rebuilt from the cache or straight from `produce`.
+ *
+ * `THREE` is passed in rather than imported so this module stays free of the
+ * renderer — it is a store, and a store that pulls in Three.js is one more
+ * reason for a tool to load the whole scene to test a cache.
+ */
+export async function bakeGeometries(id, THREE, produce) {
+  const packed = await bake(id, async () => packGeometries(await produce()));
+  /* A miss returns exactly what `packGeometries` built, so both arms unpack the
+     same shape and there is no second code path to get wrong. */
+  return unpackGeometries(packed, THREE);
+}
+
 /** Forget everything, for the tools that measure a cold boot on purpose. */
 export async function clearBake() {
   const db = await openDB();

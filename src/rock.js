@@ -38,6 +38,7 @@ import * as THREE from 'three';
 import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
 import { fbm, ridged, hash1, rng, clamp, smoothstep, mix } from './noise.js';
 import { SUN_DIR } from './sky.js';
+import { bake, bakeGeometries } from './bake.js';
 
 /* ── the stratigraphic column ──────────────────────────────────────────────
  *
@@ -1144,7 +1145,12 @@ function meanNormalY(g) {
   return a / (n.array.length / 3);
 }
 
-function buildApron(grid, terrain, material, side) {
+/* Split from the mesh below so the bake store can hold it. The wall curtain and
+   its apron are both grown from one `wallGrid`, so caching the curtain alone
+   would still leave the grid to be computed for the apron and save nothing —
+   they have to go into the store as a pair, and that means the apron's geometry
+   has to be obtainable without its mesh. */
+function apronGeometry(grid, terrain, side) {
   const ag = apronGrid(grid.foot, terrain, side);
   /* The apron's grid runs along the wash in u and *outward* in v, where the
      wall's runs along the wash and *upward*, so the handedness is not the same
@@ -1155,6 +1161,10 @@ function buildApron(grid, terrain, material, side) {
      mean normal y is unambiguous. */
   let g = creasedMesh(ag, Math.cos(0.9), side < 0);
   if (meanNormalY(g) < 0) g = creasedMesh(ag, Math.cos(0.9), side >= 0);
+  return g;
+}
+
+function apronMesh(g, material, side) {
   const m = new THREE.Mesh(g, material);
   m.castShadow = true;
   m.receiveShadow = true;
@@ -1163,7 +1173,7 @@ function buildApron(grid, terrain, material, side) {
   return m;
 }
 
-export function buildWalls(path, terrain, material) {
+export async function buildWalls(path, terrain, material) {
   const out = [];
   for (const side of [1, -1]) {
     /* The left wall's grid runs the same way round its own normal as the right
@@ -1183,15 +1193,21 @@ export function buildWalls(path, terrain, material) {
          band, and those are gentler than any arris worth creasing. The other half
          of the quilt was the spall scar switching 1.5 m of offset over four
          hundredths of its driver, which is fixed above. */
+    /* The curtain and its apron come out of the bake store as a pair, because
+       they share the one `wallGrid` that is the cost of this phase. On a hit
+       neither grid is built at all. */
+    const [g, ag] = await bakeGeometries(`wall${side > 0 ? 'R' : 'L'}`, THREE, () => {
       const grid = wallGrid(path, terrain, side);
-      const g = creasedMesh(grid, Math.cos(0.78), side < 0);
+      return [creasedMesh(grid, Math.cos(0.78), side < 0),
+              apronGeometry(grid, terrain, side)];
+    });
     const m = new THREE.Mesh(g, material);
     m.castShadow = true;
     m.receiveShadow = true;
     m.frustumCulled = false;
     m.name = 'wall' + (side > 0 ? 'R' : 'L');
     out.push(m);
-    out.push(buildApron(grid, terrain, material, side));
+    out.push(apronMesh(ag, material, side));
   }
   return out;
 }
@@ -1413,11 +1429,16 @@ function creasedRing(grid, cosT) {
   return creasedMesh({ pos: p2, att: a2, nu: nu2, nv, hard }, cosT, false);
 }
 
-export function buildDistantButtes(terrain, material) {
+export async function buildDistantButtes(terrain, material) {
   const out = [];
   let i = 0;
-  for (const [lat, dist, rad, hs] of BUTTES) {
-    const g = creasedRing(butteGrid(lat, -dist, rad, hs, terrain, 601 + i * 97), Math.cos(0.72));
+  /* One store entry for the whole table rather than one per butte. They are
+     generated together, they are invalidated together — the table itself is
+     part of the source fingerprint — and ten reads cost ten transactions. */
+  const geos = await bakeGeometries('buttes', THREE, () => BUTTES.map(
+    ([lat, dist, rad, hs], n) =>
+      creasedRing(butteGrid(lat, -dist, rad, hs, terrain, 601 + n * 97), Math.cos(0.72))));
+  for (const g of geos) {
     const m = new THREE.Mesh(g, material);
     /* These used to be excluded as "half a kilometre outside the shadow camera's
        box". That is true of most of them and false of the ones that matter, and
@@ -1500,7 +1521,7 @@ function talusBlock(seed, flat) {
   return g;
 }
 
-export function buildTalus(path, terrain, material) {
+export async function buildTalus(path, terrain, material) {
   /* Its own material rather than the walls'. Same shader, same textures, same
      draw-call cost — only the decimetre sampling scale differs, because these
      blocks are twenty centimetres to two metres across and the wall's 6.45 m
@@ -1524,9 +1545,22 @@ export function buildTalus(path, terrain, material) {
      great many blocks between a foot and a yard, a few metres-across slabs near
      the bottom of the cone, and nothing that competes with the cliff it fell off. */
   const VAR = 4, N = 30000;
-  const geos = [];
-  for (let v = 0; v < VAR; v++) geos.push(talusBlock(3100 + v * 11, 0.46 + v * 0.12));
-  const lists = geos.map(() => []);
+  const geos = await bakeGeometries('talus-blocks', THREE, () => {
+    const gs = [];
+    for (let v = 0; v < VAR; v++) gs.push(talusBlock(3100 + v * 11, 0.46 + v * 0.12));
+    return gs;
+  });
+
+  /* Thirty thousand placement attempts, each one a terrain query, cached as the
+     matrices they survive as. Flat rather than a list of `Matrix4` per variant,
+     because sixteen floats per block is exactly what `instanceMatrix` wants and
+     a stored array of objects would be rebuilt into one anyway.
+     Everything the loop needs is allocated inside it, so a hit does no work: the
+     `rng` stream is local to this function and nothing downstream reads it, which
+     is what makes skipping the loop safe here and not in the clast scatter. */
+  const packed = await bake('talus-matrices', () => {
+  const lists = [];
+  for (let v = 0; v < VAR; v++) lists.push([]);
   const rand = rng(4477);
   const sStart = sStartOf(path);
   const p = new THREE.Vector3();
@@ -1623,12 +1657,22 @@ export function buildTalus(path, terrain, material) {
     lists[(rand() * VAR) | 0].push(m.compose(tr, qt, sc).clone());
   }
 
+    const o = {};
+    for (let v = 0; v < VAR; v++) {
+      const flat = new Float32Array(lists[v].length * 16);
+      for (let i = 0; i < lists[v].length; i++) lists[v][i].toArray(flat, i * 16);
+      o['m' + v] = flat;
+    }
+    return o;
+  });
+
   const out = [];
   for (let v = 0; v < VAR; v++) {
-    const arr = lists[v];
-    if (!arr.length) continue;
-    const im = new THREE.InstancedMesh(geos[v], mat, arr.length);
-    for (let i = 0; i < arr.length; i++) im.setMatrixAt(i, arr[i]);
+    const flat = packed['m' + v];
+    const count = flat.length / 16;
+    if (!count) continue;
+    const im = new THREE.InstancedMesh(geos[v], mat, count);
+    im.instanceMatrix.array.set(flat);
     im.instanceMatrix.needsUpdate = true;
     im.castShadow = true;
     im.receiveShadow = true;

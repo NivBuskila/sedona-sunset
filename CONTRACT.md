@@ -864,6 +864,60 @@ other systems own: the wall curtain at 11 s, the clast scatter at 10 s and the t
 at 8 s. Workers were explicitly *not* attempted; every one of these hands back a live THREE
 object built against this context.
 
+**Landed: two of those three stalls are now paid once per browser, not once per load.**
+The option listed above — cache into IndexedDB after the first visit — is in, as
+`src/bake.js`. Measured cold against warm in one persistent profile, same machine, same
+commit:
+
+| phase | cold | warm |
+|---|---|---|
+| `Cutting the wash` (terrain mesh) | 14,060 ms | **228 ms** |
+| `Raising the canyon walls` (curtains, aprons, buttes, talus) | 19,414 ms | **87 ms** |
+| `Scattering the stones` | 18,352 ms | 18,182 ms — *not cached, on purpose* |
+| **total boot** | **67,439 ms** | **33,430 ms** |
+
+Six entries, 55.8 MB, read back in 165 ms.
+
+**The property that makes this admissible is bit-identity, and it was measured rather than
+assumed.** Every attribute of the terrain mesh, both wall curtains, an apron, `butte0` and
+two talus instance sets — positions, normals, `aRock`, `aRef`, `aPan`, `aWall`, `aSheet`,
+`aFlow`, the indices, and the talus `instanceMatrix` with its count — hashed identically
+across a cold and a warm load. The warm scene is not an approximation of the cold one; it
+is the same arrays. Any future entry belongs behind the same check, because a cache that is
+*nearly* right about geometry is far worse than no cache: it fails in one framing, months
+later, and reads as a modelling defect.
+
+Three things about the design are load-bearing and should not be quietly simplified:
+
+1. **The key carries a fingerprint of the source that generated the value**, taken over
+   every `src/*.js` the browser actually loaded — read out of the resource timeline, not
+   from a list in the file. An explicit list is a footgun that fires when someone adds a
+   module that changes the geometry and the cache does not know it, and the failure it
+   produces is a stale bed outliving the code that made it. Rule 11's problem, in a new
+   costume: the artefact describes an author's intent from a previous commit rather than
+   current behaviour.
+2. **Every path degrades to plain generation.** No IndexedDB, quota exceeded, a blocked
+   upgrade from another tab — all of them return what `produce()` built. There is no error
+   path that reaches a caller, so a broken cache costs the wait and nothing else. This means
+   *a slow boot is never evidence the cache is broken*; read `window.__game._bake` for
+   `state` and `hits`.
+3. **`assertBandLimits()` stayed outside the cached region.** It is a guard on the sampling
+   grid, not a producer, and a guard that only fires on a cache miss is a guard that stops
+   firing exactly when someone is iterating fast.
+
+**Why the clast scatter is excluded, and what it would take.** It is the largest phase left
+and it is the one phase whose generation is not pure: as it places clasts, `buildScatter`
+calls `terrain.addScour` to excavate the hollows the boulders sit in, and the player's feet
+read those hollows through `heightAtQ`. Skipping the loop without replaying the
+registrations would leave the mesh and the footfall describing different ground — which is
+precisely the class of defect this file's Rule 8 exists for, an attribution that stops at
+the mesh instead of reaching what the player stands on. Caching it means recording the
+`addScour` calls as data and replaying them on a hit, *and* restructuring the placement out
+of the `CLASSES.forEach` that currently interleaves it with mesh construction. That is worth
+doing and it is worth doing carefully: 2.25 M of the frame's 3.97 M triangles are clast
+instances, and the population in `wall_lit` and `bend` is a reviewed one that no
+optimisation has any business reshuffling.
+
 ## The composition the brief asks for is a geometry constraint, and it can be measured
 
 The walk ended in a bowl at ground L 14.5/255 against 63.6 where it starts, so the

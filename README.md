@@ -24,12 +24,28 @@ within milliseconds and names each stage as it goes: the wash floor, the
 sandstone, cutting the wash, raising the canyon walls, scattering the stones, the
 juniper, the sky. Two of those stages take twelve to fourteen seconds on their
 own, so the message sits still for a while and the tab ignores a click while it
-does. That is the work happening. Reloading starts the wait over from the
-beginning, so it is worth sitting through.
+does. That is the work happening.
+
+**That is the first visit only.** The wash floor, the canyon walls and the talus
+blocks are written to IndexedDB once they have been computed, and every load
+after the first reads them back instead of recomputing them — the terrain stage
+alone drops from about fourteen seconds to a third of one. What comes back is
+bit for bit the arrays that went in, verified attribute by attribute, so this
+buys time and changes nothing you can see. Editing any source file invalidates
+the whole store on the next load, and if it cannot be used at all — a private
+window, a full disk — the page just generates everything again and waits the way
+it used to. The clast scatter is deliberately not in it, for a reason given
+below.
 
 **Every mesh, texture, material and sound in this project is generated
 procedurally in code.** There are no image files, no models, no HDRIs and no
-audio recordings anywhere in the repository, and nothing is loaded at runtime.
+audio recordings anywhere in the repository, and nothing is ever fetched from the
+network. One qualification, stated plainly because that claim is the point of the
+project: a *repeat* visit reads the heavy geometry back from IndexedDB rather
+than recomputing it, so it does load something — a file your own browser computed
+and wrote on your own disk a visit ago, byte for byte what the generator
+produced. The first visit still computes every one of them, and nothing ever
+comes from anywhere else.
 The red rock, the layered cliff faces, the gravel underfoot, the sand ripples,
 the juniper and its shadow, the sky, the haze and the low sun are written as
 mathematics and drawn into memory the moment you open the page. So is the wind,
