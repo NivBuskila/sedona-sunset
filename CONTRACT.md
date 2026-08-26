@@ -871,19 +871,30 @@ commit:
 
 | phase | cold | warm |
 |---|---|---|
-| `Cutting the wash` (terrain mesh) | 14,060 ms | **228 ms** |
-| `Raising the canyon walls` (curtains, aprons, buttes, talus) | 19,414 ms | **87 ms** |
-| `Scattering the stones` | 18,352 ms | 18,182 ms — *not cached, on purpose* |
-| **total boot** | **67,439 ms** | **33,430 ms** |
+| the seven texture stages (`wash floor` → `Weathering it`) | 6,353 ms | **155 ms** |
+| `Cutting the wash` (terrain mesh) | 13,898 ms | **198 ms** |
+| `Raising the canyon walls` (curtains, aprons, buttes, talus) | 19,054 ms | **96 ms** |
+| `Scattering the stones` | 18,036 ms | 18,546 ms — *not cached, on purpose* |
+| `Growing the juniper` | 2,480 ms | 2,342 ms — not cached |
+| `Lighting the sky` | 2,508 ms | 2,451 ms — not cached |
+| **total boot** | **66,300 ms** | **27,381 ms** |
 
-Six entries, 55.8 MB, read back in 165 ms.
+Fourteen entries, 90.7 MB, read back in 285 ms.
+
+**A correction to the paragraph above, which this measurement earned.** "Every texture in the
+scene is written texel by texel in JavaScript before the first frame" is true and was
+assumed to be most of the cost. It is not: all seven texture stages together are 6.4 s of a
+66 s boot, and the two 1024s inside them are 5 s of that. The expensive work was never the
+texels — it is the three geometry stages, which are 51 s between them. Anyone optimising
+this from the prose rather than from `_boot` would have spent their time in the wrong file.
 
 **The property that makes this admissible is bit-identity, and it was measured rather than
 assumed.** Every attribute of the terrain mesh, both wall curtains, an apron, `butte0` and
 two talus instance sets — positions, normals, `aRock`, `aRef`, `aPan`, `aWall`, `aSheet`,
 `aFlow`, the indices, and the talus `instanceMatrix` with its count — hashed identically
-across a cold and a warm load. The warm scene is not an approximation of the cold one; it
-is the same arrays. Any future entry belongs behind the same check, because a cache that is
+across a cold and a warm load, and so did the texels of all fourteen generated maps, each
+with its width and its colour space. The warm scene is not an approximation of the cold one;
+it is the same arrays. `window.__game._tex` exists for exactly this probe. Any future entry belongs behind the same check, because a cache that is
 *nearly* right about geometry is far worse than no cache: it fails in one framing, months
 later, and reads as a modelling defect.
 
@@ -904,6 +915,11 @@ Three things about the design are load-bearing and should not be quietly simplif
 3. **`assertBandLimits()` stayed outside the cached region.** It is a guard on the sampling
    grid, not a producer, and a guard that only fires on a cache miss is a guard that stops
    firing exactly when someone is iterating fast.
+4. **`dataTex` is still the only thing that builds a texture.** The texture wrapper lives in
+   `textures.js` and stores pixels only, so wrapping, mipmaps, filtering and anisotropy are
+   applied by the same function on both paths. A second constructor inside `bake.js` would
+   have meant that changing anisotropy in one place left cached textures silently unlike
+   fresh ones.
 
 **Why the clast scatter is excluded, and what it would take.** It is the largest phase left
 and it is the one phase whose generation is not pure: as it places clasts, `buildScatter`

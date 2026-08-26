@@ -15,6 +15,7 @@
  * reason procedural dirt reads as a flat photograph of noise.
  */
 import * as THREE from 'three';
+import { bake } from './bake.js';
 import { pnoise, pfbm, pridged, pworley, hash2, clamp, smoothstep, mix } from './noise.js';
 
 /* ── plumbing ──────────────────────────────────────────────────────────── */
@@ -32,6 +33,46 @@ function dataTex(buf, size, srgb) {
   t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
   t.needsUpdate = true;
   return t;
+}
+
+/* ── the bake store, for textures ─────────────────────────────────────────
+ *
+ * A `DataTexture` is a `Uint8Array` plus a size plus a colour space, so the
+ * cacheable part is just the buffer and the rest is two numbers and a flag.
+ *
+ * This lives here rather than in bake.js on purpose: everything else about these
+ * textures — wrapping, mipmaps, anisotropy, filtering — is `dataTex`'s policy,
+ * and a second constructor in bake.js that had to be kept in step with it is a
+ * drift waiting to happen. Change anisotropy in one place and cached textures
+ * would quietly stop matching fresh ones. So the cache stores the pixels and
+ * `dataTex` remains the only thing that builds a texture.
+ *
+ * Handles both maker shapes: `{albedo, normal, arm}` and a bare texture.
+ */
+export async function bakeTexture(id, produce) {
+  const packed = await bake(id, () => {
+    const made = produce();
+    const bare = made.isTexture === true;
+    const set = bare ? { t: made } : made;
+    const entries = [];
+    const o = {};
+    for (const [k, t] of Object.entries(set)) {
+      o['b' + entries.length] = t.image.data;
+      entries.push([k, t.image.width, t.colorSpace === THREE.SRGBColorSpace]);
+    }
+    o.__meta = JSON.stringify({ bare, entries });
+    return o;
+  });
+  /* Both arms rebuild through `dataTex` from the stored buffer, so there is one
+     code path and no chance of a warm texture differing from a cold one in a
+     field nobody thought to compare. On a miss this does discard the texture
+     objects `produce` just made — they wrap the very buffers being reused, cost
+     a few JS objects, and were never uploaded to the GPU. Cheap, next to two
+     code paths. */
+  const { bare, entries } = JSON.parse(packed.__meta);
+  const out = {};
+  entries.forEach(([k, size, srgb], i) => { out[k] = dataTex(packed['b' + i], size, srgb); });
+  return bare ? out.t : out;
 }
 
 /** Separable box blur with wraparound, so blurs of a tiling map still tile. */

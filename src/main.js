@@ -24,7 +24,7 @@ import { buildVegetation } from './vegetation.js';
 import { setPlantAnisotropy } from './plantex.js';
 import {
   makeDirt, makeSand, makeRock, makeGrit, makeClastSurface, makeMacro, makeVariance,
-  makeCracks, setAnisotropy,
+  makeCracks, setAnisotropy, bakeTexture,
 } from './textures.js';
 import { createAudio } from './audio.js';
 import { installAerial } from './aerial.js';
@@ -228,22 +228,22 @@ camera.rotation.order = 'YXZ';
    are most of it. Same calls, same order, same textures. */
 const tex = {};
 await loading.note('Drawing the wash floor…');
-tex.dirt = makeDirt(1024);
+tex.dirt = await bakeTexture('tex-dirt', () => makeDirt(1024));
 await loading.note('Drawing sand…');
-tex.sand = makeSand(512);
+tex.sand = await bakeTexture('tex-sand', () => makeSand(512));
 await loading.note('Drawing sandstone…');
-tex.rock = makeRock(1024);
+tex.rock = await bakeTexture('tex-rock', () => makeRock(1024));
 await loading.note('Drawing grit…');
 /* The footprint-locked detail layer. Small, because it carries no low
    frequencies — see makeGrit for why that is the property that lets rock.js
    read it at whatever scale a pixel happens to be. */
-tex.grit = makeGrit(256);
+tex.grit = await bakeTexture('tex-grit', () => makeGrit(256));
 await loading.note('Drawing gravel…');
-tex.clast = makeClastSurface(512);
+tex.clast = await bakeTexture('tex-clast', () => makeClastSurface(512));
 await loading.note('Weathering it…');
-tex.macro = makeMacro(512);
-tex.variance = makeVariance(512);
-tex.crack = makeCracks(512);
+tex.macro = await bakeTexture('tex-macro', () => makeMacro(512));
+tex.variance = await bakeTexture('tex-variance', () => makeVariance(512));
+tex.crack = await bakeTexture('tex-crack', () => makeCracks(512));
 
 await loading.note('Cutting the wash…');
 
@@ -1058,6 +1058,10 @@ const api = {
   _boot: loading.log,
   _bake: bakeLog,
   _clearBake: clearBake,
+  /* The generated texture set, so a probe can hash the actual texels a cold and
+     a warm load produced. That comparison is the only evidence the bake store is
+     returning the same pixels rather than merely returning quickly. */
+  _tex: tex,
   _corridor: corridor,
   _donkey: donkey,
   _instances: clasts.reduce((n, m) => n + m.count, 0),
