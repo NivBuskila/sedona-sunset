@@ -33,13 +33,38 @@
 
 import { WashPath } from './path.js';
 import { Terrain, terrainMeshArrays } from './terrain.js';
+import { wallPair } from './rock.js';
+import { scatterPlan } from './scatter.js';
+import { packGeometries } from './bake.js';
 
 /* Stages by name. Each returns an object of typed arrays and nothing else — the
    keys become the transfer list below, so anything in here that is not a buffer
    is a bug rather than a slow path. */
 const STAGES = {
-  'terrain-mesh': () => terrainMeshArrays(new Terrain(new WashPath())),
+  'terrain-mesh': () => terrainMeshArrays(scene().terrain),
+  /* The curtain and its apron, packed here: geometry is typed arrays until a
+     renderer uploads it, and there is no renderer on this thread. */
+  'wallL': () => { const s = scene(); return packGeometries(wallPair(s.path, s.terrain, -1)); },
+  'wallR': () => { const s = scene(); return packGeometries(wallPair(s.path, s.terrain, +1)); },
+  /* Mutates its own terrain as it places; the hollows travel back in `__scours`
+     and the main thread replays them. See scatterPlan for why that is sound. */
+  'scatter': () => scatterPlan(scene().terrain),
 };
+
+/* The generator graph, rebuilt once per worker.
+ *
+ * Cheap — analytic fields, milliseconds — but not free, and a worker that ran two
+ * stages would otherwise build it twice. Kept as a lazy singleton rather than
+ * module-level so that constructing it is charged to the stage that asked, and so
+ * a worker spawned for a stage that never needs it does not pay at all. */
+let graph = null;
+function scene() {
+  if (!graph) {
+    const path = new WashPath();
+    graph = { path, terrain: new Terrain(path) };
+  }
+  return graph;
+}
 
 self.onmessage = (e) => {
   const { id, stage } = e.data;

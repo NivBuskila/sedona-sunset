@@ -218,7 +218,10 @@ export async function bake(id, produce) {
    that silently drops a field it was never given is worse than one that cannot
    accept it. If a geometry ever grows one of those, this must grow with it. */
 
-function packGeometries(list) {
+/* Exported because the generation worker packs its own output: a stage that
+   builds geometry off-thread has to serialise it there, and a second packer on
+   this side of the boundary is the drift bake.js already refuses elsewhere. */
+export function packGeometries(list) {
   const meta = [];
   const out = {};
   let n = 0;
@@ -261,7 +264,15 @@ function unpackGeometries(packed, THREE) {
  * reason for a tool to load the whole scene to test a cache.
  */
 export async function bakeGeometries(id, THREE, produce) {
-  const packed = await bake(id, async () => packGeometries(await produce()));
+  /* `produce` may hand back geometry or the packed form. A stage computed in a
+     worker is packed on that side — the arrays are what crossed the boundary —
+     and unpacking it here only to pack it again would copy tens of megabytes
+     twice for nothing. An array means geometry; anything else is already packed.
+     Both arms end at the same `unpackGeometries` below. */
+  const packed = await bake(id, async () => {
+    const made = await produce();
+    return Array.isArray(made) ? packGeometries(made) : made;
+  });
   /* A miss returns exactly what `packGeometries` built, so both arms unpack the
      same shape and there is no second code path to get wrong. */
   return unpackGeometries(packed, THREE);

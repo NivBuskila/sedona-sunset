@@ -34,11 +34,37 @@
  * contacts, joint arêtes and spall rims come out hard; the bench slopes between
  * them stay smooth.
  */
-import * as THREE from 'three';
-import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
+import * as THREE from './three.js';
+/* ConvexGeometry is reached through `primeConvex` rather than imported.
+ *
+ * It is the one dependency in this file a worker cannot load: `three/addons/` is
+ * resolved by the document's import map, which workers do not inherit, and the
+ * addon's own source imports the bare specifier `three` internally — so even a
+ * direct URL would fail one level down. Left as a static import it would make
+ * this whole module unloadable off-thread, and the heavy generation in it is
+ * precisely what wants to run there.
+ *
+ * The single use below (talus and buttes) is main-thread work, so the binding is filled in once
+ * during boot and the worker never touches it. */
+let ConvexGeometry = null;
+
+/** Load the convex-hull addon. Main thread only, once, before realisation. */
+export async function primeConvex() {
+  if (!ConvexGeometry) {
+    ({ ConvexGeometry } = await import('three/addons/geometries/ConvexGeometry.js'));
+  }
+}
+
+/* A missing prime is a programming error, not a runtime condition, so it says so
+   rather than failing as `undefined is not a constructor` three frames down. */
+function convexOf(pts) {
+  if (!ConvexGeometry) throw new Error('primeConvex() must run before building talus and buttes');
+  return new ConvexGeometry(pts);
+}
 import { fbm, ridged, hash1, rng, clamp, smoothstep, mix } from './noise.js';
 import { SUN_DIR } from './sky.js';
-import { bake, bakeGeometries } from './bake.js';
+import { bake, bakeGeometries, packGeometries } from './bake.js';
+import { runStage } from './genpool.js';
 
 /* ── the stratigraphic column ──────────────────────────────────────────────
  *
@@ -1173,7 +1199,46 @@ function apronMesh(g, material, side) {
   return m;
 }
 
+/* ── the curtain pair, as a pure function ─────────────────────────────────
+ *
+ * `Raising the canyon walls` is the largest phase of the cold boot at 19.9 s, and
+ * all of it is `wallGrid` — the curtain and its apron share that one grid, which
+ * is why they are baked as a pair rather than separately.
+ *
+ * Free function of (path, terrain, side) so a worker can call it: everything it
+ * reads is an argument or a module constant, and the generators are seeded and
+ * stateless, so a grid built on another thread is the same grid. It returns
+ * geometry, which sounds like it could not cross a thread boundary and can:
+ * a `BufferGeometry` is typed arrays until something uploads it, and no renderer
+ * exists where this runs. The worker packs it there (see genworker.js) and this
+ * thread rebuilds the attributes; `packGeometries` is shared by both so there is
+ * one serialisation and not two that have to agree.
+ */
+export function wallPair(path, terrain, side) {
+  const grid = wallGrid(path, terrain, side);
+  return [creasedMesh(grid, Math.cos(0.78), side < 0),
+          apronGeometry(grid, terrain, side)];
+}
+
+/* Off-thread when the browser allows it, here when it does not — same function
+   over the same seeded grid either way. Returns the packed form because that is
+   what crosses the boundary; `bakeGeometries` unpacks both arms identically. */
+async function wallPacked(path, terrain, side) {
+  const off = await runStage(side > 0 ? 'wallR' : 'wallL');
+  return off || packGeometries(wallPair(path, terrain, side));
+}
+
 export async function buildWalls(path, terrain, material) {
+  /* Both curtains at once. Each side is its own bake and its own worker, and
+     they share nothing — two grids over the same read-only terrain — so running
+     them together turns the phase's cost from the sum of the sides into the
+     larger of them. On a cache hit this is two cheap reads and the concurrency
+     costs nothing; with no worker available both arms fall back to this thread
+     and serialise themselves, which is the behaviour this replaced. */
+  const pairs = await Promise.all([1, -1].map(side =>
+    bakeGeometries(`wall${side > 0 ? 'R' : 'L'}`, THREE,
+      () => wallPacked(path, terrain, side))));
+
   const out = [];
   for (const side of [1, -1]) {
     /* The left wall's grid runs the same way round its own normal as the right
@@ -1196,11 +1261,7 @@ export async function buildWalls(path, terrain, material) {
     /* The curtain and its apron come out of the bake store as a pair, because
        they share the one `wallGrid` that is the cost of this phase. On a hit
        neither grid is built at all. */
-    const [g, ag] = await bakeGeometries(`wall${side > 0 ? 'R' : 'L'}`, THREE, () => {
-      const grid = wallGrid(path, terrain, side);
-      return [creasedMesh(grid, Math.cos(0.78), side < 0),
-              apronGeometry(grid, terrain, side)];
-    });
+    const [g, ag] = pairs[side > 0 ? 0 : 1];
     const m = new THREE.Mesh(g, material);
     m.castShadow = true;
     m.receiveShadow = true;
@@ -1491,7 +1552,7 @@ function talusBlock(seed, flat) {
     const j = t * (0.90 + rand() * 0.24);
     pts.push(new THREE.Vector3(dx * j, dy * j, dz * j));
   }
-  const g = new ConvexGeometry(pts);
+  const g = convexOf(pts);
   const p = g.attributes.position;
   const aR = new Float32Array(p.count * 4);
   for (let i = 0; i < p.count; i++) {

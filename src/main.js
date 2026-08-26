@@ -20,6 +20,9 @@ import { buildFarRidges } from './farridge.js';
 import { buildSky, buildLights, makeShadowRig, FOG, EXPOSURE } from './sky.js';
 import { buildJuniper, JUNIPER_XZ } from './juniper.js';
 import { bakeLog, clearBake } from './bake.js';
+import { primeConvex as primeRockConvex } from './rock.js';
+import { primeConvex as primeClastConvex } from './scatter.js';
+import { startScatterPlan } from './scatter.js';
 import { genLog } from './genpool.js';
 import { buildVegetation } from './vegetation.js';
 import { setPlantAnisotropy, primePlantTextures } from './plantex.js';
@@ -250,7 +253,37 @@ await loading.note('Cutting the wash…');
 
 const path = new WashPath();
 const terrain = new Terrain(path);
-const terrainMesh = await buildTerrainMesh(terrain, makeTerrainMaterial(tex));
+
+/* ── the heavy phases, started together ───────────────────────────────────
+ *
+ * Cutting the wash, raising the walls and scattering the stones are 52 s of the
+ * 68 s cold boot, and none of the three needs anything the other two produce:
+ * each samples the same read-only analytic terrain. Run one after another they
+ * cost their sum, which is what every boot before this one paid.
+ *
+ * So they are started here, as soon as `path` and `terrain` exist, and awaited
+ * further down at the exact points the sequence always reached them. Nothing
+ * about the order in which results are *applied* changes — the scene is
+ * assembled in the same order, from the same arrays — and the loading screen
+ * still narrates the phases, though it now narrates work already in flight.
+ *
+ * The one asymmetry is the stones, and it is deliberate: `startScatterPlan`
+ * computes the placement but does not touch this thread's terrain, because the
+ * hollows it records have to be replayed after the buttes, the talus and the far
+ * ridges have sampled the bed. See startScatterPlan for what goes wrong if that
+ * replay lands early.
+ *
+ * The convex-hull addon is primed alongside them: it cannot be loaded inside a
+ * worker (see rock.js), it is needed by the talus and the clast variants, and
+ * fetching it while the workers grind costs nothing.
+ */
+const rockMat = makeRockMaterial(tex);
+const terrainMeshP = buildTerrainMesh(terrain, makeTerrainMaterial(tex));
+const wallsP = buildWalls(path, terrain, rockMat);
+const scatterPlanP = startScatterPlan(terrain);
+const convexP = Promise.all([primeRockConvex(), primeClastConvex()]);
+
+const terrainMesh = await terrainMeshP;
 scene.add(terrainMesh);
 
 await loading.note('Raising the canyon walls…');
@@ -259,9 +292,9 @@ await loading.note('Raising the canyon walls…');
    height field cannot draw a cliff — so it arrives as its own meshes: two wall
    curtains, a set of discrete distant buttes for the aerial perspective to layer,
    and the coarse talus at the junction between the two. */
-const rockMat = makeRockMaterial(tex);
+await convexP;
 const rocks = [
-  ...await buildWalls(path, terrain, rockMat),
+  ...await wallsP,
   ...await buildDistantButtes(terrain, rockMat),
   ...await buildTalus(path, terrain, rockMat),
 ];
@@ -280,7 +313,7 @@ scene.add(farRidges);
 
 await loading.note('Scattering the stones…');
 
-const clasts = await buildScatter(terrain, tex);
+const clasts = await buildScatter(terrain, tex, scatterPlanP);
 /* The boulders dig hollows the mesh was built too early to know about. */
 applyScour(terrainMesh, terrain);
 for (const m of clasts) scene.add(m);

@@ -23,11 +23,37 @@
  *
  * Everything is instanced — one draw call per (class, shape variant).
  */
-import * as THREE from 'three';
-import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
+import * as THREE from './three.js';
+/* ConvexGeometry is reached through `primeConvex` rather than imported.
+ *
+ * It is the one dependency in this file a worker cannot load: `three/addons/` is
+ * resolved by the document's import map, which workers do not inherit, and the
+ * addon's own source imports the bare specifier `three` internally — so even a
+ * direct URL would fail one level down. Left as a static import it would make
+ * this whole module unloadable off-thread, and the heavy generation in it is
+ * precisely what wants to run there.
+ *
+ * The single use below (clast variants) is main-thread work, so the binding is filled in once
+ * during boot and the worker never touches it. */
+let ConvexGeometry = null;
+
+/** Load the convex-hull addon. Main thread only, once, before realisation. */
+export async function primeConvex() {
+  if (!ConvexGeometry) {
+    ({ ConvexGeometry } = await import('three/addons/geometries/ConvexGeometry.js'));
+  }
+}
+
+/* A missing prime is a programming error, not a runtime condition, so it says so
+   rather than failing as `undefined is not a constructor` three frames down. */
+function convexOf(pts) {
+  if (!ConvexGeometry) throw new Error('primeConvex() must run before building clast variants');
+  return new ConvexGeometry(pts);
+}
 import { rng, fbm, clamp, mix } from './noise.js';
 import { SUN_DIR } from './sky.js';
 import { bake } from './bake.js';
+import { runStage } from './genpool.js';
 
 /* ── shapes ────────────────────────────────────────────────────────────── */
 
@@ -161,7 +187,7 @@ function angularClast(seed, flat, bevel) {
     const j = t * (0.99 + rand() * 0.24);
     pts.push(new THREE.Vector3(dx * j, dy * j, dz * j));
   }
-  const g = new ConvexGeometry(pts);
+  const g = convexOf(pts);
   addUV(g);
   addWhite(g);
   g.computeBoundingSphere();
@@ -1923,19 +1949,54 @@ function realiseMesh(p, material) {
  * player sank through the wash floor. So the list is replayed in the same order
  * it was recorded, before this function returns and before any of those run.
  */
-export async function buildScatter(terrain, tex) {
-  const plan = await bake('scatter', () => {
-    const { plans, scours } = planScatter(terrain);
-    /* Flattened for storage: the store keeps typed arrays and one JSON blob, not
-       an array of objects holding arrays. */
-    const o = { __scours: scours, __meta: JSON.stringify(plans.map(
-      p => [p.name, p.shadow, p.geomKey, p.n])) };
-    plans.forEach((p, i) => {
-      o[`m${i}`] = p.matrix; o[`c${i}`] = p.color;
-      o[`d${i}`] = p.dust;   o[`a${i}`] = p.ao;
-    });
-    return o;
+/* ── the placement plan, as a pure function ───────────────────────────────
+ *
+ * `Scattering the stones` is 18.2 s of the cold boot and none of it is geometry:
+ * `planScatter` decides where several thousand clasts sit, and the variants they
+ * instance are built elsewhere. So what this returns is matrices and colours —
+ * flattened for storage, because the store keeps typed arrays and one JSON blob
+ * rather than an array of objects holding arrays.
+ *
+ * Lifted out so a worker can run it, which is safe here for a reason that is
+ * worth being explicit about: `planScatter` *mutates* the terrain it is given,
+ * calling `addScour` as it places, because a stone has to sit on the bed the
+ * stones before it dug. A worker mutates its own reconstruction and that copy
+ * dies with the message — the hollows reach this thread only through `__scours`,
+ * replayed in recorded order by the caller below. That is not a new mechanism
+ * built for the worker: it is exactly the warm-load path, which has always had to
+ * restore hollows that `planScatter` never ran to create. The worker is a cache
+ * miss that happened somewhere else.
+ */
+export function scatterPlan(terrain) {
+  const { plans, scours } = planScatter(terrain);
+  const o = { __scours: scours, __meta: JSON.stringify(plans.map(
+    p => [p.name, p.shadow, p.geomKey, p.n])) };
+  plans.forEach((p, i) => {
+    o[`m${i}`] = p.matrix; o[`c${i}`] = p.color;
+    o[`d${i}`] = p.dust;   o[`a${i}`] = p.ao;
   });
+  return o;
+}
+
+/* Start the plan without applying it.
+ *
+ * The split exists so the 18.2 s can overlap the rest of the boot while the part
+ * that *changes* this thread's terrain stays exactly where it was. Placement is
+ * order-independent — it reads a bed with no hollows in it, which is the only bed
+ * it has ever read — but the scour replay in `buildScatter` is not: the buttes,
+ * the talus, the far ridges and the terrain mesh all sample heights on this
+ * thread, and today they sample them before any hollow exists. Let the replay
+ * land early and they would sample a different bed, at a moment decided by how
+ * fast a worker happened to finish, which is a scene that differs between loads
+ * on the same machine. So this returns a promise and nothing else, and the caller
+ * awaits it at the point the sequence always reached the stones.
+ */
+export function startScatterPlan(terrain) {
+  return bake('scatter', async () => (await runStage('scatter')) || scatterPlan(terrain));
+}
+
+export async function buildScatter(terrain, tex, started) {
+  const plan = await (started || startScatterPlan(terrain));
 
   /* Cold or warm, the hollows are registered from the recorded list. On a cold
      load `planScatter` has already applied them — it had to, mid-placement — so
