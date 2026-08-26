@@ -39,6 +39,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rng, fbm, clamp, smoothstep, mix } from './noise.js';
 import { SUN_DIR } from './sky.js';
 import { barkTex, deadTex, foliageTex, grassTex } from './plantex.js';
+import { bakeGeometries } from './bake.js';
 import { PREVAILING_HEADING, headingToVec } from './wind.js';
 
 const TAU = Math.PI * 2;
@@ -1920,16 +1921,74 @@ export function cardTuft(cx, cy, cz, w, h, nCards, rand, arr, cols = 2, rows = 1
  * Build the hero juniper and everything at its foot.
  * Returns an array of meshes for the caller to add to the scene.
  */
-export function buildJuniper(terrain, tex) {
+/* The dead grass and shed duff caught around the tree's base, as one geometry.
+   Split out of `buildJuniper` so it can go through the bake store with the other
+   three: it is a placement loop over `terrain.heightAt`, which is exactly the kind
+   of arithmetic the store exists to skip, and it was the only one of the four
+   built inline. Returns an empty geometry rather than null when nothing lands, so
+   the cached list always has four entries in the same order. */
+function litterGeometry(terrain) {
+  const rand = rng(31337);
+  const arr = { pos: [], nrm: [], uvs: [], idx: [] };
+  /* Two populations, because they are put there by two different processes and
+     they land in different places. Wind-blown litter piles against the upwind
+     flank of the mound; the tree's own shed scale and twig fall straight down
+     and accumulate in a ring under the drip line, which on a crown this wide is
+     a good two metres out. Sixty attempts rather than twenty-six: at eighteen
+     metres a 0.2 m tuft is nine pixels, and a dozen of them scattered over five
+     square metres is not something a viewer can see. */
+  /* 140 attempts, and the duff reaches to 3.2 m. At 60 with a 0.72 acceptance the
+     drip-line population came out at about nineteen tufts spread around a ring
+     fourteen metres in circumference, which is not a duff layer — it is a dozen
+     specks, and a reviewer reported no drip-line duff at all. */
+  for (let i = 0; i < 140; i++) {
+    const th = rand() * TAU;
+    const dripLine = rand() < 0.58;
+    const rr = dripLine ? 1.60 + rand() * 1.60 : 0.40 + rand() * 1.35;
+    const bias = 0.5 - 0.5 * (Math.cos(th) * PREVAILING.x + Math.sin(th) * PREVAILING.y);
+    /* Duff under the drip line does not care about the wind; wind-piled litter
+       cares about nothing else. */
+    if (rand() > (dripLine ? 0.80 : 0.26 + 0.74 * bias)) continue;
+    const x = JUNIPER_XZ.x + Math.cos(th) * rr, z = JUNIPER_XZ.z + Math.sin(th) * rr;
+    const y = terrain.heightAt(x, z) + moundAt(rr) - 0.02;
+    /* Shed duff lies flat and low; caught grass stands up. */
+    const h = dripLine ? 0.05 + rand() * 0.08 : 0.13 + rand() * 0.24;
+    cardTuft(x, y, z, (dripLine ? 0.26 : 0.20) + rand() * 0.26, h,
+             2 + (rand() * 2 | 0), rand, arr, 4, 1);
+  }
+  const gg = new THREE.BufferGeometry();
+  gg.setAttribute('position', new THREE.Float32BufferAttribute(arr.pos, 3));
+  gg.setAttribute('normal', new THREE.Float32BufferAttribute(arr.nrm, 3));
+  gg.setAttribute('uv', new THREE.Float32BufferAttribute(arr.uvs, 2));
+  gg.setIndex(arr.idx);
+  return gg;
+}
+
+export async function buildJuniper(terrain, tex) {
   const out = [];
   const bark = barkTex();
   const folTex = foliageTex();
   const litterTex = grassTex();
 
-  const { geoms, clumps } = buildTree(20250821);
-  const woody = mergeGeometries(geoms, false);
-  woody.computeBoundingSphere();
-  for (const g of geoms) g.dispose();
+  /* All four of the tree's geometries in one cache entry, in a fixed order.
+     One entry rather than four because they are produced together and share the
+     branch skeleton: `clumps` comes out of `buildTree` and is what
+     `foliageGeometry` grows the sprays on, so caching the foliage separately
+     would mean either caching the skeleton too or rebuilding the trunk to get it.
+     Nothing here escapes as anything but geometry — `clumps` is not used outside
+     this producer, which is what makes the seam clean. */
+  const [woody, folGeo, moundGeo, litterGeo] = await bakeGeometries(
+    'juniper.geo', THREE, () => {
+      const { geoms, clumps } = buildTree(20250821);
+      const merged = mergeGeometries(geoms, false);
+      for (const g of geoms) g.dispose();
+      return [
+        merged,
+        foliageGeometry(clumps, 4242),
+        hummock(terrain, JUNIPER_XZ.x, JUNIPER_XZ.z, 8181),
+        litterGeometry(terrain),
+      ];
+    });
 
   const base = terrain.heightAt(JUNIPER_XZ.x, JUNIPER_XZ.z);
   /* Sunk slightly, because the root flare should emerge from the hummock rather
@@ -2024,7 +2083,7 @@ export function buildJuniper(terrain, tex) {
        chartreuse and nothing else changes. */
     u.uTrans.value.setRGB(1.60, 1.00, 0.50);
   }
-  const fol = new THREE.Mesh(foliageGeometry(clumps, 4242), folMat);
+  const fol = new THREE.Mesh(folGeo, folMat);
   fol.position.copy(trunk.position);
   fol.castShadow = true;
   fol.receiveShadow = true;
@@ -2053,55 +2112,20 @@ export function buildJuniper(terrain, tex) {
     polygonOffsetFactor: -2,
     polygonOffsetUnits: -2,
   });
-  const mound = new THREE.Mesh(hummock(terrain, JUNIPER_XZ.x, JUNIPER_XZ.z, 8181), hMat);
+  const mound = new THREE.Mesh(moundGeo, hMat);
   mound.castShadow = true;
   mound.receiveShadow = true;
   mound.name = 'juniper-hummock';
   out.push(mound);
 
-  /* Dead grass and litter caught around the base. Sparse and clumped against
-     the upwind side, where the wind piles it. */
-  const rand = rng(31337);
-  const arr = { pos: [], nrm: [], uvs: [], idx: [] };
-  /* Two populations, because they are put there by two different processes and
-     they land in different places. Wind-blown litter piles against the upwind
-     flank of the mound; the tree's own shed scale and twig fall straight down
-     and accumulate in a ring under the drip line, which on a crown this wide is
-     a good two metres out. Sixty attempts rather than twenty-six: at eighteen
-     metres a 0.2 m tuft is nine pixels, and a dozen of them scattered over five
-     square metres is not something a viewer can see. */
-  /* 140 attempts, and the duff reaches to 3.2 m. At 60 with a 0.72 acceptance the
-     drip-line population came out at about nineteen tufts spread around a ring
-     fourteen metres in circumference, which is not a duff layer — it is a dozen
-     specks, and a reviewer reported no drip-line duff at all. */
-  for (let i = 0; i < 140; i++) {
-    const th = rand() * TAU;
-    const dripLine = rand() < 0.58;
-    const rr = dripLine ? 1.60 + rand() * 1.60 : 0.40 + rand() * 1.35;
-    const bias = 0.5 - 0.5 * (Math.cos(th) * PREVAILING.x + Math.sin(th) * PREVAILING.y);
-    /* Duff under the drip line does not care about the wind; wind-piled litter
-       cares about nothing else. */
-    if (rand() > (dripLine ? 0.80 : 0.26 + 0.74 * bias)) continue;
-    const x = JUNIPER_XZ.x + Math.cos(th) * rr, z = JUNIPER_XZ.z + Math.sin(th) * rr;
-    const y = terrain.heightAt(x, z) + moundAt(rr) - 0.02;
-    /* Shed duff lies flat and low; caught grass stands up. */
-    const h = dripLine ? 0.05 + rand() * 0.08 : 0.13 + rand() * 0.24;
-    cardTuft(x, y, z, (dripLine ? 0.26 : 0.20) + rand() * 0.26, h,
-             2 + (rand() * 2 | 0), rand, arr, 4, 1);
-  }
-  if (arr.idx.length) {
-    const gg = new THREE.BufferGeometry();
-    gg.setAttribute('position', new THREE.Float32BufferAttribute(arr.pos, 3));
-    gg.setAttribute('normal', new THREE.Float32BufferAttribute(arr.nrm, 3));
-    gg.setAttribute('uv', new THREE.Float32BufferAttribute(arr.uvs, 2));
-    gg.setIndex(arr.idx);
-    gg.computeBoundingSphere();
+  /* Dead grass and litter caught around the base; see `litterGeometry`. */
+  if (litterGeo.index && litterGeo.index.count) {
     const gm = new THREE.MeshStandardMaterial({
       map: litterTex, alphaTest: 0.40, side: THREE.DoubleSide,
       roughness: 0.94, metalness: 0.0, color: new THREE.Color(0.92, 0.88, 0.82),
       alphaToCoverage: true,
     });
-    const grass = new THREE.Mesh(gg, gm);
+    const grass = new THREE.Mesh(litterGeo, gm);
     grass.castShadow = true;
     grass.receiveShadow = true;
     grass.name = 'juniper-litter';

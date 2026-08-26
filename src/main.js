@@ -293,8 +293,8 @@ setPlantAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
    the plantex accessors are synchronous map reads, so the two builders below are
    untouched. Ordered after setPlantAnisotropy, which is constructor policy. */
 await primePlantTextures();
-for (const m of buildJuniper(terrain, tex)) scene.add(m);
-for (const m of buildVegetation(path, terrain, rocks)) scene.add(m);
+for (const m of await buildJuniper(terrain, tex)) scene.add(m);
+for (const m of await buildVegetation(path, terrain, rocks)) scene.add(m);
 
 /* The clast material needs the viewport height to turn an instance's world radius
    into a projected pixel radius, which is what drives its level of detail. */
