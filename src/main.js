@@ -19,6 +19,7 @@ import { buildWalls, buildDistantButtes, buildTalus, makeRockMaterial } from './
 import { buildFarRidges } from './farridge.js';
 import { buildSky, buildLights, makeShadowRig, FOG, EXPOSURE } from './sky.js';
 import { buildJuniper } from './juniper.js';
+import { bakeLog, clearBake } from './bake.js';
 import { buildVegetation } from './vegetation.js';
 import { setPlantAnisotropy } from './plantex.js';
 import {
@@ -248,7 +249,7 @@ await loading.note('Cutting the wash…');
 
 const path = new WashPath();
 const terrain = new Terrain(path);
-const terrainMesh = buildTerrainMesh(terrain, makeTerrainMaterial(tex));
+const terrainMesh = await buildTerrainMesh(terrain, makeTerrainMaterial(tex));
 scene.add(terrainMesh);
 
 await loading.note('Raising the canyon walls…');
@@ -1055,6 +1056,8 @@ const api = {
      blocked for, and the worst of them. tools/_bootpaint.mjs reads it; nothing
      in the contract surface does. */
   _boot: loading.log,
+  _bake: bakeLog,
+  _clearBake: clearBake,
   _corridor: corridor,
   _donkey: donkey,
   _instances: clasts.reduce((n, m) => n + m.count, 0),

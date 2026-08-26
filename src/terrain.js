@@ -34,6 +34,7 @@ import { fbm, ridged, clamp, smoothstep, mix } from './noise.js';
 import { SUN_DIR, SUN_EL } from './sky.js';
 import { DIRT_RELIEF_K } from './textures.js';
 import { TONIGHT_HEADING } from './wind.js';
+import { bake } from './bake.js';
 
 /* The grain bed's depth, from the one place it is stated. 25 mm per height unit
    times K. Both the sun's climb through the height field and the geometric
@@ -1126,7 +1127,7 @@ function axis(segments, outMin, outMax, growth) {
 
 /* ── mesh ──────────────────────────────────────────────────────────────── */
 
-export function buildTerrainMesh(terrain, material) {
+export async function buildTerrainMesh(terrain, material) {
   /* Graded in several steps rather than two. A step size that jumps from 0.20 to
      0.34 at a single column leaves a crease along that column — a dead straight
      line in world space, and the one thing a landscape never contains is a dead
@@ -1152,42 +1153,53 @@ export function buildTerrainMesh(terrain, material) {
 
   const nx = xs.length, nz = zs.length;
   const count = nx * nz;
-  const pos = new Float32Array(count * 3);
-  const ref = new Float32Array(count);
-  const pan = new Float32Array(count);
-  const wall = new Float32Array(count);
-  const sheet = new Float32Array(count);
-  const flow = new Float32Array(count);
-  const q = {};
+  /* One `heightAtQ` per vertex is the `Cutting the wash` phase of the boot and
+     measured 13.7 s of it, which is a fifth of the whole wait — and it computes
+     the same numbers every time, because the field is analytic and every noise
+     term in it is a seeded stream. So the arrays are cached between visits; see
+     bake.js for the fingerprint that stops a stale bed outliving the code that
+     generated it, and for why a cache failure costs nothing but the wait.
+     `assertBandLimits` stays outside, above: it is a guard on the sampling grid
+     rather than a producer, and it has to fire on a cache hit too. */
+  const { pos, ref, pan, wall, sheet, flow, idx } = await bake('terrain-mesh', () => {
+    const pos = new Float32Array(count * 3);
+    const ref = new Float32Array(count);
+    const pan = new Float32Array(count);
+    const wall = new Float32Array(count);
+    const sheet = new Float32Array(count);
+    const flow = new Float32Array(count);
+    const q = {};
 
-  for (let j = 0; j < nz; j++) {
-    const z = zs[j];
-    terrain.path.atZ(z, q);
-    const row = j * nx;
-    for (let i = 0; i < nx; i++) {
-      const x = xs[i];
-      const k = row + i;
-      const o = k * 3;
-      pos[o] = x;
-      pos[o + 1] = terrain.heightAtQ(x, z, q);
-      pos[o + 2] = z;
-      ref[k] = terrain.oRef;
-      pan[k] = terrain.oPan;
-      wall[k] = terrain.oWall;
-      sheet[k] = terrain.oSheet;
-      flow[k] = terrain.oFlow;
+    for (let j = 0; j < nz; j++) {
+      const z = zs[j];
+      terrain.path.atZ(z, q);
+      const row = j * nx;
+      for (let i = 0; i < nx; i++) {
+        const x = xs[i];
+        const k = row + i;
+        const o = k * 3;
+        pos[o] = x;
+        pos[o + 1] = terrain.heightAtQ(x, z, q);
+        pos[o + 2] = z;
+        ref[k] = terrain.oRef;
+        pan[k] = terrain.oPan;
+        wall[k] = terrain.oWall;
+        sheet[k] = terrain.oSheet;
+        flow[k] = terrain.oFlow;
+      }
     }
-  }
 
-  const idx = new Uint32Array((nx - 1) * (nz - 1) * 6);
-  let p = 0;
-  for (let j = 0; j < nz - 1; j++) {
-    for (let i = 0; i < nx - 1; i++) {
-      const a = j * nx + i, b = a + 1, c = a + nx, d = c + 1;
-      idx[p++] = a; idx[p++] = c; idx[p++] = b;
-      idx[p++] = b; idx[p++] = c; idx[p++] = d;
+    const idx = new Uint32Array((nx - 1) * (nz - 1) * 6);
+    let p = 0;
+    for (let j = 0; j < nz - 1; j++) {
+      for (let i = 0; i < nx - 1; i++) {
+        const a = j * nx + i, b = a + 1, c = a + nx, d = c + 1;
+        idx[p++] = a; idx[p++] = c; idx[p++] = b;
+        idx[p++] = b; idx[p++] = c; idx[p++] = d;
+      }
     }
-  }
+    return { pos, ref, pan, wall, sheet, flow, idx };
+  });
 
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
