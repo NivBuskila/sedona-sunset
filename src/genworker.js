@@ -50,9 +50,15 @@ const STAGES = {
      renderer uploads it, and there is no renderer on this thread. */
   'wallL': () => { const s = scene(); return packGeometries(wallPair(s.path, s.terrain, -1)); },
   'wallR': () => { const s = scene(); return packGeometries(wallPair(s.path, s.terrain, +1)); },
-  /* Mutates its own terrain as it places; the hollows travel back in `__scours`
-     and the main thread replays them. See scatterPlan for why that is sound. */
-  'scatter': () => scatterPlan(scene().terrain),
+  /* Its own throwaway terrain, deliberately *not* the shared one.
+     `scatterPlan` mutates the terrain it is given — it calls `addScour` as it
+     places, because a stone sits on the bed the stones before it dug. Handed the
+     shared graph, it would leave hollows in it, and a worker that is reused (the
+     pool does reuse them) could then build a wall curtain against a bed that has
+     been dug into. That is a different valley on a machine with a pool than on
+     one without, arriving silently and only sometimes. A second `Terrain` is a
+     few milliseconds of analytic fields; the isolation is not negotiable. */
+  'scatter': () => scatterPlan(new Terrain(new WashPath())),
 
   /* The eight surface maps. Independent of each other and of the terrain — each
      is a pure function of its size — which makes them the cleanest boundary in
@@ -68,12 +74,16 @@ const STAGES = {
   'tex-crack': () => packTextures(makeCracks(512)),
 };
 
-/* The generator graph, rebuilt once per worker.
+/* The generator graph, rebuilt once per worker and shared by the stages that read
+ * it. Cheap — analytic fields, milliseconds — but not free, and with a pool one
+ * worker runs several stages, so building it once is worth the singleton.
  *
- * Cheap — analytic fields, milliseconds — but not free, and a worker that ran two
- * stages would otherwise build it twice. Kept as a lazy singleton rather than
- * module-level so that constructing it is charged to the stage that asked, and so
- * a worker spawned for a stage that never needs it does not pay at all. */
+ * Lazy rather than module-level so that constructing it is charged to the stage
+ * that asked, and a worker that only ever draws textures never pays for it.
+ *
+ * Every stage reading this must treat it as READ-ONLY. It is shared across stages
+ * within a worker now, so one stage that mutates it changes what a later stage
+ * sees — see the scatter entry above, which is why that one builds its own. */
 let graph = null;
 function scene() {
   if (!graph) {
