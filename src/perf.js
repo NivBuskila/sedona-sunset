@@ -495,12 +495,29 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
     if (farRidge && farRidge.setDetail) farRidge.setDetail(q.far);
   }
 
+  /* A rung change that moves the render scale is *deferred to the next frame*,
+     and this is a correctness fix rather than a tidiness one.
+     `gotoRung` is reached from `adapt()`, which `endFrame` calls — so it used to
+     run `applyScale()` after `renderOnce()` had already drawn the tick's frame.
+     `applyScale` calls `renderer.setSize`, which reallocates the drawing buffer,
+     and the context is `preserveDrawingBuffer: false`: a reallocated buffer is a
+     cleared buffer, and nothing draws into it before the compositor presents it.
+     Every scale change therefore published one solid black frame. Uncomfortable
+     to see and easy to misread as a stall, and it fires most on exactly the
+     hardware the ladder exists for — a weak GPU is one the governor keeps
+     moving. Draining the flag in `beginFrame` puts the reallocation ahead of the
+     frame's own render, so the tick that resizes is also a tick that draws.
+     The window's own `resize` still applies immediately: it arrives outside the
+     loop's tick, and deferring it would strand a resize that came in while the
+     loop was paused, which is a path the harness uses. */
+  let pendingScale = false;
+
   function gotoRung(i) {
     li = Math.max(0, Math.min(LADDER.length - 1, i));
     const [r, q] = LADDER[li];
     const rChanged = r !== ri, qChanged = q !== qi;
     ri = r; qi = q;
-    if (rChanged) applyScale();
+    if (rChanged) pendingScale = true;
     if (qChanged) applyTier();
     if (rChanged || qChanged) timer.reset();
     return rChanged || qChanged;
@@ -808,6 +825,11 @@ export function createPerf({ renderer, scene, camera, atmo, post, sun, sunNear, 
         if (acc < budget * 0.94) return false;
         acc = 0;
       }
+      /* After the cap check, not before it: the drain has to land on a tick the
+         caller is actually going to render, or it reintroduces the black frame it
+         exists to remove — on a `return false` tick nothing draws. See
+         `pendingScale`. */
+      if (pendingScale) { pendingScale = false; applyScale(); }
       timer.begin();
       return true;
     },

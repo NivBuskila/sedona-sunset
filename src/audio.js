@@ -37,14 +37,13 @@
  * than a second wind that disagrees with the first.
  */
 import * as THREE from 'three';
+import { TONIGHT_HEADING } from './wind.js';
 
 const SEED = 0x5ed04a;
 
-/* World-space heading the wind blows *toward*, in radians, measured the same
-   way as WashPath: 0 means +Z, which is down-wash, away from the sun. So the
-   wind comes up the wash at your face and the drifted sand piles on the
-   up-wash faces of the clasts, which is what System 1 already drew. */
-const WIND_HEADING = 0.12;
+/* Tonight's wind, now imported rather than declared here and again in
+   atmosphere.js. See wind.js. The alias keeps every use below unchanged. */
+const WIND_HEADING = TONIGHT_HEADING;
 
 /* Half-width of the wash, used to turn lateral offset into "how close are the
    walls", which drives the wet/dry balance and the edge tones. Approximate on
@@ -2008,6 +2007,31 @@ export class Soundscape {
   }
 
   /**
+   * One hoof landing, called by the donkey's gait as it happens.
+   *
+   * This is the four-beat replacement for the self-clocked biped further down.
+   * The gait already computes the exact touchdown of a named limb, so nothing
+   * here re-derives a cadence — it only needs the player position, which the
+   * update loop parks in `_hoofSt`.
+   *
+   * `+0.02` rather than `now`: a Web Audio parameter written at the current time
+   * is racing the block the graph is already rendering, and losing that race
+   * truncates the attack. Twenty milliseconds is under the threshold at which a
+   * footfall reads as late against its picture and clear of the block boundary.
+   *
+   * @param {number} side  −1 left, +1 right
+   * @param {boolean} fore true for a front hoof
+   */
+  hoofFall(side, fore) {
+    /* Latches the fallback off on the first real hoof-fall rather than on a
+       constructor flag, so a Soundscape driven with no donkey keeps its boots. */
+    this.hoofDriven = true;
+    const s = this._hoofSt;
+    if (!s) return;                 /* no update() yet, so no position to place it at */
+    this._step(this.ctx.currentTime + 0.02, s.x, s.z, s.u, s.speed, { side, fore });
+  }
+
+  /**
    * One footstep.
    *
    * Level: these are the player's own boots a metre and a half from their ears,
@@ -2026,10 +2050,12 @@ export class Soundscape {
    * occasional outright hesitation. Every fourth step or so is a scuff rather
    * than a footfall, and one in ten kicks a stone loose.
    */
-  _step(t, x, z, u, speed) {
+  _step(t, x, z, u, speed, limb) {
     const r = this.erand;
     const gravel = this._surfaceAt(x, z, u);
-    const left = this.stepSide > 0;
+    /* With a limb given the caller is the donkey's gait and it says which hoof;
+       without one this is the original self-clocked biped. */
+    const left = limb ? limb.side < 0 : this.stepSide > 0;
     /* Real gait is asymmetric: one leg lands a little harder and a little
        brighter than the other, consistently, for as long as you watch. Widened,
        because at six and five per cent the difference was there in the code and
@@ -2037,8 +2063,25 @@ export class Soundscape {
        measured, which is the same as the two feet being one foot. The grain
        layer gets its own offset on top, so the difference is in the timbre and
        not only in the level. */
-    const legLvl = left ? 1.13 : 0.88;
-    const legTone = left ? 1.11 : 0.90;
+    let legLvl = left ? 1.13 : 0.88;
+    let legTone = left ? 1.11 : 0.90;
+    if (limb) {
+      /* Fore against hind. An equid carries roughly sixty per cent of its mass on
+         the forehand, so a front hoof lands harder and brighter than a back one
+         and the four beats are two pairs rather than four identical taps — which
+         is most of what makes the sequence audible as a walk rather than a
+         four-tap loop. */
+      legLvl *= limb.fore ? 1.16 : 0.84;
+      legTone *= limb.fore ? 1.06 : 0.94;
+      /* And a trim, on two counts. Four hooves fall per stride cycle where two
+         boots fell per stride, and the cycle is shorter, so beats arrive two to
+         three times as often and the old per-step level would pile up. The
+         perspective changed too: the doc above this method calls these "the
+         player's own boots a metre and a half from their ears", which was true of
+         the first-person walk it was written for and is not true of an animal
+         four metres away. */
+      legLvl *= 0.62;
+    }
     const vary = 0.66 + r() * 0.68;
     const load = clamp(speed / 1.6, 0.55, 1.5);
     const scuff = r() < 0.11;
@@ -2097,13 +2140,20 @@ export class Soundscape {
       }
     }
 
-    this.stepPan.pan.setValueAtTime(this.stepSide * (0.12 + r() * 0.12), t);
-    this.stepSide = -this.stepSide;
+    /* Pan from the limb that actually landed when there is one; only the
+       self-clocked biped alternates a side of its own. */
+    const panSide = limb ? limb.side : this.stepSide;
+    this.stepPan.pan.setValueAtTime(panSide * (0.12 + r() * 0.12), t);
+    if (!limb) this.stepSide = -this.stepSide;
     /* The scheduled times, so a measurement can tell the difference between a
        loose gait and a loose detector. An 8 ms envelope on a band-limited
        signal places a scuff's onset tens of milliseconds late, which inflates
        an interval spread that may be perfectly tight at the source. */
-    this.stepTimes.push({ t: +t.toFixed(4), scuff, left, gravel: +gravel.toFixed(3) });
+    /* `fore` too, so a probe can check the four-beat sequence and not just the
+       interval spread: a lateral-sequence walk has to read hind, fore, hind, fore
+       with the sides alternating in pairs. */
+    this.stepTimes.push({ t: +t.toFixed(4), scuff, left, gravel: +gravel.toFixed(3),
+      fore: limb ? !!limb.fore : null });
     if (this.stepTimes.length > 4096) this.stepTimes.splice(0, 2048);
     return scuff;
   }
@@ -2166,7 +2216,15 @@ export class Soundscape {
        depend on a player who has not decided to walk yet. Stride length rather
        than a timer, so cadence follows speed for free. */
     const speed = st.speed;
-    if (speed > 0.12) {
+    /* Where the hooves land is the gait's business, not ours, but where the
+       player *is* is only known here — so the position each hoof-fall needs is
+       parked for `hoofFall()` to pick up. */
+    this._hoofSt = { x: st.x, z: st.z, u, speed };
+    /* The self-clocked biped below is now a fallback. It still runs for anything
+       driving audio without a donkey — the offline renders and tools/audioprobe
+       among them — but the moment real hoof-falls start arriving it must stand
+       down, or the scene plays a set of boots underneath the animal as well. */
+    if (!this.hoofDriven && speed > 0.12) {
       const r = this.erand;
       const base = lerp(0.72, 0.98, clamp01((speed - 1.2) / 2.4));
       /* Jitter, a systematic left/right difference, and a slow drift. The
@@ -2213,7 +2271,7 @@ export function createAudio({ camera, canvas, path, seed } = {}) {
   const stub = {
     update() {},
     api: {
-      setEnabled() {}, gust() {}, coyote() {}, wren() {}, raven() {}, available: false,
+      setEnabled() {}, gust() {}, coyote() {}, wren() {}, raven() {}, hoof() {}, available: false,
       setMode() { return 'plain'; }, mode: 'plain', badWrites: 0, badInput: 0,
       wind: { heading: WIND_HEADING, dirX: Math.sin(WIND_HEADING), dirZ: Math.cos(WIND_HEADING), gust: 0, speed: 0, base: 0, hiss: 0, rush: 0 },
       windAt() { return { g: 0, heading: WIND_HEADING, dirX: 0, dirZ: 1, speed: 0, base: 0, bg: [0, 0, 0] }; },
@@ -2338,6 +2396,11 @@ export function createAudio({ camera, canvas, path, seed } = {}) {
       sc._scheduleSand(gu);
       return gu;
     },
+    /**
+     * A hoof has landed. Called from the donkey's gait every touchdown; the
+     * first call retires the self-clocked biped footsteps for good.
+     */
+    hoof(side, fore) { sc.hoofFall(side, fore); },
     /** Force a coyote bout now, for testing. */
     coyote() { return sc._fireCoyote(ctx.currentTime + 0.15, (Math.random() * 2 - 1) * Math.PI); },
     /** Force a canyon wren cascade now, for testing. */

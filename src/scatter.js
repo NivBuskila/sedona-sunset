@@ -23,10 +23,37 @@
  *
  * Everything is instanced — one draw call per (class, shape variant).
  */
-import * as THREE from 'three';
-import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
+import * as THREE from './three.js';
+/* ConvexGeometry is reached through `primeConvex` rather than imported.
+ *
+ * It is the one dependency in this file a worker cannot load: `three/addons/` is
+ * resolved by the document's import map, which workers do not inherit, and the
+ * addon's own source imports the bare specifier `three` internally — so even a
+ * direct URL would fail one level down. Left as a static import it would make
+ * this whole module unloadable off-thread, and the heavy generation in it is
+ * precisely what wants to run there.
+ *
+ * The single use below (clast variants) is main-thread work, so the binding is filled in once
+ * during boot and the worker never touches it. */
+let ConvexGeometry = null;
+
+/** Load the convex-hull addon. Main thread only, once, before realisation. */
+export async function primeConvex() {
+  if (!ConvexGeometry) {
+    ({ ConvexGeometry } = await import('three/addons/geometries/ConvexGeometry.js'));
+  }
+}
+
+/* A missing prime is a programming error, not a runtime condition, so it says so
+   rather than failing as `undefined is not a constructor` three frames down. */
+function convexOf(pts) {
+  if (!ConvexGeometry) throw new Error('primeConvex() must run before building clast variants');
+  return new ConvexGeometry(pts);
+}
 import { rng, fbm, clamp, mix } from './noise.js';
 import { SUN_DIR } from './sky.js';
+import { bake } from './bake.js';
+import { runStage } from './genpool.js';
 
 /* ── shapes ────────────────────────────────────────────────────────────── */
 
@@ -160,7 +187,7 @@ function angularClast(seed, flat, bevel) {
     const j = t * (0.99 + rand() * 0.24);
     pts.push(new THREE.Vector3(dx * j, dy * j, dz * j));
   }
-  const g = new ConvexGeometry(pts);
+  const g = convexOf(pts);
   addUV(g);
   addWhite(g);
   g.computeBoundingSphere();
@@ -551,8 +578,15 @@ const FAR_COL = MIX_TRANSPORTED.reduce((a, w, i) => (
   [a[0] + w * LITH[i][0], a[1] + w * LITH[i][1], a[2] + w * LITH[i][2]]
 ), [0, 0, 0]);
 
-export function buildScatter(terrain, tex) {
-  const path = terrain.path;
+/**
+ * The clast material, with its screen-footprint level of detail.
+ *
+ * Built per load rather than cached: a material is shaders, uniforms and texture
+ * references, none of which survive a trip through IndexedDB, and all of which
+ * are cheap to make. Lifted out of the placement pass unchanged, so a warm load —
+ * which does no placement at all — still gets the identical material.
+ */
+function clastMaterial(tex) {
   const mat = new THREE.MeshStandardMaterial({
     map: tex.clast.albedo,
     normalMap: tex.clast.normal,
@@ -1071,8 +1105,23 @@ export function buildScatter(terrain, tex) {
        * physically correct amount of violet for a rock that throws three
        * quarters of the blue away. */;
   };
+  return mat;
+}
 
-  const meshes = [];
+/**
+ * The placement pass: two and a quarter million stones sited, sorted, thinned,
+ * seated and tinted. Every rule in this file lives in here, and none of it is
+ * cheap — this is the longest stage of the boot by a wide margin.
+ *
+ * It produces data, not scene objects: packed instance arrays plus the list of
+ * scour hollows it registered on the terrain. No `tex`, no material, no meshes,
+ * so the whole thing can go through the bake store as typed arrays.
+ */
+function planScatter(terrain) {
+  const path = terrain.path;
+  const scours = [];
+
+  const plans = [];
   const q = {};
   const obj = new THREE.Object3D();
   const nrm = new THREE.Vector3();
@@ -1110,14 +1159,12 @@ export function buildScatter(terrain, tex) {
   const wedges = [];
 
   CLASSES.forEach((cl, ci) => {
-    const geoms = [];
-    for (let v = 0; v < cl.variants; v++) {
-      geoms.push(cl.kind === 'round'
-        ? roundedClast(cl.detail, 1.7 + v * 3.1, cl.flatten)
-        : angularClast(7717 + ci * 131 + v * 17, cl.flat, cl.bevel));
-    }
-
-    const buckets = geoms.map(() => []);
+    /* The variant geometries used to be built here. They are built by `clastGeom`
+       instead, from the same key the plan records, so that a warm load — which
+       never runs this loop — rebuilds them by exactly the same calls. Placement
+       never touched them; only the mesh assembly did. */
+    const buckets = [];
+    for (let v = 0; v < cl.variants; v++) buckets.push([]);
     const rand = rng(90210 + ci * 7717);
     let placed = 0, guard = 0;
     /* Where this class sits on the grain-size scale, 0 for granules and 1 for
@@ -1290,7 +1337,16 @@ export function buildScatter(terrain, tex) {
            The direction handed over is downstream, which is where the horseshoe
            opens and where the lifted sediment lands. */
         if (cl.excavate && rad >= 0.24 && bankF < 0.35) {
+          /* Registered on the live terrain *and* recorded, because both are
+             needed and for different reasons. The call has to happen now: the
+             stones placed after this one sample the dug bed. The record has to
+             exist because a warm load skips this loop entirely and the hollows
+             are not in any mesh — they live in the height field that the juniper,
+             the vegetation and the donkey's hooves read afterwards. Cache the
+             stones without the hollows and the scene looks right while the
+             player walks through the floor. */
           terrain.addScour(x, z, rad, -ux, -uz, rad * cl.excavate);
+          scours.push(x, z, rad, -ux, -uz, rad * cl.excavate);
         }
         /* ---- the fillet, which is the piece that was missing ----
          * There was an upstream wedge and a downstream tail already, and three
@@ -1347,7 +1403,7 @@ export function buildScatter(terrain, tex) {
 
     buckets.forEach((list, vi) => {
       if (!list.length) return;
-      meshes.push(makeMesh(geoms[vi], mat, list, cl.name + vi, cl.shadow));
+      plans.push(packMesh(`c${ci}:${vi}`, list, cl.name + vi, cl.shadow));
     });
   });
 
@@ -1357,7 +1413,6 @@ export function buildScatter(terrain, tex) {
      which is exactly where the eye goes — a faceted boulder ringed by eight
      smooth eggs reads as two different materials. */
   if (collars.length) {
-    const g = angularClast(5519, 0.58, 7);
     const rand = rng(31337);
     const list = [];
     for (const c of collars) {
@@ -1383,7 +1438,7 @@ export function buildScatter(terrain, tex) {
         r: cl0[0] * t * cfl, g: cl0[1] * t * cfl, b: cl0[2] * t * cfl,
       });
     }
-    meshes.push(makeMesh(g, mat, list, 'collar', false));
+    plans.push(packMesh('collar', list, 'collar', false));
   }
 
   /* banked wedges and depositional tails, in matrix colour */
@@ -1391,7 +1446,6 @@ export function buildScatter(terrain, tex) {
     /* Detail zero deliberately: a wedge of banked sand is a few centimetres proud
        and half buried, so twenty faces is all it can show, and at five thousand
        instances the difference is a third of a million triangles. */
-    const g = roundedClast(0, 8.9, 0.55);
     const rand = rng(60613);
     const list = [];
     for (const w of wedges) {
@@ -1419,10 +1473,10 @@ export function buildScatter(terrain, tex) {
         r: MATRIX_COL[0] * t * dr, g: MATRIX_COL[1] * t * dg, b: MATRIX_COL[2] * t * db,
       });
     }
-    meshes.push(makeMesh(g, mat, list, 'scour', false));
+    plans.push(packMesh('wedge', list, 'scour', false));
   }
 
-  return meshes;
+  return { plans, scours: new Float32Array(scours) };
 
   /* ── placement of one instance ── */
   function emit(cl, bucket, x, y, z, rad, lith, rand, th, n, bankF = 0, grad = 0) {
@@ -1810,29 +1864,157 @@ export function buildScatter(terrain, tex) {
     });
   }
 
-  function makeMesh(geom, material, list, name, shadow) {
-    const im = new THREE.InstancedMesh(geom, material, list.length);
-    const dust = new Float32Array(list.length);
-    const aoA = new Float32Array(list.length);
-    im.castShadow = shadow;
-    im.receiveShadow = true;
-    im.name = name;
+  /* Flattens one bucket of placed stones into the four typed arrays an
+     InstancedMesh actually needs, and names the geometry rather than holding it.
+     This used to build the mesh directly; it does not, because the arrays are
+     what the bake store can keep and the mesh is what has to be rebuilt per load.
+     The arithmetic per instance is unchanged, including the two defaults. */
+  function packMesh(geomKey, list, name, shadow) {
+    const n = list.length;
+    const matrix = new Float32Array(n * 16);
+    const color = new Float32Array(n * 3);
+    const dust = new Float32Array(n);
+    const aoA = new Float32Array(n);
     list.forEach((o, i) => {
       obj.position.set(o.x, o.y, o.z);
       obj.quaternion.copy(o.q);
       obj.scale.set(o.sx, o.sy, o.sz);
       obj.updateMatrix();
-      im.setMatrixAt(i, obj.matrix);
+      obj.matrix.toArray(matrix, i * 16);
       col.setRGB(o.r, o.g, o.b);
-      im.setColorAt(i, col);
+      color[i * 3] = col.r; color[i * 3 + 1] = col.g; color[i * 3 + 2] = col.b;
       dust[i] = o.dust || 0;
       aoA[i] = o.ao === undefined ? 0.86 : o.ao;
     });
-    geom.setAttribute('aDust', new THREE.InstancedBufferAttribute(dust, 1));
-    geom.setAttribute('aAO', new THREE.InstancedBufferAttribute(aoA, 1));
-    im.instanceMatrix.needsUpdate = true;
-    if (im.instanceColor) im.instanceColor.needsUpdate = true;
-    im.computeBoundingSphere();
-    return im;
+    return { name, shadow, geomKey, n, matrix, color, dust, ao: aoA };
   }
+}
+
+/* ── rebuilding, on both paths ───────────────────────────────────────────── */
+
+/**
+ * The one place a clast geometry is constructed, keyed by what the plan records.
+ * Cold and warm loads both come through here, so a variant cannot come back from
+ * the cache with a different shape than it was placed with — the key is the
+ * argument list.
+ */
+function clastGeom(key) {
+  if (key === 'collar') return angularClast(5519, 0.58, 7);
+  /* Detail zero deliberately: a wedge of banked sand is a few centimetres proud
+     and half buried, so twenty faces is all it can show, and at five thousand
+     instances the difference is a third of a million triangles. */
+  if (key === 'wedge') return roundedClast(0, 8.9, 0.55);
+  const [ci, vi] = key.slice(1).split(':').map(Number);
+  const cl = CLASSES[ci];
+  return cl.kind === 'round'
+    ? roundedClast(cl.detail, 1.7 + vi * 3.1, cl.flatten)
+    : angularClast(7717 + ci * 131 + vi * 17, cl.flat, cl.bevel);
+}
+
+/** One packed plan entry to a live InstancedMesh. */
+function realiseMesh(p, material) {
+  const geom = clastGeom(p.geomKey);
+  const im = new THREE.InstancedMesh(geom, material, p.n);
+  im.castShadow = p.shadow;
+  im.receiveShadow = true;
+  im.name = p.name;
+  /* Assigned rather than copied in: these are the arrays the plan carries, and on
+     a warm load they are the arrays that came out of IndexedDB. */
+  im.instanceMatrix = new THREE.InstancedBufferAttribute(p.matrix, 16);
+  im.instanceColor = new THREE.InstancedBufferAttribute(p.color, 3);
+  geom.setAttribute('aDust', new THREE.InstancedBufferAttribute(p.dust, 1));
+  geom.setAttribute('aAO', new THREE.InstancedBufferAttribute(p.ao, 1));
+  im.instanceMatrix.needsUpdate = true;
+  im.instanceColor.needsUpdate = true;
+  im.computeBoundingSphere();
+  return im;
+}
+
+/* ── the public entry point ──────────────────────────────────────────────── */
+
+/**
+ * The scatter, from cache when it can be.
+ *
+ * What is cached is the plan: the packed per-mesh instance arrays and the scour
+ * list. What is rebuilt every load is everything that cannot survive IndexedDB
+ * and costs nothing anyway — the material, the variant geometries, the meshes.
+ *
+ * The scour replay is the part worth being careful about. `planScatter` calls
+ * `terrain.addScour` as it goes, because a stone must sit on the bed the stones
+ * before it dug. On a warm load that loop never runs, and the hollows exist in no
+ * mesh — they are a spatial hash inside `Terrain` that `heightAtQ` folds in, and
+ * everything placed after the scatter reads it: the juniper, the vegetation, the
+ * donkey's hooves, and `applyScour`, which re-levels the terrain mesh. Restore
+ * the stones without the hollows and the scene would look correct while the
+ * player sank through the wash floor. So the list is replayed in the same order
+ * it was recorded, before this function returns and before any of those run.
+ */
+/* ── the placement plan, as a pure function ───────────────────────────────
+ *
+ * `Scattering the stones` is 18.2 s of the cold boot and none of it is geometry:
+ * `planScatter` decides where several thousand clasts sit, and the variants they
+ * instance are built elsewhere. So what this returns is matrices and colours —
+ * flattened for storage, because the store keeps typed arrays and one JSON blob
+ * rather than an array of objects holding arrays.
+ *
+ * Lifted out so a worker can run it, which is safe here for a reason that is
+ * worth being explicit about: `planScatter` *mutates* the terrain it is given,
+ * calling `addScour` as it places, because a stone has to sit on the bed the
+ * stones before it dug. A worker mutates its own reconstruction and that copy
+ * dies with the message — the hollows reach this thread only through `__scours`,
+ * replayed in recorded order by the caller below. That is not a new mechanism
+ * built for the worker: it is exactly the warm-load path, which has always had to
+ * restore hollows that `planScatter` never ran to create. The worker is a cache
+ * miss that happened somewhere else.
+ */
+export function scatterPlan(terrain) {
+  const { plans, scours } = planScatter(terrain);
+  const o = { __scours: scours, __meta: JSON.stringify(plans.map(
+    p => [p.name, p.shadow, p.geomKey, p.n])) };
+  plans.forEach((p, i) => {
+    o[`m${i}`] = p.matrix; o[`c${i}`] = p.color;
+    o[`d${i}`] = p.dust;   o[`a${i}`] = p.ao;
+  });
+  return o;
+}
+
+/* Start the plan without applying it.
+ *
+ * The split exists so the 18.2 s can overlap the rest of the boot while the part
+ * that *changes* this thread's terrain stays exactly where it was. Placement is
+ * order-independent — it reads a bed with no hollows in it, which is the only bed
+ * it has ever read — but the scour replay in `buildScatter` is not: the buttes,
+ * the talus, the far ridges and the terrain mesh all sample heights on this
+ * thread, and today they sample them before any hollow exists. Let the replay
+ * land early and they would sample a different bed, at a moment decided by how
+ * fast a worker happened to finish, which is a scene that differs between loads
+ * on the same machine. So this returns a promise and nothing else, and the caller
+ * awaits it at the point the sequence always reached the stones.
+ */
+export function startScatterPlan(terrain) {
+  return bake('scatter', async () => (await runStage('scatter')) || scatterPlan(terrain));
+}
+
+export async function buildScatter(terrain, tex, started) {
+  const plan = await (started || startScatterPlan(terrain));
+
+  /* Cold or warm, the hollows are registered from the recorded list. On a cold
+     load `planScatter` has already applied them — it had to, mid-placement — so
+     replaying would double every hollow. `resetScour` clears the hash first,
+     which makes this one code path instead of two and, more usefully, makes the
+     cold path prove the record is complete: if a hollow were missing from
+     `scours`, the cold load would show the defect too rather than hiding it
+     until someone reloaded. */
+  terrain.resetScour();
+  const sc = plan.__scours;
+  for (let i = 0; i < sc.length; i += 6) {
+    terrain.addScour(sc[i], sc[i + 1], sc[i + 2], sc[i + 3], sc[i + 4], sc[i + 5]);
+  }
+
+  const mat = clastMaterial(tex);
+  return JSON.parse(plan.__meta).map(([name, shadow, geomKey, n], i) => realiseMesh({
+    name, shadow, geomKey, n,
+    matrix: plan[`m${i}`], color: plan[`c${i}`],
+    dust: plan[`d${i}`], ao: plan[`a${i}`],
+  }, mat));
 }

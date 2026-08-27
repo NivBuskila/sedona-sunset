@@ -31,6 +31,7 @@
 import * as THREE from 'three';
 import { rng, fbm, ridged, clamp, smoothstep } from './noise.js';
 import { foliageTex, grassTex, scrubTex, succTex } from './plantex.js';
+import { bake } from './bake.js';
 import { cardTuft, makeFoliageMaterial, JUNIPER_XZ } from './juniper.js';
 import { meshStepX, meshStepZ } from './terrain.js';
 
@@ -1007,9 +1008,60 @@ export function planVegetation(path, terrain, rocks) {
   return { grass, shrub, pear, agave, mid, far };
 }
 
-export function buildVegetation(path, terrain, rocks) {
+/* ── the plan, through the bake store ──────────────────────────────────────
+ *
+ * `planVegetation` is the expensive half of this module: a candidate grid over the
+ * corridor plus a thirty-thousand-iteration loop over the far height field, and
+ * `terrain.heightAt` is the cost inside both. What comes out is six lists of
+ * placements, and every placement is the same ten numbers, so the whole plan packs
+ * into six `Float32Array`s and the store can hold it.
+ *
+ * Both arms pack and unpack, so a cold plan and a warm plan are the same objects
+ * to the bit — including the narrowing to `Float32`, which is not a loss anyone
+ * can see: every one of these numbers ends up in an `instanceMatrix` or an
+ * `instanceColor`, both of which are `Float32Array` already.
+ *
+ * Read-only, and that is what makes it cacheable at all. Unlike `buildScatter`,
+ * placement here registers nothing on the height field — it samples the terrain
+ * and the rocks and mutates neither — so skipping the loop leaves nothing behind
+ * that the ground or the player's feet would miss.
+ */
+const PLAN_TIERS = ['grass', 'shrub', 'pear', 'agave', 'mid', 'far'];
+const PLAN_FIELDS = ['x', 'y', 'z', 'rot', 'sx', 'sy', 'sz', 'r', 'g', 'b'];
+
+export async function bakedPlan(path, terrain, rocks) {
+  const W = PLAN_FIELDS.length;
+  const packed = await bake('vegetation.plan', () => {
+    const plan = planVegetation(path, terrain, rocks);
+    const o = {};
+    for (const tier of PLAN_TIERS) {
+      const list = plan[tier];
+      const a = new Float32Array(list.length * W);
+      /* `|| 0` because not every push sets `rot` — `instance` already reads it
+         that way, so this is the same default, applied one step earlier. */
+      list.forEach((p, i) => PLAN_FIELDS.forEach((f, j) => { a[i * W + j] = p[f] || 0; }));
+      o[tier] = a;
+    }
+    return o;
+  });
+
+  const out = {};
+  for (const tier of PLAN_TIERS) {
+    const a = packed[tier];
+    const list = new Array(a.length / W);
+    for (let i = 0; i < list.length; i++) {
+      const p = {};
+      for (let j = 0; j < W; j++) p[PLAN_FIELDS[j]] = a[i * W + j];
+      list[i] = p;
+    }
+    out[tier] = list;
+  }
+  return out;
+}
+
+export async function buildVegetation(path, terrain, rocks) {
   const out = [];
-  const { grass, shrub, pear, agave, mid, far } = planVegetation(path, terrain, rocks);
+  const { grass, shrub, pear, agave, mid, far } = await bakedPlan(path, terrain, rocks);
 
   const obj = new THREE.Object3D();
   const col = new THREE.Color();

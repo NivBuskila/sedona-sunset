@@ -20,6 +20,7 @@
  */
 import * as THREE from 'three';
 import { pnoise, rng, clamp, smoothstep, mix } from './noise.js';
+import { bake } from './bake.js';
 
 let maxAniso = 8;
 export function setPlantAnisotropy(n) { maxAniso = n; }
@@ -28,14 +29,87 @@ export function setPlantAnisotropy(n) { maxAniso = n; }
    built by two independent modules. Memoised so the second caller does not pay
    for a second identical canvas — and, more importantly, so the renderer sees
    one texture rather than two copies of it. */
+/* One table, so the size and the maker for a map are named once. The accessors
+   read it and so does `primePlantTextures`; when those were two separate lists a
+   cached map could have come back at a different resolution than a fresh one.
+   `kind` is declared rather than sniffed from the texture: `pair` is an
+   albedo/normal set through `dataTex`, `cutout` is one alpha-tested map with a
+   hand-built mip chain through `cutoutFrom`. A store that guesses which it is
+   holding is a store that will guess wrong once. */
+const PLANT_TEX = {
+  bark:  { kind: 'pair',   make: () => makeBark(512) },
+  dead:  { kind: 'pair',   make: () => makeDeadwood(512) },
+  succ:  { kind: 'pair',   make: () => makeSucculent(256) },
+  fol:   { kind: 'cutout', make: () => makeFoliage(512) },
+  grass: { kind: 'cutout', make: () => makeGrass(512) },
+  scrub: { kind: 'cutout', make: () => makeScrub(512) },
+};
+
 const _cache = new Map();
-const memo = (k, f) => { if (!_cache.has(k)) _cache.set(k, f()); return _cache.get(k); };
-export const barkTex = () => memo('bark', () => makeBark(512));
-export const deadTex = () => memo('dead', () => makeDeadwood(512));
-export const foliageTex = () => memo('fol', () => makeFoliage(512));
-export const grassTex = () => memo('grass', () => makeGrass(512));
-export const scrubTex = () => memo('scrub', () => makeScrub(512));
-export const succTex = () => memo('succ', () => makeSucculent(256));
+const memo = (k) => {
+  if (!_cache.has(k)) _cache.set(k, PLANT_TEX[k].make());
+  return _cache.get(k);
+};
+export const barkTex = () => memo('bark');
+export const deadTex = () => memo('dead');
+export const foliageTex = () => memo('fol');
+export const grassTex = () => memo('grass');
+export const scrubTex = () => memo('scrub');
+export const succTex = () => memo('succ');
+
+/**
+ * Fill the memo from the bake store, so the six accessors above stay synchronous.
+ *
+ * The alternative was making every accessor async, which would have pushed `await`
+ * through `buildJuniper` and `buildVegetation` and into every geometry helper that
+ * happens to want a material. Priming is one `await` at the call site instead, and
+ * after it the accessors are pure map reads — the same shape they already had for
+ * the second caller.
+ *
+ * Must run after `setPlantAnisotropy`: anisotropy is constructor policy here, not
+ * stored pixels, so a map built before the renderer's limit is known would be
+ * wrong in exactly the way the cache is supposed to be incapable of.
+ */
+export async function primePlantTextures() {
+  for (const k of Object.keys(PLANT_TEX)) {
+    if (!_cache.has(k)) _cache.set(k, await bakePlantTex(k));
+  }
+}
+
+/* Stores pixels only, and rebuilds through the same two constructors a cold load
+   uses. Both arms end at `dataTex`/`cutoutFrom`, so there is no field — wrapping,
+   filtering, colour space — that a warm map could differ in. */
+async function bakePlantTex(k) {
+  const { kind, make } = PLANT_TEX[k];
+  const packed = await bake(`plantex.${k}`, () => {
+    const made = make();
+    if (kind === 'pair') {
+      const { width: w, height: h } = made.albedo.image;
+      return {
+        albedo: made.albedo.image.data,
+        normal: made.normal.image.data,
+        __meta: JSON.stringify({ w, h }),
+      };
+    }
+    /* Every level travels. Level zero alone would mean re-running `coverageMips`,
+       whose per-level binary search for the alpha gain is the cost being avoided. */
+    const o = {};
+    const dims = made.mipmaps.map((m, i) => { o[`m${i}`] = m.data; return [m.width, m.height]; });
+    o.__meta = JSON.stringify({ dims });
+    return o;
+  });
+
+  const meta = JSON.parse(packed.__meta);
+  if (kind === 'pair') {
+    return {
+      albedo: dataTex(packed.albedo, meta.w, meta.h, true),
+      normal: dataTex(packed.normal, meta.w, meta.h, false),
+    };
+  }
+  return cutoutFrom(meta.dims.map(([width, height], i) => ({
+    data: packed[`m${i}`], width, height,
+  })));
+}
 
 /* ── anisotropic tiling noise ──────────────────────────────────────────────
    noise.js's pfbm shares one period between both axes, and bark is the most
@@ -528,9 +602,14 @@ function coverageMips(base, w, h, alphaTest) {
   return mips;
 }
 
-function cutoutTex(px, w, h, alphaTest) {
-  dilateRGB(px, w, h, 4);
-  const mips = coverageMips(px, w, h, alphaTest);
+/* The THREE object for a cut-out, given a finished mip chain.
+   Split out from `cutoutTex` so the bake store can hand back stored mip levels
+   through the identical constructor: the coverage rescale above is the expensive
+   part and the only part worth storing, and a second constructor kept in step
+   with this one by hand is a drift waiting to happen. Same reasoning textures.js
+   records for `dataTex`. */
+function cutoutFrom(mips) {
+  const { width: w, height: h } = mips[0];
   const t = new THREE.DataTexture(mips[0].data, w, h, THREE.RGBAFormat, THREE.UnsignedByteType);
   t.mipmaps = mips;
   t.generateMipmaps = false;
@@ -541,6 +620,11 @@ function cutoutTex(px, w, h, alphaTest) {
   t.colorSpace = THREE.SRGBColorSpace;
   t.needsUpdate = true;
   return t;
+}
+
+function cutoutTex(px, w, h, alphaTest) {
+  dilateRGB(px, w, h, 4);
+  return cutoutFrom(coverageMips(px, w, h, alphaTest));
 }
 
 function canvas2d(w, h) {

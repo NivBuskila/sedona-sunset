@@ -15,7 +15,7 @@
  * mean axis — so that new ground opens up as you walk without the sun ever
  * swinging out of the corridor.
  */
-import * as THREE from 'three';
+import * as THREE from './three.js';
 
 const CTRL = [
   [0, 20], [0.5, 8], [3.5, -16], [1.0, -44], [-5.0, -70], [-9.0, -96],

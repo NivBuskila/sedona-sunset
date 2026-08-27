@@ -1,6 +1,6 @@
 /* Sedona Sunset — System 1: terrain and the wash path.
  *
- * Boots the scene, wires first-person walking, and exposes the `window.__game`
+ * Boots the scene, wires third-person walking, and exposes the `window.__game`
  * capture surface that CONTRACT.md specifies.
  *
  * Determinism note, because it is the thing that is easy to break: the render
@@ -18,20 +18,26 @@ import { buildScatter } from './scatter.js';
 import { buildWalls, buildDistantButtes, buildTalus, makeRockMaterial } from './rock.js';
 import { buildFarRidges } from './farridge.js';
 import { buildSky, buildLights, makeShadowRig, FOG, EXPOSURE } from './sky.js';
-import { buildJuniper } from './juniper.js';
+import { buildJuniper, JUNIPER_XZ } from './juniper.js';
+import { bakeLog, clearBake } from './bake.js';
+import { primeConvex as primeRockConvex } from './rock.js';
+import { primeConvex as primeClastConvex } from './scatter.js';
+import { startScatterPlan } from './scatter.js';
+import { genLog } from './genpool.js';
 import { buildVegetation } from './vegetation.js';
-import { setPlantAnisotropy } from './plantex.js';
+import { setPlantAnisotropy, primePlantTextures } from './plantex.js';
 import {
   makeDirt, makeSand, makeRock, makeGrit, makeClastSurface, makeMacro, makeVariance,
-  makeCracks, setAnisotropy,
+  makeCracks, setAnisotropy, bakeTexture,
 } from './textures.js';
 import { createAudio } from './audio.js';
 import { installAerial } from './aerial.js';
 import { buildAtmosphere } from './atmosphere.js';
 import { createPerf } from './perf.js';
 import { createPost } from './post.js';
+import { buildDonkey } from './donkey.js';
+import { setDonkeyAnisotropy } from './donkeytex.js';
 
-const EYE = 1.65;
 const DEG = Math.PI / 180;
 
 /* ── the loading screen ────────────────────────────────────────────────────
@@ -216,38 +222,79 @@ camera.rotation.order = 'YXZ';
  * it buys is a tab that repaints and answers the compositor between phases
  * instead of one that Chrome offers to kill. Nothing about the order changes.
  *
- * Deliberately *not* an attempt to move generation into workers. Every one of
- * these hands back a live THREE object built against this context.
+ * The generation itself now happens in workers where it can (see genpool.js);
+ * what stays here is the part that must, which is every live THREE object built
+ * against this context — materials, meshes, textures. The awaits still mark the
+ * phases, and the order in which the scene is assembled is unchanged.
  */
 
-/* Split one texture per yield rather than built as one object literal, because
-   this block is the longest stall in the boot by a wide margin and an
-   unbroken one is a tab that cannot answer for twenty seconds. The two 1024s
-   are most of it. Same calls, same order, same textures. */
-const tex = {};
-await loading.note('Drawing the wash floor…');
-tex.dirt = makeDirt(1024);
-await loading.note('Drawing sand…');
-tex.sand = makeSand(512);
-await loading.note('Drawing sandstone…');
-tex.rock = makeRock(1024);
-await loading.note('Drawing grit…');
-/* The footprint-locked detail layer. Small, because it carries no low
-   frequencies — see makeGrit for why that is the property that lets rock.js
-   read it at whatever scale a pixel happens to be. */
-tex.grit = makeGrit(256);
-await loading.note('Drawing gravel…');
-tex.clast = makeClastSurface(512);
-await loading.note('Weathering it…');
-tex.macro = makeMacro(512);
-tex.variance = makeVariance(512);
-tex.crack = makeCracks(512);
+/* All eight maps at once.
+ *
+ * They were written one per yield, because the block was the longest stall in the
+ * boot and an unbroken one is a tab that cannot answer. That reason is gone: the
+ * arithmetic is in workers now, so the stall it was breaking up is not on this
+ * thread to break up. And the eight are mutually independent — each a pure
+ * function of a size, sharing no state and needing no order — so what was a
+ * sequence of eight waits is one wait as long as the slowest of them. The two
+ * 1024s (the wash floor and the sandstone) are most of it and now overlap.
+ *
+ * `tex` is assembled from the results rather than field by field, so the object
+ * this hands on is identical to the one the sequence built. The narration below
+ * announces the phase instead of each map, which is what the loading screen can
+ * honestly say about work that is all happening at the same time.
+ *
+ * The footprint-locked grit map stays small on purpose: it carries no low
+ * frequencies, which is what lets rock.js read it at whatever scale a pixel
+ * happens to be. See makeGrit.
+ */
+await loading.note('Drawing the rock and the sand…');
+const [dirt, sand, rock, grit, clast, macro, variance, crack] = await Promise.all([
+  bakeTexture('tex-dirt', () => makeDirt(1024)),
+  bakeTexture('tex-sand', () => makeSand(512)),
+  bakeTexture('tex-rock', () => makeRock(1024)),
+  bakeTexture('tex-grit', () => makeGrit(256)),
+  bakeTexture('tex-clast', () => makeClastSurface(512)),
+  bakeTexture('tex-macro', () => makeMacro(512)),
+  bakeTexture('tex-variance', () => makeVariance(512)),
+  bakeTexture('tex-crack', () => makeCracks(512)),
+]);
+const tex = { dirt, sand, rock, grit, clast, macro, variance, crack };
 
 await loading.note('Cutting the wash…');
 
 const path = new WashPath();
 const terrain = new Terrain(path);
-const terrainMesh = buildTerrainMesh(terrain, makeTerrainMaterial(tex));
+
+/* ── the heavy phases, started together ───────────────────────────────────
+ *
+ * Cutting the wash, raising the walls and scattering the stones are 52 s of the
+ * 68 s cold boot, and none of the three needs anything the other two produce:
+ * each samples the same read-only analytic terrain. Run one after another they
+ * cost their sum, which is what every boot before this one paid.
+ *
+ * So they are started here, as soon as `path` and `terrain` exist, and awaited
+ * further down at the exact points the sequence always reached them. Nothing
+ * about the order in which results are *applied* changes — the scene is
+ * assembled in the same order, from the same arrays — and the loading screen
+ * still narrates the phases, though it now narrates work already in flight.
+ *
+ * The one asymmetry is the stones, and it is deliberate: `startScatterPlan`
+ * computes the placement but does not touch this thread's terrain, because the
+ * hollows it records have to be replayed after the buttes, the talus and the far
+ * ridges have sampled the bed. See startScatterPlan for what goes wrong if that
+ * replay lands early.
+ *
+ * The convex-hull addon is primed alongside them: it cannot be loaded inside a
+ * worker (see rock.js), it is needed by the talus and the clast variants, and
+ * fetching it while the workers grind costs nothing.
+ */
+const rockMat = makeRockMaterial(tex);
+const terrainMeshP = buildTerrainMesh(terrain, makeTerrainMaterial(tex));
+const wallsP = buildWalls(path, terrain, rockMat);
+const scatterPlanP = startScatterPlan(terrain);
+const convexP = Promise.all([primeRockConvex(), primeClastConvex()]);
+
+const terrainMesh = await terrainMeshP;
 scene.add(terrainMesh);
 
 await loading.note('Raising the canyon walls…');
@@ -256,11 +303,11 @@ await loading.note('Raising the canyon walls…');
    height field cannot draw a cliff — so it arrives as its own meshes: two wall
    curtains, a set of discrete distant buttes for the aerial perspective to layer,
    and the coarse talus at the junction between the two. */
-const rockMat = makeRockMaterial(tex);
+await convexP;
 const rocks = [
-  ...buildWalls(path, terrain, rockMat),
-  ...buildDistantButtes(terrain, rockMat),
-  ...buildTalus(path, terrain, rockMat),
+  ...await wallsP,
+  ...await buildDistantButtes(terrain, rockMat),
+  ...await buildTalus(path, terrain, rockMat),
 ];
 for (const m of rocks) scene.add(m);
 
@@ -277,7 +324,7 @@ scene.add(farRidges);
 
 await loading.note('Scattering the stones…');
 
-const clasts = buildScatter(terrain, tex);
+const clasts = await buildScatter(terrain, tex, scatterPlanP);
 /* The boulders dig hollows the mesh was built too early to know about. */
 applyScour(terrainMesh, terrain);
 for (const m of clasts) scene.add(m);
@@ -287,8 +334,12 @@ for (const m of clasts) scene.add(m);
 await loading.note('Growing the juniper…');
 
 setPlantAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
-for (const m of buildJuniper(terrain, tex)) scene.add(m);
-for (const m of buildVegetation(path, terrain, rocks)) scene.add(m);
+/* Bark, foliage, grass, scrub and succulent maps, from the bake store. After this
+   the plantex accessors are synchronous map reads, so the two builders below are
+   untouched. Ordered after setPlantAnisotropy, which is constructor policy. */
+await primePlantTextures();
+for (const m of await buildJuniper(terrain, tex)) scene.add(m);
+for (const m of await buildVegetation(path, terrain, rocks)) scene.add(m);
 
 /* The clast material needs the viewport height to turn an instance's world radius
    into a projected pixel radius, which is what drives its level of detail. */
@@ -328,6 +379,38 @@ syncWind(terrainMesh.material, audio.api);
    collision against the wall mesh, and for how its width is read out of the
    cross-section instead of being a number somebody chose. */
 const corridor = buildCorridor(path, terrain);
+
+/* The donkey the third-person camera follows. Every map on it is written at boot
+   like the rest of the scene's textures; see donkeytex.js. */
+setDonkeyAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
+/* The gait drives the footstep voice: four hooves, in the order they actually
+   land, instead of the two self-clocked boots audio.js was written for when this
+   was a first-person walk. audio.api is a working stub when there is no
+   AudioContext, so this needs no guard. */
+/* What the animal notices on the way up, in world coordinates. The list lives
+   here because this is the only file that knows where the scene put anything —
+   donkey.js gets the points and knows nothing about junipers. Two landmarks and
+   no more: attention that lands on everything is attention that reads as a scan,
+   and each of these is something a critic could stand next to and check.
+     · The hero juniper — the one object on the route with a trunk, and the thing a
+       real animal in a dry wash would actually check.
+     · The headwall at the top, which is the arrival. The walk already eases the
+       *view* up twelve degrees over the last forty-five metres; the animal looking
+       into the box canyon before the player's eye gets there is the same beat,
+       told by the character instead of by the camera.
+   `y` is a height above the hooves, so the glance at the tree is level and the one
+   at the headwall is upward. */
+const interest = [
+  { label: 'juniper', x: JUNIPER_XZ.x, z: JUNIPER_XZ.z, y: 3.4, r: 26, hold: 34 },
+  { label: 'headwall', ...(() => { const p = path.posAt(path.length - 6); return { x: p.x, z: p.z }; })(),
+    y: 12, r: 42, hold: 52 },
+];
+
+const donkey = buildDonkey(sun, {
+  onHoof: (side, fore) => audio.api.hoof(side, fore),
+  interest,
+});
+scene.add(donkey.group);
 
 const player = {
   x: 0, y: 0, z: 0,
@@ -369,9 +452,67 @@ function placeAt(d) {
   lifted = 0;
 }
 
+/* Over-the-shoulder third-person camera: sits a little above and behind the
+   walker along the current yaw and looks at their upper back, with the aim
+   point pushed ahead of them so the figure sits low and off-centre in frame and
+   the wash ahead gets the rest of it.
+ *
+ * The distance is the whole decision. The previous rig sat sixteen metres up,
+ * which put the figure at forty-odd pixels and made the scene read as a map;
+ * a shoulder camera at four metres is close enough that the walker is a body
+ * with a gait, while still showing enough corridor ahead to walk by. The
+ * shoulder offset is what keeps the head from sitting dead centre and occluding
+ * the path the player is steering into.
+ *
+ * Clamped above the terrain so bends in the corridor cannot bury it inside a
+ * cliff — the same guard the top-down rig needed, and more important here,
+ * because at four metres the camera is inside the canyon rather than above it. */
+/* Set out for a 1.26 m animal that is 1.9 m long, rather than for the 1.74 m
+   figure this followed before: a quadruped needs more distance to sit in frame
+   and a lower aim point, because its mass is a horizontal barrel at back height
+   and not a head on top of a column. */
+const CAM_DIST = 5.40;     // metres from the aim point to the lens
+const CAM_SIDE = 0.60;     // offset across the view, so the animal sits off-centre
+const CAM_LOOK_Y = 1.08;   // aim at the back, a little behind the withers
+const CAM_PITCH = 0.16;    // radians of downtilt added to the player's own pitch
+/* Last frame's dt, so the gait advances in real time. Assigned in `frame`; the
+   initialiser is what a directly-driven `renderOnce` (the capture harness, which
+   never starts the loop) gets, and at rest the gait ignores it entirely. */
+let gaitDt = 0.016;
 function syncCamera() {
-  camera.position.set(player.x, player.y + EYE + player.bob - player.settle, player.z);
-  camera.rotation.set(player.pitch, -player.yaw, 0, 'YXZ');
+  /* The hooves, and `settle` is subtracted for the same reason the eye used to
+     take it: the landing dip is the legs giving, so the animal goes down with
+     the view rather than the view sinking through a rigid body. */
+  donkey.update(player.x, player.y - player.settle, player.z, player.yaw,
+                Math.hypot(player.vx, player.vz), gaitDt);
+
+  /* The aim point rides the back, offset to one side so the animal sits
+     off-centre and leaves the corridor ahead unoccluded. */
+  const s = Math.sin(player.yaw), c = Math.cos(player.yaw);
+  const tx = player.x + c * CAM_SIDE;
+  const ty = player.y + CAM_LOOK_Y - player.settle;
+  const tz = player.z + s * CAM_SIDE;
+
+  /* Orbit the aim point along the *view* direction, so pitch stays a single
+     quantity shared with the first-person build: the mouse, `lookAt` and the
+     arrival lift all still write `player.pitch` and all still mean the same
+     thing by it. The top-down rig this replaces ignored pitch outright, which
+     silently disabled mouse-Y, every `lookAt` pitch the harness passes, and the
+     whole arrival lift. */
+  const pitch = Math.max(-1.45, Math.min(1.45, player.pitch - CAM_PITCH));
+  const cp = Math.cos(pitch);
+  const fx = s * cp, fy = Math.sin(pitch), fz = -c * cp;
+
+  let cx = tx - fx * CAM_DIST;
+  let cy = ty - fy * CAM_DIST;
+  let cz = tz - fz * CAM_DIST;
+  /* Clamped above the terrain, as the old rig was and for the same reason —
+     more pressing here, because at four metres the lens is down inside the
+     canyon rather than above it, and a bend can otherwise put it in a cliff. */
+  const g = groundAt(cx, cz);
+  if (cy < g + 0.55) cy = g + 0.55;
+  camera.position.set(cx, cy, cz);
+  camera.lookAt(tx, ty, tz);
 }
 
 /* Both cascade cameras ride with the player, each quantised to its own texel
@@ -865,6 +1006,7 @@ function frame(t) {
   if (paused) { last = t; return; }
   const dt = Math.min(0.05, (t - last) / 1000 || 0.016);
   last = t;
+  gaitDt = dt;   // syncCamera drives the donkey's gait with it, from renderOnce
   /* The governor owns the frame cap, the GPU timer bracket and the adaptive
      tier. It returns false only when an explicit #fps cap says this rAF tick is
      not owed a frame — uncapped, which is the default, it is always true, so
@@ -971,13 +1113,29 @@ const api = {
      head bob as a 1.6 s hop because the bob is bigger than the threshold. The
      state is not a proxy and cannot be fooled by either. */
   _player: player,
+  /* The donkey, so a probe can drive `update()` at a chosen dt and check the
+     gait directly. It cannot be checked through the frame loop: software
+     rasterising this scene runs near one frame a second, which is longer than a
+     whole stride cycle, so every hoof-fall but one is skipped and the sequence
+     never appears. Reaching the gait is the only way to measure it. */
+  _donkey: donkey,
   _scene: scene, _camera: camera, _terrain: terrain, _path: path, _atmo: atmo,
   _post: post,
   /* When the loading message reached the screen, how long each generation phase
      blocked for, and the worst of them. tools/_bootpaint.mjs reads it; nothing
      in the contract surface does. */
   _boot: loading.log,
+  _bake: bakeLog,
+  /* Whether the heavy stages actually ran off-thread; see genpool.js. A stage
+     that silently fell back to the main thread is invisible without this. */
+  _gen: genLog,
+  _clearBake: clearBake,
+  /* The generated texture set, so a probe can hash the actual texels a cold and
+     a warm load produced. That comparison is the only evidence the bake store is
+     returning the same pixels rather than merely returning quickly. */
+  _tex: tex,
   _corridor: corridor,
+  _donkey: donkey,
   _instances: clasts.reduce((n, m) => n + m.count, 0),
 };
 

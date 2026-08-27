@@ -29,10 +29,13 @@
  *           needs to know it, and a wash floor combed at one pitch from bank to
  *           bank is the corduroy this has twice been criticised for.
  */
-import * as THREE from 'three';
+import * as THREE from './three.js';
 import { fbm, ridged, clamp, smoothstep, mix } from './noise.js';
 import { SUN_DIR, SUN_EL } from './sky.js';
 import { DIRT_RELIEF_K } from './textures.js';
+import { TONIGHT_HEADING } from './wind.js';
+import { bake } from './bake.js';
+import { runStage, poolWidth } from './genpool.js';
 
 /* The grain bed's depth, from the one place it is stated. 25 mm per height unit
    times K. Both the sun's climb through the height field and the geometric
@@ -74,7 +77,8 @@ const CHAN_W = 9.5;
    on nothing, which is what a first pass at 9.5 did. */
 const BREACH_W = 11.0;
 
-const TONIGHT_FALLBACK = 0.12;
+/* The fourth and last copy of the 0.12 literal, now imported like the rest. */
+const TONIGHT_FALLBACK = TONIGHT_HEADING;
 
 /* Scour hollow geometry. SC_IN is where the stone's own footing ends and the pit
    begins, SC_OUT where the pit dies, both in radii of the stone. SC_CELL is the
@@ -277,6 +281,17 @@ export class Terrain {
       }
     }
   }
+
+  /**
+   * Drops every registered hollow.
+   *
+   * Exists for the bake store: `buildScatter` registers hollows during placement
+   * because the stones need them, then replays them from its record so that a
+   * warm load — which does no placement — ends with the same height field. This
+   * clears the hash between those two, so the replay is the only thing that ever
+   * populates it and the cold and warm paths cannot drift apart.
+   */
+  resetScour() { this._scour = null; }
 
   /** Signed height delta from every registered hollow. Negative is excavated. */
   scourAt(x, z) {
@@ -1124,7 +1139,142 @@ function axis(segments, outMin, outMax, growth) {
 
 /* ── mesh ──────────────────────────────────────────────────────────────── */
 
-export function buildTerrainMesh(terrain, material) {
+/* ── the mesh arrays, as a pure function ──────────────────────────────────
+ *
+ * Lifted out of `buildTerrainMesh` so that something other than the main thread
+ * can run it: this is the `Cutting the wash` phase, 13.7 s and a fifth of the
+ * cold boot, and it is the largest piece of the wait that touches no GPU object
+ * at all — one `heightAtQ` per vertex, in and out through plain typed arrays.
+ *
+ * Being a free function of `terrain` rather than a closure is the whole point.
+ * Everything it reads is either an argument or a module constant, and every
+ * number in it comes from `hash2`, which is stateless, or from `rng(seed)`, which
+ * takes its seed explicitly — so a fresh `new Terrain(new WashPath())` built
+ * anywhere computes bit for bit what this one does. That is what makes it safe to
+ * hand to a worker (see genworker.js) and what makes the worker's output and the
+ * main thread's interchangeable rather than merely similar.
+ *
+ * The grid is deliberately *not* an argument. `X_AXIS` and `Z_AXIS` are module
+ * constants, so the worker gets the same sampling by importing this file rather
+ * than by being told, and there is no second copy of the axes to fall out of step
+ * with `assertBandLimits`.
+ */
+/**
+ * The per-vertex arrays for a band of rows, `[j0, j1)`.
+ *
+ * The band is the unit of work rather than the whole grid because this sampling is
+ * the largest single stage in the boot and it parallelises exactly: a row depends
+ * on nothing but its own z. `path.atZ` is a pure query, `heightAtQ` is analytic
+ * over seeded noise, and no row reads another's output. So N bands sampled on N
+ * threads and laid end to end are the same bytes as one pass over the grid — see
+ * genTerrainMesh, which is where they are laid.
+ *
+ * The band's arrays are its rows only, indexed from zero. Row-major layout is what
+ * makes the concatenation trivial: a band's rows are already contiguous in the
+ * full array, so joining is a copy at an offset and never a re-index.
+ */
+export function terrainMeshBand(terrain, j0, j1) {
+  const xs = X_AXIS, zs = Z_AXIS;
+  const nx = xs.length;
+  const count = nx * (j1 - j0);
+
+  const pos = new Float32Array(count * 3);
+  const ref = new Float32Array(count);
+  const pan = new Float32Array(count);
+  const wall = new Float32Array(count);
+  const sheet = new Float32Array(count);
+  const flow = new Float32Array(count);
+  const q = {};
+
+  for (let j = j0; j < j1; j++) {
+    const z = zs[j];
+    terrain.path.atZ(z, q);
+    const row = (j - j0) * nx;
+    for (let i = 0; i < nx; i++) {
+      const x = xs[i];
+      const k = row + i;
+      const o = k * 3;
+      pos[o] = x;
+      pos[o + 1] = terrain.heightAtQ(x, z, q);
+      pos[o + 2] = z;
+      ref[k] = terrain.oRef;
+      pan[k] = terrain.oPan;
+      wall[k] = terrain.oWall;
+      sheet[k] = terrain.oSheet;
+      flow[k] = terrain.oFlow;
+    }
+  }
+  return { pos, ref, pan, wall, sheet, flow };
+}
+
+/* The triangle list. Pure index arithmetic over the grid — no sampling, tens of
+   milliseconds — so it is built wherever the mesh is assembled rather than split
+   into bands or shipped across a thread boundary. */
+export function terrainIndices() {
+  const nx = X_AXIS.length, nz = Z_AXIS.length;
+  const idx = new Uint32Array((nx - 1) * (nz - 1) * 6);
+  let p = 0;
+  for (let j = 0; j < nz - 1; j++) {
+    for (let i = 0; i < nx - 1; i++) {
+      const a = j * nx + i, b = a + 1, c = a + nx, d = c + 1;
+      idx[p++] = a; idx[p++] = c; idx[p++] = b;
+      idx[p++] = b; idx[p++] = c; idx[p++] = d;
+    }
+  }
+  return idx;
+}
+
+/* The whole grid in one pass, for the single-threaded path. */
+export function terrainMeshArrays(terrain) {
+  return { ...terrainMeshBand(terrain, 0, Z_AXIS.length), idx: terrainIndices() };
+}
+
+/* The arrays, sampled as one band per worker and laid end to end.
+ *
+ * This was the largest single stage in the boot — 13.7 s of one thread — and
+ * unlike the stones it divides without changing anything, because a row of
+ * vertices is a function of its own z and nothing else. Split `poolWidth` ways it
+ * costs the same CPU and a quarter of the wait.
+ *
+ * The fallback is per band rather than for the whole stage: a band the pool could
+ * not take is sampled here, next to the ones it did, instead of throwing away good
+ * bands to redo the grid locally. A machine with no workers at all takes this path
+ * for every band and has simply run `terrainMeshArrays` in pieces — the same rows
+ * in the same order, which is the property that makes any mix of the two arms
+ * produce identical bytes.
+ *
+ * Bands are cut on row boundaries and joined at a vertex offset, never re-indexed,
+ * so no seam exists to get wrong: the triangle list is built once here, over the
+ * full grid, and never travels. */
+async function genTerrainMesh(terrain) {
+  const nz = Z_AXIS.length;
+  const cuts = [];
+  for (let b = 0; b < poolWidth; b++) {
+    cuts.push([Math.floor((b * nz) / poolWidth), Math.floor(((b + 1) * nz) / poolWidth)]);
+  }
+  const bands = await Promise.all(cuts.map(async ([j0, j1]) =>
+    (await runStage('terrain-band', { j0, j1 })) || terrainMeshBand(terrain, j0, j1)));
+
+  const nx = X_AXIS.length;
+  const count = nx * nz;
+  const out = {
+    pos: new Float32Array(count * 3),
+    ref: new Float32Array(count),
+    pan: new Float32Array(count),
+    wall: new Float32Array(count),
+    sheet: new Float32Array(count),
+    flow: new Float32Array(count),
+    idx: terrainIndices(),
+  };
+  cuts.forEach(([j0], b) => {
+    const at = j0 * nx;
+    out.pos.set(bands[b].pos, at * 3);
+    for (const k of ['ref', 'pan', 'wall', 'sheet', 'flow']) out[k].set(bands[b][k], at);
+  });
+  return out;
+}
+
+export async function buildTerrainMesh(terrain, material) {
   /* Graded in several steps rather than two. A step size that jumps from 0.20 to
      0.34 at a single column leaves a crease along that column — a dead straight
      line in world space, and the one thing a landscape never contains is a dead
@@ -1150,42 +1300,16 @@ export function buildTerrainMesh(terrain, material) {
 
   const nx = xs.length, nz = zs.length;
   const count = nx * nz;
-  const pos = new Float32Array(count * 3);
-  const ref = new Float32Array(count);
-  const pan = new Float32Array(count);
-  const wall = new Float32Array(count);
-  const sheet = new Float32Array(count);
-  const flow = new Float32Array(count);
-  const q = {};
-
-  for (let j = 0; j < nz; j++) {
-    const z = zs[j];
-    terrain.path.atZ(z, q);
-    const row = j * nx;
-    for (let i = 0; i < nx; i++) {
-      const x = xs[i];
-      const k = row + i;
-      const o = k * 3;
-      pos[o] = x;
-      pos[o + 1] = terrain.heightAtQ(x, z, q);
-      pos[o + 2] = z;
-      ref[k] = terrain.oRef;
-      pan[k] = terrain.oPan;
-      wall[k] = terrain.oWall;
-      sheet[k] = terrain.oSheet;
-      flow[k] = terrain.oFlow;
-    }
-  }
-
-  const idx = new Uint32Array((nx - 1) * (nz - 1) * 6);
-  let p = 0;
-  for (let j = 0; j < nz - 1; j++) {
-    for (let i = 0; i < nx - 1; i++) {
-      const a = j * nx + i, b = a + 1, c = a + nx, d = c + 1;
-      idx[p++] = a; idx[p++] = c; idx[p++] = b;
-      idx[p++] = b; idx[p++] = c; idx[p++] = d;
-    }
-  }
+  /* One `heightAtQ` per vertex is the `Cutting the wash` phase of the boot and
+     measured 13.7 s of it, which is a fifth of the whole wait — and it computes
+     the same numbers every time, because the field is analytic and every noise
+     term in it is a seeded stream. So the arrays are cached between visits; see
+     bake.js for the fingerprint that stops a stale bed outliving the code that
+     generated it, and for why a cache failure costs nothing but the wait.
+     `assertBandLimits` stays outside, above: it is a guard on the sampling grid
+     rather than a producer, and it has to fire on a cache hit too. */
+  const { pos, ref, pan, wall, sheet, flow, idx } =
+    await bake('terrain-mesh', () => genTerrainMesh(terrain));
 
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -1249,7 +1373,8 @@ uniform vec3  uSilt;
 uniform vec3  uStone;
 uniform vec2  uSunStep;   // dirt-tile UV travelled per metre along the sun azimuth
 uniform float uSunRise;   // grain-height units gained per metre along it
-uniform vec2  uWind;      // the shared WIND, the direction the wind blows toward
+uniform vec2  uWind;      // TONIGHT's wind (not the juniper's prevailing lean),
+                          // the direction it blows toward; see syncWind + wind.js
 uniform float uBedT;
 varying vec3 vWPos;
 varying vec3 vWNrm;
