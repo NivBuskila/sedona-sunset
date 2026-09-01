@@ -125,7 +125,7 @@ function coatHeight(size, seed) {
    reads as a silhouette rather than an animal.
    0.315 is the light end of the same real range, which is the honest place to sit
    for an animal that is backlit for most of the traverse. */
-const DUN = [0.315, 0.298, 0.288];    // body grey, faintly warm
+const DUN = [0.420, 0.130, 0.095];    // body red, kept near the same overall reflectance
 const DARK = [0.108, 0.096, 0.092];   // stripes, mane, tail tuft, lower legs
 const PALE = [0.620, 0.590, 0.545];   // muzzle, belly, eye rings
 
