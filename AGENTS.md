@@ -35,3 +35,8 @@ Then open port 3000. The page will show a black screen with loading messages for
 - **No build step**: Plain ES modules with an importmap pulling Three.js from CDN.
 - **No external services or secrets needed** — everything is client-side.
 - The dev server is a minimal Node.js HTTP static file server in `tools/serve.mjs`.
+
+## The obstacle course (`src/obstacles.js`)
+- Stations are authored in the wash frame `(s, u)` in `COURSE`; `expand()` turns rows/fields/chutes into plain solids. Collision runs from `step()` in main.js after the position integrate and before the ground clamp, on the pre-clamp `player.y`.
+- Low trunks (`log`) are cleared by any hop (`player.air`) — the feet leave the ground below the trunk's top, so a feet-above-top test alone made every hop a stumble. Boulders and cairns are always taller than the 0.45 m apex and only push you round.
+- Probe: `window.__game._obstacles.count`; walk with synthetic `KeyW`/`Space` events and read `_path.atZ(_donkey.group.position.z).s`. A walk from s=22 stops at ~25.7 before the first trunk and passes it after a hop.

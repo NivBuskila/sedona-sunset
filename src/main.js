@@ -37,6 +37,7 @@ import { createPerf } from './perf.js';
 import { createPost } from './post.js';
 import { buildDonkey } from './donkey.js';
 import { setDonkeyAnisotropy } from './donkeytex.js';
+import { buildObstacles } from './obstacles.js';
 
 const DEG = Math.PI / 180;
 
@@ -340,6 +341,13 @@ setPlantAnisotropy(Math.min(8, renderer.capabilities.getMaxAnisotropy()));
 await primePlantTextures();
 for (const m of await buildJuniper(terrain, tex)) scene.add(m);
 for (const m of await buildVegetation(path, terrain, rocks)) scene.add(m);
+
+/* The obstacle course: trunks to hop and boulders to steer between, laid along
+   the wash for the donkey. After the plants, since the trunks use the deadwood
+   map primed above. */
+await loading.note('Laying out the course…');
+const obstacles = buildObstacles(path, terrain, tex);
+for (const m of obstacles.meshes) scene.add(m);
 
 /* The clast material needs the viewport height to turn an instance's world radius
    into a projected pixel radius, which is what drives its level of detail. */
@@ -871,6 +879,11 @@ function step(dt) {
   player.x += player.vx * dt;
   player.z += player.vz * dt;
 
+  /* The course: solids on the wash floor push the body back out unless the
+     feet are already above them. Reads the pre-clamp `player.y`, so a hop
+     clears a trunk and a walk does not. */
+  obstacles.collide(player, dt);
+
   /* The ground clamp, which is the oldest solid thing in this file, is kept
      exactly as it was for the grounded case. Airborne is the new branch and it
      lands by the same clamp, so there is one definition of "on the ground" and
@@ -1135,7 +1148,7 @@ const api = {
      returning the same pixels rather than merely returning quickly. */
   _tex: tex,
   _corridor: corridor,
-  _donkey: donkey,
+  _obstacles: obstacles,
   _instances: clasts.reduce((n, m) => n + m.count, 0),
 };
 
